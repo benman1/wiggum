@@ -33,7 +33,7 @@
 - [x] **3.1 Inventory global state** — List every global variable (`MODE`, `FILES`, `PLAN_FILE`, `SUMMARY_FILE`, `ITERATIONS`, `MAX_VALIDATION_RETRIES`, `INIT_PRESET`, `VERIFY_STEPS`, `VERBOSE`, `CLAUDE_EXTRA_ARGS`). Determine which are truly needed as globals vs. which can be passed as function arguments.
 - [x] **3.2 Convert `detect_preset` / `generate_rc`** — Already pure (take args, return via stdout). No change needed — verify and document.
 - [x] **3.3 Convert `derive_output_file`** — Currently reads `FILES`, `MODE`, `PLAN_FILE`, `SUMMARY_FILE` from globals and mutates `PLAN_FILE`/`SUMMARY_FILE`. Refactor to accept mode, base file, and current value as args; print the derived path to stdout. Caller captures.
-- [ ] **3.4 Convert `load_config_from`** — Currently appends to global `VERIFY_STEPS` and mutates `ITERATIONS`/`MAX_VALIDATION_RETRIES`. Refactor to print a serialized config (e.g., declare-based or key=value lines) that the caller evals or parses.
+- [x] **3.4 Convert `load_config_from`** — Currently appends to global `VERIFY_STEPS` and mutates `ITERATIONS`/`MAX_VALIDATION_RETRIES`. Refactor to print a serialized config (e.g., declare-based or key=value lines) that the caller evals or parses.
 - [ ] **3.5 Convert `run_validation`** — Currently reads `VERIFY_STEPS` and `MAX_VALIDATION_RETRIES` from globals. Refactor to accept them as arguments (pass the array via positional args or a nameref).
 - [ ] **3.6 Update tests** — Adjust `test/wiggum.bats` for any signature changes. Add new tests for argument-passing behavior.
 
@@ -47,7 +47,7 @@
 
 - [ ] **4.1 Audit return-value patterns** — Identify functions that communicate results via global mutation rather than stdout. (`detect_preset`, `find_config` already use stdout correctly.)
 - [x] **4.2 Fix `derive_output_file`** — Make it echo the derived path instead of mutating `PLAN_FILE`/`SUMMARY_FILE` directly (ties into 3.3).
-- [ ] **4.3 Fix `load_config_from`** — Output parsed config to stdout instead of mutating globals (ties into 3.4).
+- [x] **4.3 Fix `load_config_from`** — Output parsed config to stdout instead of mutating globals (ties into 3.4).
 
 **Acceptance criteria:** No function communicates its result by setting a global. Results flow through stdout capture (`$(func arg)`).
 
