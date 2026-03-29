@@ -628,15 +628,35 @@ generate_uuid() {
 
 # ── Claude wrapper ───────────────────────────────────────────────────────────
 
+WIGGUM_LAST_SESSION_ID=""
+
 run_claude() {
     local label="${WIGGUM_CURRENT_LABEL:-claude}"
     local session_id
     session_id="$(generate_uuid)"
+    local session_args=("--session-id" "$session_id")
 
-    log_entry "$label" "session $session_id"
+    # Replace -c/--continue with --resume <previous-session-id>
+    local filtered_args=()
+    for arg in "$@"; do
+        if [[ "$arg" == "-c" || "$arg" == "--continue" ]]; then
+            if [[ -n "$WIGGUM_LAST_SESSION_ID" ]]; then
+                session_args=("--session-id" "$session_id" "--resume" "$WIGGUM_LAST_SESSION_ID" "--fork-session")
+                log_entry "$label" "session $session_id (resumed from $WIGGUM_LAST_SESSION_ID)"
+            fi
+        else
+            filtered_args+=("$arg")
+        fi
+    done
 
-    claude --session-id "$session_id" \
-        ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "$@"
+    if [[ "${session_args[*]}" != *"--resume"* ]]; then
+        log_entry "$label" "session $session_id"
+    fi
+
+    WIGGUM_LAST_SESSION_ID="$session_id"
+
+    claude "${session_args[@]}" \
+        ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}"
 
     log_entry "$label" "done"
 }
