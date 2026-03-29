@@ -11,17 +11,26 @@ WIGGUM_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/wiggum.sh
 source "$WIGGUM_ROOT/lib/wiggum.sh"
 
-parse_args "$@"
+main() {
+    parse_args "$@"
 
-if [[ "$MODE" == "init" ]]; then
-    run_init
-    exit 0
-fi
+    if [[ "$MODE" == "init" ]]; then
+        run_init
+        return 0
+    fi
 
-load_config
-derive_output_file
+    load_config
 
-case "$MODE" in
-    plan)    run_plan ;;
-    execute) run_execute ;;
-esac
+    case "$MODE" in
+        plan)
+            PLAN_FILE="$(derive_output_file "$MODE" "${FILES[0]}" "$PLAN_FILE")"
+            run_plan
+            ;;
+        execute)
+            SUMMARY_FILE="$(derive_output_file "$MODE" "${FILES[0]}" "$SUMMARY_FILE")"
+            run_execute
+            ;;
+    esac
+}
+
+main "$@"
