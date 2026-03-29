@@ -681,6 +681,7 @@ run_validation() {
         done
 
         if [[ "$needs_fix" == true ]]; then
+            retries=$((retries + 1))
             if [[ $retries -ge $MAX_VALIDATION_RETRIES ]]; then
                 echo ""
                 echo "Validation failed $MAX_VALIDATION_RETRIES times. Stopping to prevent runaway."
@@ -690,7 +691,6 @@ run_validation() {
             fi
             echo "Requesting fix from Claude..."
             run_claude -p -c --permission-mode acceptEdits "$(echo -e "$prompt")"
-            retries=$((retries + 1))
             continue
         fi
 

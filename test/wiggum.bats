@@ -657,7 +657,7 @@ exit 1
 S
     chmod +x "$TEST_DIR/fail.sh"
 
-    MAX_VALIDATION_RETRIES=1
+    MAX_VALIDATION_RETRIES=2
     VERIFY_STEPS=("$TEST_DIR/fail.sh")
     run run_validation
     [[ "$output" == *"Requesting fix from Claude"* ]]
