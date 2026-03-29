@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'echo ""; echo "Interrupted."; exit 130' INT
 
 ###############################################################################
 # wiggum - Self-driving agent loop (CLI entry point)
