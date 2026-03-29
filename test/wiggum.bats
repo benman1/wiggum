@@ -36,9 +36,9 @@ make_file() {
 
 # ── parse_args ───────────────────────────────────────────────────────────────
 
-@test "parse_args: no arguments prints usage and fails" {
+@test "parse_args: no arguments prints usage and exits EXIT_BAD_ARGS" {
     run parse_args
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"wiggum"* ]]
     [[ "$output" == *"Usage"* ]]
 }
@@ -49,22 +49,32 @@ make_file() {
     [[ "$output" == *"Usage"* ]]
 }
 
-@test "parse_args: unknown mode fails" {
+@test "parse_args: unknown mode exits EXIT_BAD_ARGS" {
     run parse_args destroy
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"unknown mode"* ]]
 }
 
 @test "parse_args: plan mode requires files" {
     run parse_args plan
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"no input files"* ]]
 }
 
 @test "parse_args: plan mode rejects missing file" {
     run parse_args plan nonexistent.md
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"file not found"* ]]
+}
+
+@test "parse_args: rejects file outside project directory with EXIT_BAD_ARGS" {
+    local outside
+    outside="$(mktemp -d)"
+    echo "# issue" > "$outside/issue.md"
+    run parse_args plan "$outside/issue.md"
+    rm -rf "$outside"
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"outside the project directory"* ]]
 }
 
 @test "parse_args: plan mode accepts existing file" {
@@ -100,10 +110,10 @@ make_file() {
     [ "$SUMMARY_FILE" = "out.md" ]
 }
 
-@test "parse_args: unknown option fails" {
+@test "parse_args: unknown option exits EXIT_BAD_ARGS" {
     make_file plan.md
     run parse_args plan plan.md --bogus
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"unknown option"* ]]
 }
 
@@ -141,31 +151,39 @@ make_file() {
 # ── derive_output_file ───────────────────────────────────────────────────────
 
 @test "derive_output_file: plan mode produces <base>_plan.md" {
-    make_file docs/issue.md
-    parse_args plan docs/issue.md
-    derive_output_file
-    [ "$PLAN_FILE" = "docs/issue_plan.md" ]
+    local result
+    result="$(derive_output_file plan docs/issue.md "")"
+    [ "$result" = "docs/issue_plan.md" ]
 }
 
 @test "derive_output_file: execute mode produces <base>_summary.md" {
-    make_file docs/plan.md
-    parse_args execute docs/plan.md
-    derive_output_file
-    [ "$SUMMARY_FILE" = "docs/plan_summary.md" ]
+    local result
+    result="$(derive_output_file execute docs/plan.md "")"
+    [ "$result" = "docs/plan_summary.md" ]
 }
 
-@test "derive_output_file: respects explicit --plan-file" {
-    make_file issue.md
-    parse_args plan issue.md --plan-file my_plan.md
-    derive_output_file
-    [ "$PLAN_FILE" = "my_plan.md" ]
+@test "derive_output_file: passes through explicit value for plan" {
+    local result
+    result="$(derive_output_file plan issue.md "my_plan.md")"
+    [ "$result" = "my_plan.md" ]
 }
 
-@test "derive_output_file: respects explicit --summary-file" {
-    make_file plan.md
-    parse_args execute plan.md --summary-file my_summary.md
-    derive_output_file
-    [ "$SUMMARY_FILE" = "my_summary.md" ]
+@test "derive_output_file: passes through explicit value for execute" {
+    local result
+    result="$(derive_output_file execute plan.md "my_summary.md")"
+    [ "$result" = "my_summary.md" ]
+}
+
+@test "derive_output_file: handles nested paths" {
+    local result
+    result="$(derive_output_file plan src/docs/feature.md "")"
+    [ "$result" = "src/docs/feature_plan.md" ]
+}
+
+@test "derive_output_file: strips only .md extension" {
+    local result
+    result="$(derive_output_file plan notes.txt.md "")"
+    [ "$result" = "./notes.txt_plan.md" ]
 }
 
 # ── find_config ──────────────────────────────────────────────────────────────
@@ -340,9 +358,9 @@ EOF
     [[ "$output" == *"prettier"* ]]
 }
 
-@test "generate_rc: unknown preset fails" {
+@test "generate_rc: unknown preset exits EXIT_BAD_ARGS" {
     run generate_rc golang
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"unknown preset"* ]]
 }
 
@@ -363,10 +381,10 @@ EOF
     grep -q "npm test" .wiggumrc
 }
 
-@test "run_init: fails when nothing to detect and no preset" {
+@test "run_init: fails with EXIT_BAD_ARGS when nothing to detect and no preset" {
     INIT_PRESET=""
     run run_init
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"Could not auto-detect"* ]]
 }
 
@@ -393,7 +411,7 @@ EOF
     [[ "$output" == *"All verification steps passed"* ]]
 }
 
-@test "run_validation: fails after max retries on persistent failure" {
+@test "run_validation: fails with EXIT_VALIDATION_FAILED after max retries" {
     # Use a script that always exits 1 (eval + subshell safe)
     cat > "$TEST_DIR/fail.sh" <<'S'
 #!/usr/bin/env bash
@@ -405,7 +423,7 @@ S
     MAX_VALIDATION_RETRIES=2
     VERIFY_STEPS=("$TEST_DIR/fail.sh")
     run run_validation
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_VALIDATION_FAILED" ]
     [[ "$output" == *"Validation failed 2 times"* ]]
 }
 
@@ -432,7 +450,7 @@ S
     MAX_VALIDATION_RETRIES=0
     VERIFY_STEPS=("$TEST_DIR/fail.sh" "echo SHOULD_NOT_RUN")
     run run_validation
-    [ "$status" -eq 1 ]
+    [ "$status" -eq "$EXIT_VALIDATION_FAILED" ]
     [[ "$output" != *"SHOULD_NOT_RUN"* ]]
 }
 
@@ -457,6 +475,22 @@ SCRIPT
     [[ "$output" == *"PASSED"* ]]
 }
 
+# ── Exit codes ───────────────────────────────────────────────────────────────
+
+@test "exit codes: constants are distinct non-zero integers" {
+    [ "$EXIT_BAD_ARGS" -ne 0 ]
+    [ "$EXIT_NO_CONFIG" -ne 0 ]
+    [ "$EXIT_VALIDATION_FAILED" -ne 0 ]
+    [ "$EXIT_CLAUDE_FAILED" -ne 0 ]
+    # All distinct
+    [ "$EXIT_BAD_ARGS" -ne "$EXIT_NO_CONFIG" ]
+    [ "$EXIT_BAD_ARGS" -ne "$EXIT_VALIDATION_FAILED" ]
+    [ "$EXIT_BAD_ARGS" -ne "$EXIT_CLAUDE_FAILED" ]
+    [ "$EXIT_NO_CONFIG" -ne "$EXIT_VALIDATION_FAILED" ]
+    [ "$EXIT_NO_CONFIG" -ne "$EXIT_CLAUDE_FAILED" ]
+    [ "$EXIT_VALIDATION_FAILED" -ne "$EXIT_CLAUDE_FAILED" ]
+}
+
 # ── Strict mode ──────────────────────────────────────────────────────────────
 
 @test "library enforces set -u: unset variable is an error" {
@@ -465,9 +499,25 @@ SCRIPT
     run ! bash -c "set -u; source '$WIGGUM_LIB'; echo \"\$UNDEFINED_VAR_XYZ\""
 }
 
+@test "lib/wiggum.sh rejects direct execution" {
+    run bash "$WIGGUM_LIB"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"must be sourced"* ]]
+}
+
 @test "CLI entry point runs under set -euo pipefail" {
     local cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
     # A bad mode should exit non-zero, not continue
     run bash "$cli" badmode
     [ "$status" -ne 0 ]
+}
+
+@test "CLI entry point wraps dispatch in main function" {
+    local cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
+    # main must be defined as a function in wiggum.sh
+    grep -q '^main()' "$cli"
+    # Last non-empty line must call main
+    local last
+    last="$(grep -v '^$' "$cli" | tail -1)"
+    [ "$last" = 'main "$@"' ]
 }
