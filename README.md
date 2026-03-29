@@ -507,6 +507,7 @@ This file is per-machine (not committed to git). See the [Claude Code permission
 |------|---------------|---------------|
 | `plan` | `<dir>/<basename>_plan.md` | `--plan-file` |
 | `execute` | `<dir>/<basename>_summary.md` | `--summary-file` |
+| `execute`/`plan`/`docs` | `<dir>/<basename>.log` | *(always created)* |
 
 The directory and basename are derived from the first input file. For example:
 
@@ -557,4 +558,5 @@ brew install bats-core shellcheck
 - **Keep issues focused.** One issue file per feature or bug works better than a single monolithic document.
 - **Tune retries to your project.** If your test suite is flaky, increase `max_validation_retries`. If you're paying close attention to token costs, decrease it.
 - **Use `--verbose` to debug.** If wiggum isn't doing what you expect, `--verbose` shows exactly what Claude is doing at each step.
+- **Resume any step with `claude -r`.** Wiggum logs a Claude session ID for every step. Find the session ID in the `.log` file and resume it interactively: `claude -r <session-id>`. Useful for asking follow-up questions about what Claude did during a specific implementation or validation step.
 - **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` reminds you if one is missing.
