@@ -125,14 +125,15 @@ git clone <repo-url> && cd wiggum
 ./install.sh
 ```
 
-This copies `wiggum.sh` to `/usr/local/bin/wiggum` (may prompt for sudo) and seeds `~/.wiggumrc` from the example config if you don't have one yet.
+This copies `wiggum.sh` and `lib/wiggum.sh` to `/usr/local/lib/wiggum/`, symlinks `/usr/local/bin/wiggum` to the entry point, and seeds `~/.wiggumrc` from the example config if you don't have one yet. May prompt for sudo.
 
-Or install manually:
+Or just run it directly from the repo without installing:
 
 ```bash
-cp wiggum.sh /usr/local/bin/wiggum
-chmod +x /usr/local/bin/wiggum
+./wiggum.sh plan issues/something.md
 ```
+
+The CLI resolves the library relative to its own location, so no install step is needed for local use.
 
 ## Usage
 
@@ -213,8 +214,19 @@ Options:
   --plan-file <path>       Output path for the plan (plan mode)
   --summary-file <path>    Output path for the summary (execute mode)
   --iterations <n>         Number of implementation iterations (execute mode, default: 3)
+  --verbose                Pass --verbose to Claude Code for detailed output
   -h, --help               Show help
 ```
+
+### Verbose mode
+
+Pass `--verbose` to see detailed output from Claude Code, including API calls, tool usage, and token counts:
+
+```bash
+wiggum execute docs/plan.md --verbose
+```
+
+This is useful for debugging or understanding what Claude is doing at each step. The flag is forwarded to every `claude` invocation wiggum makes.
 
 ## Configuration
 
@@ -228,20 +240,6 @@ Wiggum looks for a `.wiggumrc` file, first in the current directory, then in `$H
 | `autofix` | Like `verify`, but the command is run once first to let it self-correct (e.g. linters with `--fix`). Only escalates to Claude if it still fails after autofix. | *(none)* |
 | `iterations` | Number of implementation iterations per run. | `3` |
 | `max_validation_retries` | Max times the validation cycle retries before giving up. | `5` |
-
-### Verification order
-
-`verify` and `autofix` lines run in the order they appear in the config file. This lets you set up a waterfall where cheap/fast checks run first:
-
-```
-# .wiggumrc -- TypeScript project
-verify = npm run type-check        # Fast, catches most issues
-verify = npm test                  # Slower, catches logic errors
-verify = npm run build             # Slowest, catches integration issues
-autofix = npx prettier --write .   # Auto-corrects formatting
-```
-
-The waterfall short-circuits: if the first step fails, later steps don't run until it's fixed. This prevents wasting time on a full build when there are type errors.
 
 ### Verify vs autofix
 
@@ -394,6 +392,34 @@ wiggum execute docs/auth-issue_plan.md
 # produces: docs/auth-issue_plan_summary.md
 ```
 
+## Project structure
+
+```
+wiggum/
+  wiggum.sh              CLI entry point (thin wrapper)
+  lib/wiggum.sh          Core library (all logic, sourceable by tests)
+  install.sh             macOS installer
+  test/
+    wiggum.bats          Bats test suite
+    run.sh               Test runner (shellcheck lint + bats)
+  .wiggumrc              Self-hosting config (wiggum tests itself)
+  .wiggumrc.example      Example config with comments
+```
+
+## Development
+
+Run the test suite (lint + unit tests):
+
+```bash
+./test/run.sh
+```
+
+This runs shellcheck on all shell scripts, then the Bats test suite. Requires `bats-core` and `shellcheck`:
+
+```bash
+brew install bats-core shellcheck
+```
+
 ## Tips
 
 - **Start small.** Use `--iterations 1` for a trial run to see how wiggum interprets your plan before committing to a longer run.
@@ -401,3 +427,4 @@ wiggum execute docs/auth-issue_plan.md
 - **Use a branch.** Run wiggum on a feature branch so you can review the full diff before merging.
 - **Keep issues focused.** One issue file per feature or bug works better than a single monolithic document.
 - **Tune retries to your project.** If your test suite is flaky, increase `max_validation_retries`. If you're paying close attention to token costs, decrease it.
+- **Use `--verbose` to debug.** If wiggum isn't doing what you expect, `--verbose` shows exactly what Claude is doing at each step.

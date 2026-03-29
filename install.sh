@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALL_DIR="/usr/local/bin"
+INSTALL_DIR="/usr/local/lib/wiggum"
+BIN_DIR="/usr/local/bin"
 SCRIPT_NAME="wiggum"
 SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
-SOURCE_FILE="$SOURCE_DIR/wiggum.sh"
 
 echo "Wiggum installer"
 echo ""
 
 # Check source exists
-if [[ ! -f "$SOURCE_FILE" ]]; then
-    echo "Error: wiggum.sh not found in $SOURCE_DIR"
+if [[ ! -f "$SOURCE_DIR/wiggum.sh" || ! -f "$SOURCE_DIR/lib/wiggum.sh" ]]; then
+    echo "Error: wiggum.sh and lib/wiggum.sh must both exist in $SOURCE_DIR"
     exit 1
 fi
 
@@ -22,21 +22,26 @@ if ! command -v claude &>/dev/null; then
     echo ""
 fi
 
-# Create /usr/local/bin if needed (common on fresh macOS)
-if [[ ! -d "$INSTALL_DIR" ]]; then
-    echo "Creating $INSTALL_DIR (requires sudo)..."
-    sudo mkdir -p "$INSTALL_DIR"
-fi
+# Helper: run with sudo only if needed
+run_privileged() {
+    if [[ -w "$(dirname "$1")" ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
 
-# Install
-echo "Installing $SCRIPT_NAME to $INSTALL_DIR..."
-if [[ -w "$INSTALL_DIR" ]]; then
-    cp "$SOURCE_FILE" "$INSTALL_DIR/$SCRIPT_NAME"
-    chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
-else
-    sudo cp "$SOURCE_FILE" "$INSTALL_DIR/$SCRIPT_NAME"
-    sudo chmod +x "$INSTALL_DIR/$SCRIPT_NAME"
-fi
+# Install lib + CLI
+echo "Installing to $INSTALL_DIR..."
+run_privileged mkdir -p "$INSTALL_DIR/lib"
+run_privileged cp "$SOURCE_DIR/wiggum.sh" "$INSTALL_DIR/wiggum.sh"
+run_privileged cp "$SOURCE_DIR/lib/wiggum.sh" "$INSTALL_DIR/lib/wiggum.sh"
+run_privileged chmod +x "$INSTALL_DIR/wiggum.sh"
+
+# Symlink into bin
+echo "Linking $BIN_DIR/$SCRIPT_NAME..."
+run_privileged mkdir -p "$BIN_DIR"
+run_privileged ln -sf "$INSTALL_DIR/wiggum.sh" "$BIN_DIR/$SCRIPT_NAME"
 
 # Copy example config to home if no config exists yet
 if [[ ! -f "$HOME/.wiggumrc" ]]; then
@@ -53,7 +58,7 @@ if command -v wiggum &>/dev/null; then
     echo "Run 'wiggum --help' to get started."
 else
     echo ""
-    echo "Installed to $INSTALL_DIR/$SCRIPT_NAME"
-    echo "If 'wiggum' is not found, add $INSTALL_DIR to your PATH:"
-    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+    echo "Installed to $INSTALL_DIR"
+    echo "If 'wiggum' is not found, add $BIN_DIR to your PATH:"
+    echo "  export PATH=\"$BIN_DIR:\$PATH\""
 fi
