@@ -30,6 +30,9 @@ main() {
             SUMMARY_FILE="$(derive_output_file "$MODE" "${FILES[0]}" "$SUMMARY_FILE")"
             run_execute
             ;;
+        docs)
+            run_docs
+            ;;
     esac
 }
 

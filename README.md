@@ -21,7 +21,7 @@ The result: you kick off a run, walk away, and come back to a branch with a seri
 
 ## How it works
 
-Wiggum has three commands that map to the natural workflow of software development.
+Wiggum has four commands that map to the natural workflow of software development.
 
 ### Init mode
 
@@ -108,7 +108,27 @@ After all iterations complete, Wiggum:
             |  Summary &       |  Phase 3
             |  Plan Update     |
             +------------------+
+                     |
+            +--------v---------+
+            |  Update docs     |  Phase 4 (if --update-docs)
+            +------------------+
 ```
+
+### Docs mode
+
+```
+wiggum docs -i <input-files...> -o <output-files...>
+```
+
+Updates documentation files based on input context. The `-i` flag specifies source material (summaries, plans, changelogs, code) and the `-o` flag specifies which doc files to update. Claude reads the current content of each output file and updates only the sections affected by the changes described in the input files.
+
+This can be used standalone after a run:
+
+```bash
+wiggum docs -i docs/summary.md docs/plan.md -o README.md
+```
+
+Or built into the execute flow with `--update-docs` (see [Executing a plan](#executing-a-plan)).
 
 ## Prerequisites
 
@@ -158,6 +178,8 @@ Available presets:
 
 If no preset is given, wiggum inspects the current directory and picks the best match. The generated `.wiggumrc` is a starting point -- edit it to match your actual scripts.
 
+After creating the `.wiggumrc`, init offers to set up Claude Code permissions (see [Permissions](#permissions) below) and reminds you to create a `CLAUDE.md` if one doesn't exist.
+
 ### Creating a plan
 
 ```bash
@@ -184,6 +206,12 @@ wiggum execute docs/plan.md --iterations 10
 
 # Custom summary location
 wiggum execute docs/plan.md --summary-file reports/run1_summary.md
+
+# Execute and update README when done
+wiggum execute docs/plan.md --update-docs README.md
+
+# Update multiple docs after execution
+wiggum execute docs/plan.md --update-docs README.md,docs/API.md
 
 # Multiple context files (plan + supporting docs)
 wiggum execute docs/plan.md docs/api_spec.md docs/schema.csv
@@ -242,12 +270,16 @@ Modes:
   init        Generate a .wiggumrc for the current project
   plan        Create a workplan from issue/spec files
   execute     Implement a workplan with iterative validation
+  docs        Update documentation from input files
 
 Options:
   --plan-file <path>       Output path for the plan (plan mode)
   --summary-file <path>    Output path for the summary (execute mode)
   --iterations <n>         Number of implementation iterations (execute mode, default: 3)
+  --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
   --verbose                Pass --verbose to Claude Code for detailed output
+  -i <files...>            Input files (docs mode)
+  -o <files...>            Output doc files to update (docs mode)
   -h, --help               Show help
 ```
 
@@ -408,6 +440,65 @@ Without any `verify` or `autofix` lines, wiggum still implements and commits but
 
 Only the first file found is used. They are not merged.
 
+## Permissions
+
+Wiggum calls Claude Code with different permission modes depending on the task:
+
+| Task | Permission mode | Why |
+|------|----------------|-----|
+| Planning | `bypassPermissions` | Only reads input and writes the plan file |
+| Implementation | `acceptEdits` | Auto-approves file edits, prompts for bash commands |
+| Validation fixes | `acceptEdits` | Claude fixes code, same as implementation |
+| Git commits | `bypassPermissions` | Only runs `git add` and `git commit` |
+
+`acceptEdits` auto-approves file edits but still prompts for shell commands. This means Claude can write code freely but will ask before running anything in the terminal. `bypassPermissions` skips all prompts -- used only for commit and plan calls where the scope is tightly constrained.
+
+### Setting up permissions with init
+
+When you run `wiggum init`, it offers to create `.claude/settings.local.json` with pre-approved permissions for two categories:
+
+**Verification & git (prompted first):**
+
+These are the commands wiggum needs to run its core loop -- verification steps from your `.wiggumrc` and git operations for committing results.
+
+| Preset | Permissions |
+|--------|------------|
+| All | `git add *`, `git commit *`, `git status`, `git diff *` |
+| node/next/astro | `npm run *`, `npx *` |
+| python | `ruff *`, `pytest`, `pytest *` |
+
+**Package manager (prompted separately):**
+
+Allowing Claude to install dependencies is a bigger trust decision, so it's asked as a separate question.
+
+| Preset | Permissions |
+|--------|------------|
+| node/next/astro | `npm install *`, `npm *` |
+| python | `pip install *`, `pip *` |
+
+You can decline either prompt. Without pre-approved permissions, Claude Code will prompt for approval on each command the first time it runs -- wiggum still works, it just pauses for confirmation.
+
+### Manual permission setup
+
+If you prefer to set permissions manually or already have a `.claude/settings.local.json`, add the rules you need:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(npm run *)",
+      "Bash(npx *)"
+    ]
+  }
+}
+```
+
+This file is per-machine (not committed to git). See the [Claude Code permissions docs](https://docs.anthropic.com/en/docs/claude-code/permissions) for the full rule syntax.
+
 ## Output files
 
 | Mode | Default output | Override flag |
@@ -437,6 +528,9 @@ wiggum/
     run.sh               Test runner (shellcheck lint + bats)
   .wiggumrc              Self-hosting config (wiggum tests itself)
   .wiggumrc.example      Example config with comments
+  CLAUDE.md              Project standards for Claude Code
+  .claude/
+    settings.local.json  Per-machine Claude Code permissions (not committed)
 ```
 
 ## Development
@@ -461,4 +555,4 @@ brew install bats-core shellcheck
 - **Keep issues focused.** One issue file per feature or bug works better than a single monolithic document.
 - **Tune retries to your project.** If your test suite is flaky, increase `max_validation_retries`. If you're paying close attention to token costs, decrease it.
 - **Use `--verbose` to debug.** If wiggum isn't doing what you expect, `--verbose` shows exactly what Claude is doing at each step.
-- **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` will remind you if one is missing.
+- **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` reminds you if one is missing.
