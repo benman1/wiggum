@@ -1,7 +1,20 @@
 #!/usr/bin/env bash
 # wiggum core library — sourced by the CLI and by tests
+# Do not execute directly; source this file instead.
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    echo "Error: lib/wiggum.sh is a library and must be sourced, not executed directly." >&2
+    exit 1
+fi
 
 VERSION="0.1.0"
+
+# ── Exit codes ──────────────────────────────────────────────────────────────
+
+export EXIT_BAD_ARGS=1
+export EXIT_NO_CONFIG=2
+export EXIT_VALIDATION_FAILED=3
+export EXIT_CLAUDE_FAILED=4
 
 # ── State (reset by wiggum_reset for testing) ───────────────────────────────
 
@@ -114,7 +127,7 @@ EOF
 parse_args() {
     if [[ $# -eq 0 ]]; then
         usage
-        return 1
+        return "$EXIT_BAD_ARGS"
     fi
 
     MODE="$1"
@@ -127,7 +140,7 @@ parse_args() {
 
     if [[ "$MODE" != "plan" && "$MODE" != "execute" && "$MODE" != "init" ]]; then
         echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', or 'init'." >&2
-        return 1
+        return "$EXIT_BAD_ARGS"
     fi
 
     if [[ "$MODE" == "init" ]]; then
@@ -163,7 +176,7 @@ parse_args() {
                 ;;
             -*)
                 echo "Error: unknown option '$1'" >&2
-                return 1
+                return "$EXIT_BAD_ARGS"
                 ;;
             *)
                 FILES+=("$1")
@@ -174,13 +187,22 @@ parse_args() {
 
     if [[ ${#FILES[@]} -eq 0 ]]; then
         echo "Error: no input files specified." >&2
-        return 1
+        return "$EXIT_BAD_ARGS"
     fi
 
+    local work_dir
+    work_dir="$(pwd)"
     for f in "${FILES[@]}"; do
         if [[ ! -f "$f" ]]; then
             echo "Error: file not found: $f" >&2
-            return 1
+            return "$EXIT_BAD_ARGS"
+        fi
+        local abs_path
+        abs_path="$(cd "$(dirname "$f")" && pwd)/$(basename "$f")"
+        if [[ "$abs_path" != "$work_dir"/* ]]; then
+            echo "Error: file is outside the project directory: $f" >&2
+            echo "Copy it into the repo first, e.g.: cp $f docs/" >&2
+            return "$EXIT_BAD_ARGS"
         fi
     done
 }
@@ -188,21 +210,24 @@ parse_args() {
 # ── Output filenames ─────────────────────────────────────────────────────────
 
 derive_output_file() {
-    local base="${FILES[0]}"
-    local dir
-    dir="$(dirname "$base")"
-    local name
-    name="$(basename "$base" .md)"
+    local mode="$1"
+    local base_file="$2"
+    local current_value="${3:-}"
 
-    if [[ "$MODE" == "plan" ]]; then
-        if [[ -z "$PLAN_FILE" ]]; then
-            PLAN_FILE="${dir}/${name}_plan.md"
-        fi
-    elif [[ "$MODE" == "execute" ]]; then
-        if [[ -z "$SUMMARY_FILE" ]]; then
-            SUMMARY_FILE="${dir}/${name}_summary.md"
-        fi
+    if [[ -n "$current_value" ]]; then
+        echo "$current_value"
+        return
     fi
+
+    local dir
+    dir="$(dirname "$base_file")"
+    local name
+    name="$(basename "$base_file" .md)"
+
+    case "$mode" in
+        plan)    echo "${dir}/${name}_plan.md" ;;
+        execute) echo "${dir}/${name}_summary.md" ;;
+    esac
 }
 
 # ── Init ─────────────────────────────────────────────────────────────────────
@@ -274,7 +299,7 @@ RCEOF
         *)
             echo "Error: unknown preset '$preset'." >&2
             echo "Available presets: node, next, python, astro" >&2
-            return 1
+            return "$EXIT_BAD_ARGS"
             ;;
     esac
 }
@@ -287,7 +312,7 @@ run_init() {
         if [[ -z "$preset" ]]; then
             echo "Could not auto-detect project type." >&2
             echo "Specify a preset: wiggum init <node|next|python|astro>" >&2
-            return 1
+            return "$EXIT_BAD_ARGS"
         fi
         echo "Detected project type: $preset"
     fi
@@ -303,6 +328,13 @@ run_init() {
 
     generate_rc "$preset" > .wiggumrc
     echo "Created .wiggumrc ($preset preset)"
+
+    if [[ ! -f "CLAUDE.md" ]]; then
+        echo ""
+        echo "Tip: Create a CLAUDE.md file with project standards, architecture, and"
+        echo "conventions. Wiggum passes it to Claude Code automatically, which helps"
+        echo "Claude write code that fits your project. See the wiggum README for details."
+    fi
 }
 
 # ── Claude wrapper ───────────────────────────────────────────────────────────
@@ -388,7 +420,7 @@ run_validation() {
         if [[ "$needs_fix" == true ]]; then
             if [[ $retries -ge $MAX_VALIDATION_RETRIES ]]; then
                 echo "Validation failed $MAX_VALIDATION_RETRIES times. Stopping to prevent runaway."
-                return 1
+                return "$EXIT_VALIDATION_FAILED"
             fi
             echo "Requesting fix from Claude..."
             run_claude -p -c --permission-mode acceptEdits "$(echo -e "$prompt")"
@@ -423,15 +455,15 @@ run_execute() {
         "The workplan is defined ONLY in: $file_list. Ignore README.md and other documentation -- they are NOT the plan. Analyze the repository against the workplan. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement." \
         "${FILES[@]}"
 
-    run_claude -p --permission-mode acceptEdits \
-        "If $file_list was modified, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. Single line message only."
+    run_claude -p --permission-mode bypassPermissions \
+        "Check if $file_list has any changes (modified or untracked). If so, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. Do not ask for confirmation -- just do it. If there are no changes, do nothing."
 
     # Phase 2: Iterative implementation
     for ((i = 1; i <= ITERATIONS; i++)); do
         echo ""
         echo "--- Phase 2: Implementation step $i of $ITERATIONS ---"
 
-        # Implementation: fresh session with plan context
+        # Implementation: acceptEdits so file changes are auto-approved
         run_claude -p -c --permission-mode acceptEdits \
             "The workplan is defined ONLY in: $file_list. Ignore README.md and other documentation -- they are NOT the plan. Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found." \
             "${FILES[@]}"
@@ -439,10 +471,10 @@ run_execute() {
         # Validation: uses -c to keep implementation context for fixes
         run_validation || echo "Warning: validation did not fully pass on iteration $i"
 
-        # Commit: fresh session to review changes with full context window
+        # Commit: bypassPermissions so git commands run without prompting
         echo "Committing changes..."
-        run_claude -p --permission-mode acceptEdits \
-            "Review uncommitted changes. For each modified file, execute 'git add <file>' and 'git commit -m \"<message>\"'. The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
+        run_claude -p --permission-mode bypassPermissions \
+            "Review all uncommitted changes (modified and untracked files). For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
     done
 
     # Phase 3: Summary & alignment
@@ -452,8 +484,8 @@ run_execute() {
         "The workplan is defined ONLY in: $file_list. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, and verification results." \
         "${FILES[@]}"
 
-    run_claude -p --permission-mode acceptEdits \
-        "Stage and commit any remaining changes including $SUMMARY_FILE and $file_list. For each modified file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
+    run_claude -p --permission-mode bypassPermissions \
+        "Review all uncommitted changes (modified and untracked files) including $SUMMARY_FILE and $file_list. For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
 
     echo ""
     if [[ -f "$SUMMARY_FILE" ]]; then
