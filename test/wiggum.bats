@@ -843,6 +843,80 @@ SCRIPT
     [[ "$output" == *"WIGGUM DOCS COMPLETE"* ]]
 }
 
+# ── generate_uuid ────────────────────────────────────────────────────────────
+
+@test "generate_uuid: produces valid UUID format" {
+    local uuid
+    uuid="$(generate_uuid)"
+    [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+}
+
+@test "generate_uuid: produces unique values" {
+    local uuid1 uuid2
+    uuid1="$(generate_uuid)"
+    uuid2="$(generate_uuid)"
+    [ "$uuid1" != "$uuid2" ]
+}
+
+# ── log_init / log_entry ─────────────────────────────────────────────────────
+
+@test "log_init: creates log file from base filename" {
+    make_file docs/plan.md
+    MODE="execute"
+    FILES=("docs/plan.md")
+    log_init "docs/plan.md"
+    [ -f "docs/plan.log" ]
+    [ "$WIGGUM_LOG_FILE" = "docs/plan.log" ]
+}
+
+@test "log_init: appends header with timestamp" {
+    make_file issue.md
+    MODE="execute"
+    FILES=("issue.md")
+    log_init "issue.md"
+    grep -q "^--- wiggum run" issue.log
+}
+
+@test "log_entry: writes timestamped entry to log" {
+    make_file plan.md
+    MODE="execute"
+    FILES=("plan.md")
+    log_init "plan.md"
+    log_entry "test-label" "test message"
+    grep -q "test-label: test message" plan.log
+}
+
+@test "log_entry: does nothing when no log file set" {
+    WIGGUM_LOG_FILE=""
+    log_entry "ignored" "this should not fail"
+}
+
+# ── run_claude logging ───────────────────────────────────────────────────────
+
+@test "run_claude: logs session ID" {
+    make_file plan.md
+    MODE="execute"
+    FILES=("plan.md")
+    log_init "plan.md"
+    WIGGUM_CURRENT_LABEL="test-step"
+    run_claude -p "say hi" 2>/dev/null || true
+    grep -q "test-step: session" plan.log
+}
+
+@test "run_claude: passes --session-id to claude" {
+    # Override claude to capture args
+    local captured_args=""
+    claude() { captured_args="$*"; }
+
+    make_file plan.md
+    MODE="execute"
+    FILES=("plan.md")
+    log_init "plan.md"
+    WIGGUM_CURRENT_LABEL="test"
+    run_claude -p "hello"
+    [[ "$captured_args" == *"--session-id"* ]]
+}
+
 # ── Exit codes ───────────────────────────────────────────────────────────────
 
 @test "exit codes: constants are distinct non-zero integers" {
