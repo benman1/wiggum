@@ -650,6 +650,40 @@ S
     [[ "$output" == *"Validation failed 2 times"* ]]
 }
 
+@test "run_validation: attempt count never exceeds max_validation_retries" {
+    cat > "$TEST_DIR/fail.sh" <<'S'
+#!/usr/bin/env bash
+exit 1
+S
+    chmod +x "$TEST_DIR/fail.sh"
+
+    MAX_VALIDATION_RETRIES=3
+    VERIFY_STEPS=("$TEST_DIR/fail.sh")
+    run run_validation
+    # Should see attempts 1, 2, 3 but never 4
+    [[ "$output" == *"attempt 1 of 3"* ]]
+    [[ "$output" == *"attempt 2 of 3"* ]]
+    [[ "$output" == *"attempt 3 of 3"* ]]
+    [[ "$output" != *"attempt 4 of 3"* ]]
+}
+
+@test "run_validation: shows error output and .wiggumrc hint on failure" {
+    cat > "$TEST_DIR/fail.sh" <<'S'
+#!/usr/bin/env bash
+echo "some error details"
+exit 1
+S
+    chmod +x "$TEST_DIR/fail.sh"
+
+    MAX_VALIDATION_RETRIES=1
+    VERIFY_STEPS=("$TEST_DIR/fail.sh")
+    run run_validation
+    [[ "$output" == *"--- Error output ---"* ]]
+    [[ "$output" == *"some error details"* ]]
+    [[ "$output" == *"Check that your .wiggumrc verify commands are correct"* ]]
+    [[ "$output" == *"Last failing command"* ]]
+}
+
 @test "run_validation: calls claude on verify failure" {
     cat > "$TEST_DIR/fail.sh" <<'S'
 #!/usr/bin/env bash
