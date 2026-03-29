@@ -47,6 +47,29 @@ echo "Linking $BIN_DIR/$SCRIPT_NAME..."
 run_privileged mkdir -p "$BIN_DIR"
 run_privileged ln -sf "$INSTALL_DIR/wiggum.sh" "$BIN_DIR/$SCRIPT_NAME"
 
+# Install shell completions
+ZSH_COMP_DIR=""
+if [[ -d "/opt/homebrew/share/zsh/site-functions" ]]; then
+    ZSH_COMP_DIR="/opt/homebrew/share/zsh/site-functions"
+elif [[ -d "/usr/local/share/zsh/site-functions" ]]; then
+    ZSH_COMP_DIR="/usr/local/share/zsh/site-functions"
+fi
+if [[ -n "$ZSH_COMP_DIR" && -f "$SOURCE_DIR/completions/wiggum.zsh" ]]; then
+    run_privileged cp "$SOURCE_DIR/completions/wiggum.zsh" "$ZSH_COMP_DIR/_wiggum"
+    echo "Installed zsh completions to $ZSH_COMP_DIR/_wiggum"
+fi
+
+BASH_COMP_DIR=""
+if [[ -d "/opt/homebrew/etc/bash_completion.d" ]]; then
+    BASH_COMP_DIR="/opt/homebrew/etc/bash_completion.d"
+elif [[ -d "/usr/local/etc/bash_completion.d" ]]; then
+    BASH_COMP_DIR="/usr/local/etc/bash_completion.d"
+fi
+if [[ -n "$BASH_COMP_DIR" && -f "$SOURCE_DIR/completions/wiggum.bash" ]]; then
+    run_privileged cp "$SOURCE_DIR/completions/wiggum.bash" "$BASH_COMP_DIR/wiggum"
+    echo "Installed bash completions to $BASH_COMP_DIR/wiggum"
+fi
+
 # Copy example config to home if no config exists yet
 if [[ ! -f "$HOME/.wiggumrc" ]]; then
     if [[ -f "$SOURCE_DIR/.wiggumrc.example" ]]; then
