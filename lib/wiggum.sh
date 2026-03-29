@@ -656,7 +656,10 @@ run_validation() {
                 else
                     output=$(echo "$output" | tail -n 60)
                     echo "FAILED (after autofix): $cmd"
-                    prompt="The verification step '$cmd' failed even after autofix. Fix these errors:\n$output"
+                    echo "--- Error output ---"
+                    echo "$output"
+                    echo "--------------------"
+                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code.\n\nCommand: $cmd\nSource: .wiggumrc (autofix step)\nExit code: non-zero\n\nError output:\n$output"
                     needs_fix=true
                     break
                 fi
@@ -666,7 +669,10 @@ run_validation() {
                 else
                     output=$(echo "$output" | tail -n 60)
                     echo "FAILED: $cmd"
-                    prompt="The verification step '$cmd' failed. Fix these errors:\n$output"
+                    echo "--- Error output ---"
+                    echo "$output"
+                    echo "--------------------"
+                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code.\n\nCommand: $cmd\nSource: .wiggumrc (verify step)\nExit code: non-zero\n\nError output:\n$output"
                     needs_fix=true
                     break
                 fi
@@ -676,7 +682,10 @@ run_validation() {
 
         if [[ "$needs_fix" == true ]]; then
             if [[ $retries -ge $MAX_VALIDATION_RETRIES ]]; then
+                echo ""
                 echo "Validation failed $MAX_VALIDATION_RETRIES times. Stopping to prevent runaway."
+                echo "Check that your .wiggumrc verify commands are correct."
+                echo "Last failing command: $cmd"
                 return "$EXIT_VALIDATION_FAILED"
             fi
             echo "Requesting fix from Claude..."
