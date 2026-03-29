@@ -29,6 +29,8 @@ wiggum_reset() {
     VERIFY_STEPS=()
     VERBOSE=false
     CLAUDE_EXTRA_ARGS=()
+    CLI_ITERATIONS=""
+    CLI_MAX_RETRIES=""
 }
 
 wiggum_reset
@@ -56,6 +58,22 @@ load_config_from() {
         value="$(echo "$value" | xargs)"
 
         case "$key" in
+            verify|autofix|iterations|max_validation_retries)
+                echo "$key=$value"
+                ;;
+            *)
+                echo "Warning: unknown config key '$key'" >&2
+                ;;
+        esac
+    done < "$config_file"
+}
+
+apply_config() {
+    local line
+    while IFS= read -r line; do
+        local key="${line%%=*}"
+        local value="${line#*=}"
+        case "$key" in
             verify)
                 VERIFY_STEPS+=("$value")
                 ;;
@@ -63,16 +81,17 @@ load_config_from() {
                 VERIFY_STEPS+=("autofix:$value")
                 ;;
             iterations)
-                ITERATIONS="$value"
+                if [[ -z "$CLI_ITERATIONS" ]]; then
+                    ITERATIONS="$value"
+                fi
                 ;;
             max_validation_retries)
-                MAX_VALIDATION_RETRIES="$value"
-                ;;
-            *)
-                echo "Warning: unknown config key '$key'" >&2
+                if [[ -z "$CLI_MAX_RETRIES" ]]; then
+                    MAX_VALIDATION_RETRIES="$value"
+                fi
                 ;;
         esac
-    done < "$config_file"
+    done
 }
 
 load_config() {
@@ -85,7 +104,7 @@ load_config() {
     fi
 
     echo "Loading config from $config_file"
-    load_config_from "$config_file"
+    apply_config < <(load_config_from "$config_file")
 }
 
 # ── Argument parsing ─────────────────────────────────────────────────────────
@@ -163,6 +182,7 @@ parse_args() {
                 ;;
             --iterations)
                 ITERATIONS="$2"
+                CLI_ITERATIONS="$2"
                 shift 2
                 ;;
             --verbose)
