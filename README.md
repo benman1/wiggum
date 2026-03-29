@@ -130,6 +130,27 @@ wiggum docs -i docs/summary.md docs/plan.md -o README.md
 
 Or built into the execute flow with `--update-docs` (see [Executing a plan](#executing-a-plan)).
 
+### Check mode
+
+```
+wiggum check
+```
+
+Runs the verification waterfall from `.wiggumrc` against the current codebase and asks Claude to fix any failures. This is the same validation loop that runs during execute mode, but without the implementation or commit steps.
+
+Useful for:
+
+- **After manual edits** -- verify your changes pass before committing.
+- **Before a PR** -- make sure everything's clean.
+- **CI gating** -- run `wiggum check` as a pre-merge check.
+
+```bash
+wiggum check              # run all verify/autofix steps
+wiggum check --verbose    # with detailed Claude output
+```
+
+If all steps pass, exits 0. If any step fails after `max_validation_retries` fix attempts, exits non-zero.
+
 ## Prerequisites
 
 - [Claude Code CLI](https://claude.com/claude-code) installed and authenticated
@@ -271,6 +292,7 @@ Modes:
   init        Generate a .wiggumrc for the current project
   plan        Create a workplan from issue/spec files
   execute     Implement a workplan with iterative validation
+  check       Run verification waterfall and fix issues
   docs        Update documentation from input files
 
 Options:
