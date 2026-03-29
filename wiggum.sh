@@ -7,8 +7,13 @@ set -euo pipefail
 # All logic lives in lib/wiggum.sh. This file is the thin CLI wrapper.
 ###############################################################################
 
-WIGGUM_ROOT="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=lib/wiggum.sh
+# Resolve symlinks so WIGGUM_ROOT points to the real install directory
+WIGGUM_SELF="$0"
+if [[ -L "$WIGGUM_SELF" ]]; then
+    WIGGUM_SELF="$(readlink "$WIGGUM_SELF")"
+fi
+WIGGUM_ROOT="$(cd "$(dirname "$WIGGUM_SELF")" && pwd)"
+# shellcheck source=lib/wiggum.sh disable=SC1091
 source "$WIGGUM_ROOT/lib/wiggum.sh"
 
 main() {
