@@ -104,6 +104,17 @@ make_file() {
     [ "$ITERATIONS" = "7" ]
 }
 
+@test "parse_args: --iterations takes precedence over config" {
+    make_file plan.md
+    parse_args execute plan.md --iterations 7
+    # Config would set iterations=3, but CLI should win
+    cat > test.rc <<'EOF'
+iterations = 3
+EOF
+    apply_config < <(load_config_from test.rc)
+    [ "$ITERATIONS" = "7" ]
+}
+
 @test "parse_args: --summary-file sets SUMMARY_FILE" {
     make_file plan.md
     parse_args execute plan.md --summary-file out.md
@@ -214,46 +225,35 @@ make_file() {
 
 # ── load_config_from ─────────────────────────────────────────────────────────
 
-@test "load_config_from: parses verify lines in order" {
+@test "load_config_from: outputs verify lines to stdout" {
     cat > test.rc <<'EOF'
 verify = npm test
 verify = npm run build
 EOF
-    load_config_from test.rc
-    [ "${#VERIFY_STEPS[@]}" -eq 2 ]
-    [ "${VERIFY_STEPS[0]}" = "npm test" ]
-    [ "${VERIFY_STEPS[1]}" = "npm run build" ]
+    local output
+    output="$(load_config_from test.rc)"
+    [[ "$output" == *"verify=npm test"* ]]
+    [[ "$output" == *"verify=npm run build"* ]]
 }
 
-@test "load_config_from: parses autofix with prefix" {
+@test "load_config_from: outputs autofix lines to stdout" {
     cat > test.rc <<'EOF'
 autofix = ruff format .
 EOF
-    load_config_from test.rc
-    [ "${VERIFY_STEPS[0]}" = "autofix:ruff format ." ]
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = "autofix=ruff format ." ]
 }
 
-@test "load_config_from: mixed verify and autofix preserve order" {
-    cat > test.rc <<'EOF'
-verify = npm test
-autofix = npm run lint -- --fix
-verify = npm run build
-EOF
-    load_config_from test.rc
-    [ "${#VERIFY_STEPS[@]}" -eq 3 ]
-    [ "${VERIFY_STEPS[0]}" = "npm test" ]
-    [ "${VERIFY_STEPS[1]}" = "autofix:npm run lint -- --fix" ]
-    [ "${VERIFY_STEPS[2]}" = "npm run build" ]
-}
-
-@test "load_config_from: sets iterations and max_validation_retries" {
+@test "load_config_from: outputs iterations and max_validation_retries" {
     cat > test.rc <<'EOF'
 iterations = 10
 max_validation_retries = 2
 EOF
-    load_config_from test.rc
-    [ "$ITERATIONS" = "10" ]
-    [ "$MAX_VALIDATION_RETRIES" = "2" ]
+    local output
+    output="$(load_config_from test.rc)"
+    [[ "$output" == *"iterations=10"* ]]
+    [[ "$output" == *"max_validation_retries=2"* ]]
 }
 
 @test "load_config_from: skips comments and blank lines" {
@@ -264,17 +264,71 @@ EOF
 verify = npm test
 
 EOF
-    load_config_from test.rc
-    [ "${#VERIFY_STEPS[@]}" -eq 1 ]
+    local output
+    output="$(load_config_from test.rc)"
+    local count
+    count="$(echo "$output" | grep -c .)"
+    [ "$count" -eq 1 ]
 }
 
-@test "load_config_from: warns on unknown key" {
+@test "load_config_from: warns on unknown key to stderr" {
     cat > test.rc <<'EOF'
 banana = yellow
 EOF
     run load_config_from test.rc
     [ "$status" -eq 0 ]
     [[ "$output" == *"unknown config key"* ]]
+}
+
+# ── apply_config ─────────────────────────────────────────────────────────────
+
+@test "apply_config: applies verify steps in order" {
+    cat > test.rc <<'EOF'
+verify = npm test
+verify = npm run build
+EOF
+    apply_config < <(load_config_from test.rc)
+    [ "${#VERIFY_STEPS[@]}" -eq 2 ]
+    [ "${VERIFY_STEPS[0]}" = "npm test" ]
+    [ "${VERIFY_STEPS[1]}" = "npm run build" ]
+}
+
+@test "apply_config: applies autofix with prefix" {
+    apply_config <<< "autofix=ruff format ."
+    [ "${VERIFY_STEPS[0]}" = "autofix:ruff format ." ]
+}
+
+@test "apply_config: mixed verify and autofix preserve order" {
+    cat > test.rc <<'EOF'
+verify = npm test
+autofix = npm run lint -- --fix
+verify = npm run build
+EOF
+    apply_config < <(load_config_from test.rc)
+    [ "${#VERIFY_STEPS[@]}" -eq 3 ]
+    [ "${VERIFY_STEPS[0]}" = "npm test" ]
+    [ "${VERIFY_STEPS[1]}" = "autofix:npm run lint -- --fix" ]
+    [ "${VERIFY_STEPS[2]}" = "npm run build" ]
+}
+
+@test "apply_config: sets iterations and max_validation_retries" {
+    apply_config <<< "$(printf "iterations=10\nmax_validation_retries=2")"
+    [ "$ITERATIONS" = "10" ]
+    [ "$MAX_VALIDATION_RETRIES" = "2" ]
+}
+
+@test "apply_config: CLI_ITERATIONS takes precedence over config" {
+    CLI_ITERATIONS="7"
+    ITERATIONS="7"
+    apply_config <<< "iterations=10"
+    [ "$ITERATIONS" = "7" ]
+}
+
+@test "apply_config: CLI_MAX_RETRIES takes precedence over config" {
+    CLI_MAX_RETRIES="3"
+    MAX_VALIDATION_RETRIES="3"
+    apply_config <<< "max_validation_retries=10"
+    [ "$MAX_VALIDATION_RETRIES" = "3" ]
 }
 
 # ── detect_preset ────────────────────────────────────────────────────────────
