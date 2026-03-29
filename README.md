@@ -175,6 +175,7 @@ Available presets:
 | `next` | `next.config.{js,ts,mjs}` | type-check, test, build, lint --fix |
 | `python` | `pyproject.toml`, `setup.py`, or `requirements.txt` | ruff format+check (autofix), pytest |
 | `astro` | `astro.config.{mjs,ts}` | type-check, test, build, prettier (autofix) |
+| `bash` | `.shellcheckrc` or `test/run.sh` | shellcheck, bats |
 
 If no preset is given, wiggum inspects the current directory and picks the best match. The generated `.wiggumrc` is a starting point -- edit it to match your actual scripts.
 
@@ -466,6 +467,7 @@ These are the commands wiggum needs to run its core loop -- verification steps f
 | All | `git add *`, `git commit *`, `git status`, `git diff *` |
 | node/next/astro | `npm run *`, `npx *` |
 | python | `ruff *`, `pytest`, `pytest *` |
+| bash | `shellcheck *`, `bats *`, `chmod *` |
 
 **Package manager (prompted separately):**
 
