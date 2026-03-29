@@ -1,0 +1,23 @@
+# .wiggumrc - Wiggum configuration
+# Place in project root or $HOME
+
+# Verification steps (run in order, waterfall style)
+# Each "verify" line is a shell command. If it fails, Claude is asked to fix it.
+# Each "autofix" line runs the command first (letting it self-correct, e.g. ruff --fix),
+# then re-runs it to check. Only escalates to Claude if it still fails.
+
+# --- Example: TypeScript/Node project ---
+# verify = npm run type-check
+# verify = npm test
+# verify = npm run build
+# autofix = npm run lint -- --fix
+
+# --- Example: Python project ---
+# autofix = ruff format app tests scripts && ruff check --fix app tests scripts
+# verify = pytest
+
+# Number of implementation iterations (default: 3)
+iterations = 3
+
+# Max retries per validation cycle (default: 5)
+max_validation_retries = 5
