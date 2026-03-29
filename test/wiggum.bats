@@ -828,6 +828,64 @@ SCRIPT
     [[ "$output" == *"Output: x.md y.md"* ]]
 }
 
+# ── parse_args: check mode ────────────────────────────────────────────────────
+
+@test "parse_args: check mode needs no files" {
+    parse_args check
+    [ "$MODE" = "check" ]
+}
+
+@test "parse_args: check mode accepts --verbose" {
+    parse_args check --verbose
+    [ "$MODE" = "check" ]
+    [ "$VERBOSE" = "true" ]
+}
+
+@test "parse_args: help check shows check details" {
+    run parse_args help check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum check"* ]]
+    [[ "$output" == *"verification"* ]]
+}
+
+# ── run_check ────────────────────────────────────────────────────────────────
+
+@test "run_check: passes when all verify steps pass" {
+    VERIFY_STEPS=("true" "true")
+    run run_check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ALL CHECKS PASSED"* ]]
+}
+
+@test "run_check: fails when verify step fails" {
+    cat > "$TEST_DIR/fail.sh" <<'S'
+#!/usr/bin/env bash
+exit 1
+S
+    chmod +x "$TEST_DIR/fail.sh"
+
+    MAX_VALIDATION_RETRIES=1
+    VERIFY_STEPS=("$TEST_DIR/fail.sh")
+    run run_check
+    [ "$status" -eq "$EXIT_VALIDATION_FAILED" ]
+    [[ "$output" == *"CHECKS FAILED"* ]]
+}
+
+@test "run_check: reports no steps when none configured" {
+    VERIFY_STEPS=()
+    run run_check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No verification steps"* ]]
+}
+
+@test "run_check: uses same run_validation as execute mode" {
+    # Verify it calls the shared function by checking for validation pass output
+    VERIFY_STEPS=("true")
+    run run_check
+    [[ "$output" == *"Validation pass"* ]]
+    [[ "$output" == *"All verification steps passed"* ]]
+}
+
 # ── run_docs ─────────────────────────────────────────────────────────────────
 
 @test "run_docs: uses DOCS_INPUT and DOCS_OUTPUT" {
