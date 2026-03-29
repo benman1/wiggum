@@ -133,6 +133,7 @@ Presets (for init):
   next      Next.js project (type-check, test, build, lint)
   python    Python project (ruff, pytest)
   astro     Astro project (type-check, test, build, format)
+  bash      Bash project (shellcheck, bats)
   (none)    Auto-detect from project files
 
 Options:
@@ -300,6 +301,10 @@ detect_preset() {
         echo "python"
     elif [[ -f "package.json" ]]; then
         echo "node"
+    elif [[ -f ".wiggumrc" ]] && grep -q 'shellcheck\|bats' .wiggumrc 2>/dev/null; then
+        echo "bash"
+    elif [[ -f ".shellcheckrc" ]] || [[ -d "test" && -f "test/run.sh" ]]; then
+        echo "bash"
     else
         echo ""
     fi
@@ -355,9 +360,19 @@ iterations = 3
 max_validation_retries = 5
 RCEOF
             ;;
+        bash)
+            cat <<'RCEOF'
+# .wiggumrc - Bash project
+verify = shellcheck -s bash *.sh **/*.sh
+verify = bats test/
+
+iterations = 3
+max_validation_retries = 5
+RCEOF
+            ;;
         *)
             echo "Error: unknown preset '$preset'." >&2
-            echo "Available presets: node, next, python, astro" >&2
+            echo "Available presets: node, next, python, astro, bash" >&2
             return "$EXIT_BAD_ARGS"
             ;;
     esac
@@ -432,6 +447,11 @@ setup_claude_permissions() {
             rules+=("Bash(npx *)")
             extra_rules+=("Bash(npm install *)")
             extra_rules+=("Bash(npm *)")
+            ;;
+        bash)
+            rules+=("Bash(shellcheck *)")
+            rules+=("Bash(bats *)")
+            rules+=("Bash(chmod *)")
             ;;
     esac
 

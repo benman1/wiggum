@@ -389,6 +389,29 @@ EOF
     [ -z "$result" ]
 }
 
+@test "detect_preset: detects bash from .shellcheckrc" {
+    touch .shellcheckrc
+    local result
+    result="$(detect_preset)"
+    [ "$result" = "bash" ]
+}
+
+@test "detect_preset: detects bash from test/run.sh" {
+    mkdir -p test
+    touch test/run.sh
+    local result
+    result="$(detect_preset)"
+    [ "$result" = "bash" ]
+}
+
+@test "detect_preset: node takes priority over bash" {
+    touch package.json
+    touch .shellcheckrc
+    local result
+    result="$(detect_preset)"
+    [ "$result" = "node" ]
+}
+
 # ── generate_rc ──────────────────────────────────────────────────────────────
 
 @test "generate_rc: node preset contains npm verify steps" {
@@ -410,6 +433,13 @@ EOF
     local output
     output="$(generate_rc astro)"
     [[ "$output" == *"prettier"* ]]
+}
+
+@test "generate_rc: bash preset contains shellcheck and bats" {
+    local output
+    output="$(generate_rc bash)"
+    [[ "$output" == *"shellcheck"* ]]
+    [[ "$output" == *"bats"* ]]
 }
 
 @test "generate_rc: unknown preset exits EXIT_BAD_ARGS" {
@@ -483,6 +513,13 @@ EOF
     printf "y\nn\n" | setup_claude_permissions astro
     grep -q '"Bash(npm run \*)"' .claude/settings.local.json
     grep -q '"Bash(npx \*)"' .claude/settings.local.json
+}
+
+@test "setup_claude_permissions: bash preset includes shellcheck and bats" {
+    echo "y" | setup_claude_permissions bash
+    grep -q '"Bash(shellcheck \*)"' .claude/settings.local.json
+    grep -q '"Bash(bats \*)"' .claude/settings.local.json
+    grep -q '"Bash(chmod \*)"' .claude/settings.local.json
 }
 
 @test "setup_claude_permissions: skips when user declines" {
