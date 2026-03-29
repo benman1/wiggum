@@ -422,7 +422,7 @@ EOF
 
 @test "run_init: creates .wiggumrc from explicit preset" {
     INIT_PRESET="python"
-    run_init
+    echo "n" | run_init
     [ -f ".wiggumrc" ]
     grep -q "pytest" .wiggumrc
 }
@@ -430,9 +430,23 @@ EOF
 @test "run_init: auto-detects preset" {
     INIT_PRESET=""
     touch package.json
-    run_init
+    echo "n" | run_init
     [ -f ".wiggumrc" ]
     grep -q "npm test" .wiggumrc
+}
+
+@test "run_init: creates .claude/settings.local.json when approved" {
+    INIT_PRESET="node"
+    echo -e "y\nn" | run_init
+    [ -f ".claude/settings.local.json" ]
+    grep -q "git add" .claude/settings.local.json
+    grep -q "npm run" .claude/settings.local.json
+}
+
+@test "run_init: skips permissions when declined" {
+    INIT_PRESET="node"
+    echo "n" | run_init
+    [ ! -f ".claude/settings.local.json" ]
 }
 
 @test "run_init: fails with EXIT_BAD_ARGS when nothing to detect and no preset" {
@@ -440,6 +454,80 @@ EOF
     run run_init
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"Could not auto-detect"* ]]
+}
+
+# ── setup_claude_permissions ─────────────────────────────────────────────────
+
+@test "setup_claude_permissions: creates .claude dir and settings file" {
+    printf "y\nn\n" | setup_claude_permissions node
+    [ -d ".claude" ]
+    [ -f ".claude/settings.local.json" ]
+}
+
+@test "setup_claude_permissions: node preset includes git and npm rules" {
+    printf "y\nn\n" | setup_claude_permissions node
+    grep -q '"Bash(git add \*)"' .claude/settings.local.json
+    grep -q '"Bash(git commit \*)"' .claude/settings.local.json
+    grep -q '"Bash(npm run \*)"' .claude/settings.local.json
+    grep -q '"Bash(npx \*)"' .claude/settings.local.json
+}
+
+@test "setup_claude_permissions: python preset includes ruff and pytest" {
+    printf "y\nn\n" | setup_claude_permissions python
+    grep -q '"Bash(ruff \*)"' .claude/settings.local.json
+    grep -q '"Bash(pytest \*)"' .claude/settings.local.json
+    grep -q '"Bash(pytest)"' .claude/settings.local.json
+}
+
+@test "setup_claude_permissions: astro preset includes npm and npx" {
+    printf "y\nn\n" | setup_claude_permissions astro
+    grep -q '"Bash(npm run \*)"' .claude/settings.local.json
+    grep -q '"Bash(npx \*)"' .claude/settings.local.json
+}
+
+@test "setup_claude_permissions: skips when user declines" {
+    echo "n" | setup_claude_permissions node
+    [ ! -f ".claude/settings.local.json" ]
+}
+
+@test "setup_claude_permissions: package manager rules added when both prompts approved" {
+    printf "y\ny\n" | setup_claude_permissions node
+    grep -q '"Bash(npm install \*)"' .claude/settings.local.json
+    grep -q '"Bash(npm \*)"' .claude/settings.local.json
+}
+
+@test "setup_claude_permissions: package manager rules skipped when second prompt declined" {
+    printf "y\nn\n" | setup_claude_permissions node
+    # npm run should be present (base rules)
+    grep -q '"Bash(npm run \*)"' .claude/settings.local.json
+    # npm install should NOT be present (extra rules declined)
+    ! grep -q '"Bash(npm install \*)"' .claude/settings.local.json
+}
+
+@test "setup_claude_permissions: python package manager adds pip" {
+    printf "y\ny\n" | setup_claude_permissions python
+    grep -q '"Bash(pip install \*)"' .claude/settings.local.json
+    grep -q '"Bash(pip \*)"' .claude/settings.local.json
+}
+
+@test "setup_claude_permissions: output is valid JSON" {
+    printf "y\nn\n" | setup_claude_permissions node
+    # python/node json validation - try python first, fall back to node
+    if command -v python3 &>/dev/null; then
+        python3 -m json.tool .claude/settings.local.json > /dev/null
+    elif command -v node &>/dev/null; then
+        node -e "JSON.parse(require('fs').readFileSync('.claude/settings.local.json','utf8'))"
+    else
+        head -1 .claude/settings.local.json | grep -q '{'
+        tail -1 .claude/settings.local.json | grep -q '}'
+    fi
+}
+
+@test "setup_claude_permissions: overwrites existing file" {
+    mkdir -p .claude
+    echo '{}' > .claude/settings.local.json
+    printf "y\nn\n" | setup_claude_permissions node
+    grep -q '"Bash(git add \*)"' .claude/settings.local.json
 }
 
 @test "run_init: aborts on existing .wiggumrc when user says no" {
@@ -527,6 +615,117 @@ SCRIPT
     run run_validation
     [ "$status" -eq 0 ]
     [[ "$output" == *"PASSED"* ]]
+}
+
+# ── parse_args: docs mode ────────────────────────────────────────────────────
+
+@test "parse_args: docs mode with -i and -o" {
+    make_file summary.md
+    make_file readme.md
+    parse_args docs -i summary.md -o readme.md
+    [ "$MODE" = "docs" ]
+    [ "${DOCS_INPUT[0]}" = "summary.md" ]
+    [ "${DOCS_OUTPUT[0]}" = "readme.md" ]
+}
+
+@test "parse_args: docs mode with multiple -i and -o files" {
+    make_file a.md
+    make_file b.md
+    make_file out1.md
+    make_file out2.md
+    parse_args docs -i a.md b.md -o out1.md out2.md
+    [ "${#DOCS_INPUT[@]}" -eq 2 ]
+    [ "${#DOCS_OUTPUT[@]}" -eq 2 ]
+    [ "${DOCS_INPUT[0]}" = "a.md" ]
+    [ "${DOCS_INPUT[1]}" = "b.md" ]
+    [ "${DOCS_OUTPUT[0]}" = "out1.md" ]
+    [ "${DOCS_OUTPUT[1]}" = "out2.md" ]
+}
+
+@test "parse_args: docs mode fails without -i" {
+    make_file out.md
+    run parse_args docs -o out.md
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"requires -i"* ]]
+}
+
+@test "parse_args: docs mode fails without -o" {
+    make_file in.md
+    run parse_args docs -i in.md
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"requires -o"* ]]
+}
+
+# ── parse_args: --update-docs ────────────────────────────────────────────────
+
+@test "parse_args: --update-docs sets UPDATE_DOCS array" {
+    make_file plan.md
+    parse_args execute plan.md --update-docs README.md,docs/API.md
+    [ "${#UPDATE_DOCS[@]}" -eq 2 ]
+    [ "${UPDATE_DOCS[0]}" = "README.md" ]
+    [ "${UPDATE_DOCS[1]}" = "docs/API.md" ]
+}
+
+@test "parse_args: --update-docs with single file" {
+    make_file plan.md
+    parse_args execute plan.md --update-docs README.md
+    [ "${#UPDATE_DOCS[@]}" -eq 1 ]
+    [ "${UPDATE_DOCS[0]}" = "README.md" ]
+}
+
+@test "parse_args: no --update-docs leaves UPDATE_DOCS empty" {
+    make_file plan.md
+    parse_args execute plan.md
+    [ "${#UPDATE_DOCS[@]}" -eq 0 ]
+}
+
+# ── run_update_docs ──────────────────────────────────────────────────────────
+
+@test "run_update_docs: calls claude with input and output files" {
+    local claude_calls=()
+    claude() { claude_calls+=("$*"); }
+
+    make_file summary.md
+    make_file readme.md
+    run_update_docs summary.md -- readme.md
+    [[ "${claude_calls[0]}" == *"summary.md"* ]]
+    [[ "${claude_calls[0]}" == *"readme.md"* ]]
+}
+
+@test "run_update_docs: prints input and output in log" {
+    make_file s.md
+    make_file r.md
+    run run_update_docs s.md -- r.md
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Input: s.md"* ]]
+    [[ "$output" == *"Output: r.md"* ]]
+    [[ "$output" == *"Documentation updated"* ]]
+}
+
+@test "run_update_docs: handles multiple inputs and outputs" {
+    make_file a.md
+    make_file b.md
+    make_file x.md
+    make_file y.md
+    run run_update_docs a.md b.md -- x.md y.md
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Input: a.md b.md"* ]]
+    [[ "$output" == *"Output: x.md y.md"* ]]
+}
+
+# ── run_docs ─────────────────────────────────────────────────────────────────
+
+@test "run_docs: uses DOCS_INPUT and DOCS_OUTPUT" {
+    make_file summary.md
+    make_file readme.md
+    DOCS_INPUT=("summary.md")
+    DOCS_OUTPUT=("readme.md")
+    run run_docs
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WIGGUM DOCS MODE"* ]]
+    [[ "$output" == *"Input: summary.md"* ]]
+    [[ "$output" == *"Output: readme.md"* ]]
+    [[ "$output" == *"WIGGUM DOCS COMPLETE"* ]]
 }
 
 # ── Exit codes ───────────────────────────────────────────────────────────────

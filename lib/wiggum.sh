@@ -31,6 +31,9 @@ wiggum_reset() {
     CLAUDE_EXTRA_ARGS=()
     CLI_ITERATIONS=""
     CLI_MAX_RETRIES=""
+    UPDATE_DOCS=()
+    DOCS_INPUT=()
+    DOCS_OUTPUT=()
 }
 
 wiggum_reset
@@ -117,11 +120,13 @@ Usage:
   wiggum init [preset]
   wiggum plan <files...> [--plan-file <output>]
   wiggum execute <files...> [--summary-file <output>] [--iterations <n>]
+  wiggum docs -i <input...> -o <output...>
 
 Modes:
   init      Generate a .wiggumrc for a standard project setup
   plan      Create a workplan from the given issue/spec files
   execute   Implement a workplan with iterative validation
+  docs      Update documentation from input files (summaries, plans, code)
 
 Presets (for init):
   node      Node.js project (type-check, test, build, lint)
@@ -134,7 +139,10 @@ Options:
   --plan-file <path>      Output path for the generated plan (default: <base>_plan.md)
   --summary-file <path>   Output path for the execution summary (default: <base>_summary.md)
   --iterations <n>        Number of implementation iterations (default: 3)
+  --update-docs <files>   Comma-separated doc files to update after execution
   --verbose               Pass --verbose to Claude Code for detailed output
+  -i <files...>           Input files (docs mode)
+  -o <files...>           Output doc files to update (docs mode)
   -h, --help              Show this help
 
 Configuration:
@@ -157,8 +165,8 @@ parse_args() {
         return 0
     fi
 
-    if [[ "$MODE" != "plan" && "$MODE" != "execute" && "$MODE" != "init" ]]; then
-        echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', or 'init'." >&2
+    if [[ "$MODE" != "plan" && "$MODE" != "execute" && "$MODE" != "init" && "$MODE" != "docs" ]]; then
+        echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'docs', or 'init'." >&2
         return "$EXIT_BAD_ARGS"
     fi
 
@@ -190,6 +198,24 @@ parse_args() {
                 CLAUDE_EXTRA_ARGS+=("--verbose")
                 shift
                 ;;
+            --update-docs)
+                IFS=',' read -ra UPDATE_DOCS <<< "$2"
+                shift 2
+                ;;
+            -i)
+                shift
+                while [[ $# -gt 0 && "$1" != -* ]]; do
+                    DOCS_INPUT+=("$1")
+                    shift
+                done
+                ;;
+            -o)
+                shift
+                while [[ $# -gt 0 && "$1" != -* ]]; do
+                    DOCS_OUTPUT+=("$1")
+                    shift
+                done
+                ;;
             -h|--help)
                 usage
                 return 0
@@ -204,6 +230,19 @@ parse_args() {
                 ;;
         esac
     done
+
+    # docs mode uses -i/-o instead of positional files
+    if [[ "$MODE" == "docs" ]]; then
+        if [[ ${#DOCS_INPUT[@]} -eq 0 ]]; then
+            echo "Error: docs mode requires -i <input files>." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+        if [[ ${#DOCS_OUTPUT[@]} -eq 0 ]]; then
+            echo "Error: docs mode requires -o <output doc files>." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+        return 0
+    fi
 
     if [[ ${#FILES[@]} -eq 0 ]]; then
         echo "Error: no input files specified." >&2
@@ -349,12 +388,110 @@ run_init() {
     generate_rc "$preset" > .wiggumrc
     echo "Created .wiggumrc ($preset preset)"
 
+    # Offer to set up Claude Code permissions for verification commands
+    setup_claude_permissions "$preset"
+
     if [[ ! -f "CLAUDE.md" ]]; then
         echo ""
         echo "Tip: Create a CLAUDE.md file with project standards, architecture, and"
         echo "conventions. Wiggum passes it to Claude Code automatically, which helps"
         echo "Claude write code that fits your project. See the wiggum README for details."
     fi
+}
+
+setup_claude_permissions() {
+    local preset="$1"
+    local settings_file=".claude/settings.local.json"
+
+    # Build the allow list based on preset
+    local rules=()
+    rules+=("Bash(git add *)")
+    rules+=("Bash(git commit *)")
+    rules+=("Bash(git status)")
+    rules+=("Bash(git diff *)")
+
+    # Extra rules for package manager access (opt-in)
+    local extra_rules=()
+
+    case "$preset" in
+        node|next)
+            rules+=("Bash(npm run *)")
+            rules+=("Bash(npx *)")
+            extra_rules+=("Bash(npm install *)")
+            extra_rules+=("Bash(npm *)")
+            ;;
+        python)
+            rules+=("Bash(ruff *)")
+            rules+=("Bash(pytest *)")
+            rules+=("Bash(pytest)")
+            extra_rules+=("Bash(pip install *)")
+            extra_rules+=("Bash(pip *)")
+            ;;
+        astro)
+            rules+=("Bash(npm run *)")
+            rules+=("Bash(npx *)")
+            extra_rules+=("Bash(npm install *)")
+            extra_rules+=("Bash(npm *)")
+            ;;
+    esac
+
+    echo ""
+    echo "Wiggum needs Claude Code permissions to run verification and git commands."
+    echo "The following rules would be added to $settings_file:"
+    echo ""
+    for rule in "${rules[@]}"; do
+        echo "  allow: $rule"
+    done
+    echo ""
+    echo "Add these permissions? [y/N]"
+    read -r answer
+    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+        echo "Skipped. You can add permissions manually or approve them when prompted."
+        return 0
+    fi
+
+    # Ask about package manager permissions separately
+    if [[ ${#extra_rules[@]} -gt 0 ]]; then
+        echo ""
+        echo "Also allow package manager commands? (lets Claude install dependencies)"
+        for rule in "${extra_rules[@]}"; do
+            echo "  allow: $rule"
+        done
+        echo ""
+        echo "Allow package manager access? [y/N]"
+        read -r answer
+        if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
+            rules+=("${extra_rules[@]}")
+        fi
+    fi
+
+    # Build JSON
+    mkdir -p .claude
+    local json_rules=""
+    for rule in "${rules[@]}"; do
+        if [[ -n "$json_rules" ]]; then
+            json_rules="$json_rules,"
+        fi
+        json_rules="$json_rules
+      \"$rule\""
+    done
+
+    if [[ -f "$settings_file" ]]; then
+        # Merge: read existing allow rules and append new ones
+        # Simple approach: overwrite permissions.allow (safe for local settings)
+        echo "Note: overwriting permissions.allow in $settings_file"
+    fi
+
+    cat > "$settings_file" <<EOF
+{
+  "permissions": {
+    "allow": [$json_rules
+    ]
+  }
+}
+EOF
+
+    echo "Created $settings_file"
 }
 
 # ── Claude wrapper ───────────────────────────────────────────────────────────
@@ -511,5 +648,61 @@ run_execute() {
     if [[ -f "$SUMMARY_FILE" ]]; then
         echo "Summary written to: $SUMMARY_FILE"
     fi
+
+    # Phase 4 (optional): Update documentation
+    if [[ ${#UPDATE_DOCS[@]} -gt 0 ]]; then
+        echo ""
+        echo "--- Phase 4: Documentation Update ---"
+        run_update_docs "$SUMMARY_FILE" "${FILES[@]}" -- "${UPDATE_DOCS[@]}"
+    fi
+
     echo "=== WIGGUM EXECUTION COMPLETE ==="
+}
+
+# ── Docs ─────────────────────────────────────────────────────────────────────
+
+run_update_docs() {
+    local -a inputs=()
+    local -a outputs=()
+    local parsing="inputs"
+
+    # Split args on "--" separator: inputs... -- outputs...
+    for arg in "$@"; do
+        if [[ "$arg" == "--" ]]; then
+            parsing="outputs"
+            continue
+        fi
+        if [[ "$parsing" == "inputs" ]]; then
+            inputs+=("$arg")
+        else
+            outputs+=("$arg")
+        fi
+    done
+
+    local input_list="${inputs[*]}"
+    local output_list="${outputs[*]}"
+
+    echo "Updating documentation..."
+    echo "  Input: $input_list"
+    echo "  Output: $output_list"
+
+    run_claude -p --permission-mode acceptEdits \
+        "Update the following documentation files: $output_list. Use the input files as context for what has changed: $input_list. For each output file: read its current content, then update it to reflect the changes described in the input files. Preserve the existing structure and style of each document. Only update sections that are affected by the changes. Do not rewrite sections that are already accurate." \
+        "${inputs[@]}" "${outputs[@]}"
+
+    run_claude -p --permission-mode bypassPermissions \
+        "Review all uncommitted changes to: $output_list. For each modified file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
+
+    echo "Documentation updated: $output_list"
+}
+
+run_docs() {
+    echo "=== WIGGUM DOCS MODE ==="
+    echo "Input: ${DOCS_INPUT[*]}"
+    echo "Output: ${DOCS_OUTPUT[*]}"
+    echo ""
+
+    run_update_docs "${DOCS_INPUT[@]}" -- "${DOCS_OUTPUT[@]}"
+
+    echo "=== WIGGUM DOCS COMPLETE ==="
 }
