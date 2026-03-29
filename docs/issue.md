@@ -1,0 +1,1 @@
+For best practices: Keep a clear main entrypoint, Keep a clear main entrypoint, Keep a clear main entrypoint, Pass data via arguments, not globals, Return via stdout, not return, Use exit codes intentionally, Quote everything, Avoid subshell surprises, Separate I/O from logic, Use consistent naming, Fail fast inside functions
