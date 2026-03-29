@@ -200,6 +200,27 @@ Examples:
   wiggum docs -i docs/plan.md docs/summary.md -o README.md docs/API.md
 EOF
             ;;
+        check)
+            cat <<EOF
+wiggum check - Run verification waterfall and fix issues
+
+Usage:
+  wiggum check [options]
+
+Options:
+  --verbose   Pass --verbose to Claude Code
+
+Runs the verify/autofix steps from .wiggumrc against the current codebase.
+When a step fails, Claude is asked to fix the issue. Repeats up to
+max_validation_retries times. Does not implement new features or commit.
+
+Useful after manual edits or before committing to ensure everything passes.
+
+Examples:
+  wiggum check
+  wiggum check --verbose
+EOF
+            ;;
         *)
             cat <<EOF
 wiggum $VERSION - Self-driving agent loop
@@ -212,6 +233,7 @@ Commands:
   init      Generate a .wiggumrc for a standard project setup
   plan      Create a workplan from issue/spec files
   execute   Implement a workplan with iterative validation
+  check     Run verification waterfall and fix issues
   docs      Update documentation from input files
 
 Run 'wiggum help <command>' for details on a specific command.
@@ -247,8 +269,8 @@ parse_args() {
         return 0
     fi
 
-    if [[ "$MODE" != "plan" && "$MODE" != "execute" && "$MODE" != "init" && "$MODE" != "docs" ]]; then
-        echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'docs', or 'init'." >&2
+    if [[ "$MODE" != "plan" && "$MODE" != "execute" && "$MODE" != "init" && "$MODE" != "docs" && "$MODE" != "check" ]]; then
+        echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'check', 'docs', or 'init'." >&2
         return "$EXIT_BAD_ARGS"
     fi
 
@@ -312,6 +334,11 @@ parse_args() {
                 ;;
         esac
     done
+
+    # check mode needs no input files
+    if [[ "$MODE" == "check" ]]; then
+        return 0
+    fi
 
     # docs mode uses -i/-o instead of positional files
     if [[ "$MODE" == "docs" ]]; then
@@ -887,6 +914,26 @@ run_update_docs() {
         "Review all uncommitted changes to: $output_list. For each modified file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
 
     echo "Documentation updated: $output_list"
+}
+
+run_check() {
+    echo "=== WIGGUM CHECK MODE ==="
+    if [[ ${#VERIFY_STEPS[@]} -eq 0 ]]; then
+        echo "No verification steps configured in .wiggumrc. Nothing to check."
+        return 0
+    fi
+    echo "Verification steps: ${VERIFY_STEPS[*]}"
+    echo ""
+
+    WIGGUM_CURRENT_LABEL="check"
+    if run_validation; then
+        echo ""
+        echo "=== ALL CHECKS PASSED ==="
+    else
+        echo ""
+        echo "=== CHECKS FAILED ==="
+        return "$EXIT_VALIDATION_FAILED"
+    fi
 }
 
 run_docs() {
