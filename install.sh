@@ -31,8 +31,12 @@ run_privileged() {
     fi
 }
 
-# Install lib + CLI
-echo "Installing to $INSTALL_DIR..."
+# Install lib + CLI (safe to re-run for updates)
+if [[ -f "$INSTALL_DIR/wiggum.sh" ]]; then
+    echo "Updating existing installation..."
+else
+    echo "Installing to $INSTALL_DIR..."
+fi
 run_privileged mkdir -p "$INSTALL_DIR/lib"
 run_privileged cp "$SOURCE_DIR/wiggum.sh" "$INSTALL_DIR/wiggum.sh"
 run_privileged cp "$SOURCE_DIR/lib/wiggum.sh" "$INSTALL_DIR/lib/wiggum.sh"
