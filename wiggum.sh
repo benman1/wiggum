@@ -19,8 +19,8 @@ source "$WIGGUM_ROOT/lib/wiggum.sh"
 main() {
     parse_args "$@"
 
-    if [[ "$MODE" == "init" ]]; then
-        run_init
+    if [[ "$MODE" == "init" || "$MODE" == "help" || "$MODE" == "-h" || "$MODE" == "--help" || -z "$MODE" ]]; then
+        [[ "$MODE" == "init" ]] && run_init
         return 0
     fi
 

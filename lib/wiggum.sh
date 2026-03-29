@@ -113,22 +113,17 @@ load_config() {
 # ── Argument parsing ─────────────────────────────────────────────────────────
 
 usage() {
-    cat <<EOF
-wiggum $VERSION - Self-driving agent loop
+    local cmd="${1:-}"
+
+    case "$cmd" in
+        init)
+            cat <<EOF
+wiggum init - Generate a .wiggumrc for a standard project setup
 
 Usage:
   wiggum init [preset]
-  wiggum plan <files...> [--plan-file <output>]
-  wiggum execute <files...> [--summary-file <output>] [--iterations <n>]
-  wiggum docs -i <input...> -o <output...>
 
-Modes:
-  init      Generate a .wiggumrc for a standard project setup
-  plan      Create a workplan from the given issue/spec files
-  execute   Implement a workplan with iterative validation
-  docs      Update documentation from input files (summaries, plans, code)
-
-Presets (for init):
+Presets:
   node      Node.js project (type-check, test, build, lint)
   next      Next.js project (type-check, test, build, lint)
   python    Python project (ruff, pytest)
@@ -136,20 +131,100 @@ Presets (for init):
   bash      Bash project (shellcheck, bats)
   (none)    Auto-detect from project files
 
+Also offers to set up Claude Code permissions in .claude/settings.local.json
+and reminds you to create a CLAUDE.md if one is missing.
+EOF
+            ;;
+        plan)
+            cat <<EOF
+wiggum plan - Create a workplan from issue/spec files
+
+Usage:
+  wiggum plan <files...> [options]
+
 Options:
-  --plan-file <path>      Output path for the generated plan (default: <base>_plan.md)
-  --summary-file <path>   Output path for the execution summary (default: <base>_summary.md)
-  --iterations <n>        Number of implementation iterations (default: 3)
-  --update-docs <files>   Comma-separated doc files to update after execution
-  --verbose               Pass --verbose to Claude Code for detailed output
-  -i <files...>           Input files (docs mode)
-  -o <files...>           Output doc files to update (docs mode)
-  -h, --help              Show this help
+  --plan-file <path>   Output path for the plan (default: <base>_plan.md)
+  --verbose            Pass --verbose to Claude Code
+
+Reads issue descriptions, specs, or requirements and produces a structured
+markdown workplan with phases, tasks, acceptance criteria, and dependencies.
+Does not modify your codebase.
+
+Examples:
+  wiggum plan issues/login-bug.md
+  wiggum plan issues/*.md --plan-file docs/sprint_plan.md
+EOF
+            ;;
+        execute)
+            cat <<EOF
+wiggum execute - Implement a workplan with iterative validation
+
+Usage:
+  wiggum execute <files...> [options]
+
+Options:
+  --iterations <n>       Number of implementation iterations (default: 3)
+  --summary-file <path>  Output path for the summary (default: <base>_summary.md)
+  --update-docs <files>  Comma-separated doc files to update after execution
+  --verbose              Pass --verbose to Claude Code
+
+Phases:
+  1. Diagnostic & Status Sync - reconcile plan against repo state
+  2. Iterative Implementation - implement, verify, commit (x N iterations)
+  3. Summary & Alignment     - update plan checkboxes, write summary
+  4. Documentation Update     - update docs (if --update-docs is set)
+
+Examples:
+  wiggum execute docs/plan.md
+  wiggum execute docs/plan.md --iterations 5 --update-docs README.md
+EOF
+            ;;
+        docs)
+            cat <<EOF
+wiggum docs - Update documentation from input files
+
+Usage:
+  wiggum docs -i <input...> -o <output...>
+
+Options:
+  -i <files...>   Input files (summaries, plans, changelogs, code)
+  -o <files...>   Output doc files to update
+  --verbose       Pass --verbose to Claude Code
+
+Reads input files for context, then updates each output file to reflect
+the changes. Preserves existing structure and style.
+
+Examples:
+  wiggum docs -i docs/summary.md -o README.md
+  wiggum docs -i docs/plan.md docs/summary.md -o README.md docs/API.md
+EOF
+            ;;
+        *)
+            cat <<EOF
+wiggum $VERSION - Self-driving agent loop
+
+Usage:
+  wiggum <command> [options]
+  wiggum help <command>
+
+Commands:
+  init      Generate a .wiggumrc for a standard project setup
+  plan      Create a workplan from issue/spec files
+  execute   Implement a workplan with iterative validation
+  docs      Update documentation from input files
+
+Run 'wiggum help <command>' for details on a specific command.
+
+Options:
+  --verbose   Pass --verbose to Claude Code for detailed output
+  -h, --help  Show this help
 
 Configuration:
   Place a .wiggumrc file in the current directory or \$HOME.
   See README.md for config format.
 EOF
+            ;;
+    esac
 }
 
 parse_args() {
@@ -163,6 +238,11 @@ parse_args() {
 
     if [[ "$MODE" == "-h" || "$MODE" == "--help" ]]; then
         usage
+        return 0
+    fi
+
+    if [[ "$MODE" == "help" ]]; then
+        usage "${1:-}"
         return 0
     fi
 
