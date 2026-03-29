@@ -49,6 +49,50 @@ make_file() {
     [[ "$output" == *"Usage"* ]]
 }
 
+@test "parse_args: help shows overview" {
+    run parse_args help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Commands"* ]]
+    [[ "$output" == *"help <command>"* ]]
+}
+
+@test "parse_args: help plan shows plan details" {
+    run parse_args help plan
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum plan"* ]]
+    [[ "$output" == *"--plan-file"* ]]
+    [[ "$output" == *"Examples"* ]]
+}
+
+@test "parse_args: help execute shows execute details" {
+    run parse_args help execute
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum execute"* ]]
+    [[ "$output" == *"--iterations"* ]]
+    [[ "$output" == *"Phases"* ]]
+}
+
+@test "parse_args: help docs shows docs details" {
+    run parse_args help docs
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum docs"* ]]
+    [[ "$output" == *"-i"* ]]
+    [[ "$output" == *"-o"* ]]
+}
+
+@test "parse_args: help init shows presets" {
+    run parse_args help init
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum init"* ]]
+    [[ "$output" == *"Presets"* ]]
+}
+
+@test "parse_args: help unknown falls back to overview" {
+    run parse_args help bogus
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Commands"* ]]
+}
+
 @test "parse_args: unknown mode exits EXIT_BAD_ARGS" {
     run parse_args destroy
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
