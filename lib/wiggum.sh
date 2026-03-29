@@ -34,6 +34,7 @@ wiggum_reset() {
     UPDATE_DOCS=()
     DOCS_INPUT=()
     DOCS_OUTPUT=()
+    WIGGUM_LOG_FILE=""
 }
 
 wiggum_reset
@@ -594,10 +595,50 @@ EOF
     echo "Created $settings_file"
 }
 
+# ── Logging ──────────────────────────────────────────────────────────────────
+
+log_init() {
+    local base_file="$1"
+    local dir
+    dir="$(dirname "$base_file")"
+    local name
+    name="$(basename "$base_file" .md)"
+    WIGGUM_LOG_FILE="${dir}/${name}.log"
+
+    echo "--- wiggum run $(date '+%Y-%m-%d %H:%M:%S') ---" >> "$WIGGUM_LOG_FILE"
+    log_entry "command" "wiggum $MODE ${FILES[*]}"
+}
+
+log_entry() {
+    local label="$1"
+    local message="$2"
+    if [[ -n "$WIGGUM_LOG_FILE" ]]; then
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] $label: $message" >> "$WIGGUM_LOG_FILE"
+    fi
+}
+
+generate_uuid() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    else
+        # Fallback: generate from /dev/urandom
+        od -x /dev/urandom | head -1 | awk '{print $2$3"-"$4"-"$5"-"$6"-"$7$8$9}'
+    fi
+}
+
 # ── Claude wrapper ───────────────────────────────────────────────────────────
 
 run_claude() {
-    claude ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "$@"
+    local label="${WIGGUM_CURRENT_LABEL:-claude}"
+    local session_id
+    session_id="$(generate_uuid)"
+
+    log_entry "$label" "session $session_id"
+
+    claude --session-id "$session_id" \
+        ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "$@"
+
+    log_entry "$label" "done"
 }
 
 # ── Plan ─────────────────────────────────────────────────────────────────────
@@ -608,8 +649,10 @@ run_plan() {
     echo "Output plan: $PLAN_FILE"
     echo ""
 
+    log_init "${FILES[0]}"
     local file_list="${FILES[*]}"
 
+    WIGGUM_CURRENT_LABEL="plan"
     run_claude -p --permission-mode bypassPermissions \
         "You are a project planner. The issue/spec files to analyze are ONLY: $file_list. Ignore README.md and other repo documentation -- they are not input. Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), acceptance criteria, and dependencies. Write the plan to: $PLAN_FILE" \
         "${FILES[@]}"
@@ -690,6 +733,7 @@ run_validation() {
                 return "$EXIT_VALIDATION_FAILED"
             fi
             echo "Requesting fix from Claude..."
+            WIGGUM_CURRENT_LABEL="${WIGGUM_CURRENT_LABEL}-fix-$retries"
             run_claude -p -c --permission-mode acceptEdits "$(echo -e "$prompt")"
             continue
         fi
@@ -713,14 +757,18 @@ run_execute() {
     fi
     echo ""
 
+    log_init "${FILES[0]}"
     local file_list="${FILES[*]}"
 
     # Phase 1: Diagnostic & status sync
     echo "--- Phase 1: Diagnostic & Status Sync ---"
+    log_entry "phase" "1 - diagnostic & status sync"
+    WIGGUM_CURRENT_LABEL="phase1-diagnostic"
     run_claude -p --permission-mode acceptEdits \
         "The workplan is defined ONLY in: $file_list. Ignore README.md and other documentation -- they are NOT the plan. Analyze the repository against the workplan. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement." \
         "${FILES[@]}"
 
+    WIGGUM_CURRENT_LABEL="phase1-commit"
     run_claude -p --permission-mode bypassPermissions \
         "Check if $file_list has any changes (modified or untracked). If so, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. Do not ask for confirmation -- just do it. If there are no changes, do nothing."
 
@@ -728,17 +776,21 @@ run_execute() {
     for ((i = 1; i <= ITERATIONS; i++)); do
         echo ""
         echo "--- Phase 2: Implementation step $i of $ITERATIONS ---"
+        log_entry "phase" "2 - implementation step $i of $ITERATIONS"
 
         # Implementation: acceptEdits so file changes are auto-approved
+        WIGGUM_CURRENT_LABEL="phase2-implement-$i"
         run_claude -p -c --permission-mode acceptEdits \
             "The workplan is defined ONLY in: $file_list. Ignore README.md and other documentation -- they are NOT the plan. Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found." \
             "${FILES[@]}"
 
         # Validation: uses -c to keep implementation context for fixes
+        WIGGUM_CURRENT_LABEL="phase2-validate-$i"
         run_validation || echo "Warning: validation did not fully pass on iteration $i"
 
         # Commit: bypassPermissions so git commands run without prompting
         echo "Committing changes..."
+        WIGGUM_CURRENT_LABEL="phase2-commit-$i"
         run_claude -p --permission-mode bypassPermissions \
             "Review all uncommitted changes (modified and untracked files). For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
     done
@@ -746,10 +798,13 @@ run_execute() {
     # Phase 3: Summary & alignment
     echo ""
     echo "--- Phase 3: Summary & Alignment ---"
+    log_entry "phase" "3 - summary & alignment"
+    WIGGUM_CURRENT_LABEL="phase3-summary"
     run_claude -p -c --permission-mode acceptEdits \
         "The workplan is defined ONLY in: $file_list. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, and verification results." \
         "${FILES[@]}"
 
+    WIGGUM_CURRENT_LABEL="phase3-commit"
     run_claude -p --permission-mode bypassPermissions \
         "Review all uncommitted changes (modified and untracked files) including $SUMMARY_FILE and $file_list. For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
 
@@ -762,9 +817,13 @@ run_execute() {
     if [[ ${#UPDATE_DOCS[@]} -gt 0 ]]; then
         echo ""
         echo "--- Phase 4: Documentation Update ---"
+        log_entry "phase" "4 - documentation update"
+        WIGGUM_CURRENT_LABEL="phase4-docs"
         run_update_docs "$SUMMARY_FILE" "${FILES[@]}" -- "${UPDATE_DOCS[@]}"
     fi
 
+    log_entry "complete" "wiggum execution finished"
+    echo "Log: $WIGGUM_LOG_FILE"
     echo "=== WIGGUM EXECUTION COMPLETE ==="
 }
 
@@ -795,10 +854,13 @@ run_update_docs() {
     echo "  Input: $input_list"
     echo "  Output: $output_list"
 
+    local prev_label="${WIGGUM_CURRENT_LABEL:-docs}"
+    WIGGUM_CURRENT_LABEL="${prev_label}-update"
     run_claude -p --permission-mode acceptEdits \
         "Update the following documentation files: $output_list. Use the input files as context for what has changed: $input_list. For each output file: read its current content, then update it to reflect the changes described in the input files. Preserve the existing structure and style of each document. Only update sections that are affected by the changes. Do not rewrite sections that are already accurate." \
         "${inputs[@]}" "${outputs[@]}"
 
+    WIGGUM_CURRENT_LABEL="${prev_label}-commit"
     run_claude -p --permission-mode bypassPermissions \
         "Review all uncommitted changes to: $output_list. For each modified file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
 
@@ -811,7 +873,11 @@ run_docs() {
     echo "Output: ${DOCS_OUTPUT[*]}"
     echo ""
 
+    log_init "${DOCS_OUTPUT[0]}"
+    WIGGUM_CURRENT_LABEL="docs"
     run_update_docs "${DOCS_INPUT[@]}" -- "${DOCS_OUTPUT[@]}"
 
+    log_entry "complete" "wiggum docs finished"
+    echo "Log: $WIGGUM_LOG_FILE"
     echo "=== WIGGUM DOCS COMPLETE ==="
 }
