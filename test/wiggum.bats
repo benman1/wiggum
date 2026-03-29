@@ -917,6 +917,83 @@ SCRIPT
     [[ "$captured_args" == *"--session-id"* ]]
 }
 
+@test "run_claude: replaces -c with --resume and --fork-session" {
+    local captured_args=""
+    claude() { captured_args="$*"; }
+
+    make_file plan.md
+    MODE="execute"
+    FILES=("plan.md")
+    log_init "plan.md"
+
+    # First call sets WIGGUM_LAST_SESSION_ID
+    WIGGUM_CURRENT_LABEL="first"
+    run_claude -p "hello"
+    local first_id="$WIGGUM_LAST_SESSION_ID"
+
+    # Second call with -c should resume from the first
+    WIGGUM_CURRENT_LABEL="second"
+    run_claude -p -c "follow up"
+    [[ "$captured_args" == *"--resume"* ]]
+    [[ "$captured_args" == *"--fork-session"* ]]
+    [[ "$captured_args" == *"$first_id"* ]]
+    # -c should be stripped
+    [[ "$captured_args" != *" -c "* ]]
+}
+
+@test "run_claude: never combines --session-id with -c" {
+    local captured_args=""
+    claude() { captured_args="$*"; }
+
+    make_file plan.md
+    MODE="execute"
+    FILES=("plan.md")
+    log_init "plan.md"
+
+    WIGGUM_CURRENT_LABEL="a"
+    run_claude -p "first"
+    WIGGUM_CURRENT_LABEL="b"
+    run_claude -p -c "second"
+
+    # Must not have both --session-id and -c
+    if [[ "$captured_args" == *"--session-id"* && "$captured_args" == *" -c "* ]]; then
+        fail "--session-id and -c must not appear together"
+    fi
+}
+
+@test "run_claude: each call gets a unique session ID" {
+    local ids=()
+    claude() {
+        for arg in "$@"; do
+            if [[ "$prev_arg" == "--session-id" ]]; then
+                ids+=("$arg")
+            fi
+            prev_arg="$arg"
+        done
+    }
+
+    make_file plan.md
+    MODE="execute"
+    FILES=("plan.md")
+    log_init "plan.md"
+
+    local prev_arg=""
+    WIGGUM_CURRENT_LABEL="a"
+    run_claude -p "one"
+    prev_arg=""
+    WIGGUM_CURRENT_LABEL="b"
+    run_claude -p "two"
+    prev_arg=""
+    WIGGUM_CURRENT_LABEL="c"
+    run_claude -p -c "three"
+
+    # All three should have different session IDs
+    [ "${#ids[@]}" -eq 3 ]
+    [ "${ids[0]}" != "${ids[1]}" ]
+    [ "${ids[1]}" != "${ids[2]}" ]
+    [ "${ids[0]}" != "${ids[2]}" ]
+}
+
 # ── Exit codes ───────────────────────────────────────────────────────────────
 
 @test "exit codes: constants are distinct non-zero integers" {
