@@ -783,7 +783,7 @@ run_validation() {
             fi
             echo "Requesting fix from Claude..."
             WIGGUM_CURRENT_LABEL="${WIGGUM_CURRENT_LABEL}-fix-$retries"
-            run_claude -p -c --permission-mode acceptEdits "$(echo -e "$prompt")"
+            run_claude -p -c --permission-mode bypassPermissions "$(echo -e "$prompt")"
             continue
         fi
 
@@ -813,7 +813,7 @@ run_execute() {
     echo "--- Phase 1: Diagnostic & Status Sync ---"
     log_entry "phase" "1 - diagnostic & status sync"
     WIGGUM_CURRENT_LABEL="phase1-diagnostic"
-    run_claude -p --permission-mode acceptEdits \
+    run_claude -p --permission-mode bypassPermissions \
         "The workplan is defined ONLY in: $file_list. Ignore README.md and other documentation -- they are NOT the plan. Analyze the repository against the workplan. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement." \
         "${FILES[@]}"
 
@@ -829,7 +829,7 @@ run_execute() {
 
         # Implementation: acceptEdits so file changes are auto-approved
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
-        run_claude -p -c --permission-mode acceptEdits \
+        run_claude -p -c --permission-mode bypassPermissions \
             "The workplan is defined ONLY in: $file_list. Ignore README.md and other documentation -- they are NOT the plan. Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found." \
             "${FILES[@]}"
 
@@ -849,7 +849,7 @@ run_execute() {
     echo "--- Phase 3: Summary & Alignment ---"
     log_entry "phase" "3 - summary & alignment"
     WIGGUM_CURRENT_LABEL="phase3-summary"
-    run_claude -p -c --permission-mode acceptEdits \
+    run_claude -p -c --permission-mode bypassPermissions \
         "The workplan is defined ONLY in: $file_list. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, and verification results." \
         "${FILES[@]}"
 
@@ -905,7 +905,7 @@ run_update_docs() {
 
     local prev_label="${WIGGUM_CURRENT_LABEL:-docs}"
     WIGGUM_CURRENT_LABEL="${prev_label}-update"
-    run_claude -p --permission-mode acceptEdits \
+    run_claude -p --permission-mode bypassPermissions \
         "Update the following documentation files: $output_list. Use the input files as context for what has changed: $input_list. For each output file: read its current content, then update it to reflect the changes described in the input files. Preserve the existing structure and style of each document. Only update sections that are affected by the changes. Do not rewrite sections that are already accurate." \
         "${inputs[@]}" "${outputs[@]}"
 
