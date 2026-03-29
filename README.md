@@ -191,13 +191,46 @@ wiggum execute docs/plan.md docs/api_spec.md docs/schema.csv
 
 Default output: `<input-basename>_summary.md` in the same directory as the first input file.
 
-### Using shell globs
+### Batch workflows
 
-Bash expands globs before wiggum sees them, so these work naturally:
+**Plan from multiple issues at once.** All files are passed to Claude as context for a single combined plan:
 
 ```bash
-wiggum plan issues/*.md
-wiggum execute docs/plan_*.md
+wiggum plan issues/auth-bug.md issues/rate-limiting.md issues/logging-gap.md
+# produces: issues/auth-bug_plan.md (named after the first file)
+
+wiggum plan issues/auth-bug.md issues/rate-limiting.md --plan-file docs/sprint_plan.md
+# better: explicit output name for combined plans
+```
+
+**Run multiple plans sequentially.** Use a simple loop to execute several plans one after another:
+
+```bash
+for plan in docs/*_plan.md; do
+    wiggum execute "$plan" --iterations 3
+done
+```
+
+**Plan all issues in a directory.** Bash expands globs before wiggum sees them:
+
+```bash
+wiggum plan issues/*.md --plan-file docs/backlog_plan.md
+```
+
+**Resume a partially-completed plan.** If a previous run only finished some tasks, just run execute again. Phase 1 syncs the checkboxes against the repo, so Claude picks up where it left off:
+
+```bash
+# First run: completes 4 of 10 tasks
+wiggum execute docs/plan.md --iterations 4
+
+# Second run: starts from task 5
+wiggum execute docs/plan.md --iterations 6
+```
+
+**Pass supporting context alongside a plan.** Extra files (specs, schemas, PDFs) are passed to Claude as context but aren't treated as the plan:
+
+```bash
+wiggum execute docs/plan.md docs/api_spec.md docs/schema.csv
 ```
 
 ### Command reference
