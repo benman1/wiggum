@@ -428,3 +428,4 @@ brew install bats-core shellcheck
 - **Keep issues focused.** One issue file per feature or bug works better than a single monolithic document.
 - **Tune retries to your project.** If your test suite is flaky, increase `max_validation_retries`. If you're paying close attention to token costs, decrease it.
 - **Use `--verbose` to debug.** If wiggum isn't doing what you expect, `--verbose` shows exactly what Claude is doing at each step.
+- **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` will remind you if one is missing.
