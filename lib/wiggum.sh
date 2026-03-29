@@ -643,6 +643,7 @@ run_claude() {
             if [[ -n "$WIGGUM_LAST_SESSION_ID" ]]; then
                 session_args=("--session-id" "$session_id" "--resume" "$WIGGUM_LAST_SESSION_ID" "--fork-session")
                 log_entry "$label" "session $session_id (resumed from $WIGGUM_LAST_SESSION_ID)"
+                echo "  session: $session_id (resumed from $WIGGUM_LAST_SESSION_ID)"
             fi
         else
             filtered_args+=("$arg")
@@ -651,6 +652,7 @@ run_claude() {
 
     if [[ "${session_args[*]}" != *"--resume"* ]]; then
         log_entry "$label" "session $session_id"
+        echo "  session: $session_id"
     fi
 
     WIGGUM_LAST_SESSION_ID="$session_id"
