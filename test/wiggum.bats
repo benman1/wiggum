@@ -1006,6 +1006,14 @@ S
     grep -q "^--- wiggum run" issue.log
 }
 
+@test "log_init: succeeds when FILES is empty (docs mode)" {
+    make_file output.md
+    MODE="docs"
+    FILES=()
+    log_init "output.md"
+    grep -q "wiggum docs" output.log
+}
+
 @test "log_entry: writes timestamped entry to log" {
     make_file plan.md
     MODE="execute"

@@ -776,7 +776,7 @@ log_init() {
     WIGGUM_LOG_FILE="${dir}/${name}.log"
 
     echo "--- wiggum run $(date '+%Y-%m-%d %H:%M:%S') ---" >> "$WIGGUM_LOG_FILE"
-    log_entry "command" "wiggum $MODE ${FILES[*]}"
+    log_entry "command" "wiggum $MODE ${FILES[*]+${FILES[*]}}"
 }
 
 log_entry() {
