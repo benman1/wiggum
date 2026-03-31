@@ -151,6 +151,19 @@ wiggum check --verbose    # with detailed Claude output
 
 If all steps pass, exits 0. If any step fails after `max_validation_retries` fix attempts, exits non-zero.
 
+### Claude Code skill
+
+Wiggum can also run as a slash command inside Claude Code itself. The `/wiggum` skill gives Claude the same plan-implement-verify-commit workflow without leaving the conversation.
+
+```
+/wiggum docs/login-bug.md
+/wiggum "add rate limiting to the /api/upload endpoint"
+```
+
+The skill accepts either a file path (which it reads) or a plain-text description. It follows the same workflow as the CLI -- plan, implement iteratively, verify against `.wiggumrc`, self-heal, commit -- but runs natively inside Claude Code using its own tools rather than shelling out to the `claude` CLI.
+
+The skill is installed by `wiggum init` at `.claude/skills/wiggum/SKILL.md`. You can also install it manually by copying the file from this repo.
+
 ## Prerequisites
 
 - [Claude Code CLI](https://claude.com/claude-code) installed and authenticated
@@ -200,7 +213,11 @@ Available presets:
 
 If no preset is given, wiggum inspects the current directory and picks the best match. The generated `.wiggumrc` is a starting point -- edit it to match your actual scripts.
 
-After creating the `.wiggumrc`, init offers to set up Claude Code permissions (see [Permissions](#permissions) below) and reminds you to create a `CLAUDE.md` if one doesn't exist.
+After creating the `.wiggumrc`, init offers to:
+
+1. Set up Claude Code permissions (see [Permissions](#permissions) below)
+2. Install the `/wiggum` Claude Code skill (see [Claude Code skill](#claude-code-skill) below)
+3. Remind you to create a `CLAUDE.md` if one doesn't exist
 
 ### Creating a plan
 
@@ -556,6 +573,8 @@ wiggum/
   CLAUDE.md              Project standards for Claude Code
   .claude/
     settings.local.json  Per-machine Claude Code permissions (not committed)
+    skills/wiggum/
+      SKILL.md           /wiggum slash command for Claude Code
 ```
 
 ## Development
@@ -582,3 +601,4 @@ brew install bats-core shellcheck
 - **Use `--verbose` to debug.** If wiggum isn't doing what you expect, `--verbose` shows exactly what Claude is doing at each step.
 - **Resume any step with `claude -r`.** Wiggum logs a Claude session ID for every step. Find the session ID in the `.log` file and resume it interactively: `claude -r <session-id>`. Useful for asking follow-up questions about what Claude did during a specific implementation or validation step.
 - **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` reminds you if one is missing.
+- **Use `/wiggum` inside Claude Code.** If you're already in a Claude Code session and want to kick off the full loop without switching to the terminal, use `/wiggum <issue>`. It runs the same workflow natively.
