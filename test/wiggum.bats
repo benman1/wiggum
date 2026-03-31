@@ -496,7 +496,7 @@ EOF
 
 @test "run_init: creates .wiggumrc from explicit preset" {
     INIT_PRESET="python"
-    echo "n" | run_init
+    printf "n\nn\n" | run_init
     [ -f ".wiggumrc" ]
     grep -q "pytest" .wiggumrc
 }
@@ -504,14 +504,14 @@ EOF
 @test "run_init: auto-detects preset" {
     INIT_PRESET=""
     touch package.json
-    echo "n" | run_init
+    printf "n\nn\n" | run_init
     [ -f ".wiggumrc" ]
     grep -q "npm test" .wiggumrc
 }
 
 @test "run_init: creates .claude/settings.local.json when approved" {
     INIT_PRESET="node"
-    echo -e "y\nn" | run_init
+    printf "y\nn\nn\n" | run_init
     [ -f ".claude/settings.local.json" ]
     grep -q "git add" .claude/settings.local.json
     grep -q "npm run" .claude/settings.local.json
@@ -519,7 +519,7 @@ EOF
 
 @test "run_init: skips permissions when declined" {
     INIT_PRESET="node"
-    echo "n" | run_init
+    printf "n\nn\n" | run_init
     [ ! -f ".claude/settings.local.json" ]
 }
 
@@ -604,11 +604,82 @@ EOF
     fi
 }
 
-@test "setup_claude_permissions: overwrites existing file" {
+@test "setup_claude_permissions: merges into existing file preserving other keys" {
     mkdir -p .claude
-    echo '{}' > .claude/settings.local.json
+    cat > .claude/settings.local.json <<'EOF'
+{
+  "permissions": {
+    "allow": ["Bash(make *)"],
+    "deny": ["Bash(rm -rf *)"]
+  },
+  "other_setting": true
+}
+EOF
     printf "y\nn\n" | setup_claude_permissions node
+    # New rules are present
     grep -q '"Bash(git add \*)"' .claude/settings.local.json
+    grep -q '"Bash(npm run \*)"' .claude/settings.local.json
+    # Existing allow rule is preserved
+    grep -q '"Bash(make \*)"' .claude/settings.local.json
+    # Other keys are preserved
+    grep -q '"deny"' .claude/settings.local.json
+    grep -q '"Bash(rm -rf \*)"' .claude/settings.local.json
+    grep -q '"other_setting"' .claude/settings.local.json
+}
+
+@test "setup_claude_permissions: does not duplicate existing allow rules" {
+    mkdir -p .claude
+    cat > .claude/settings.local.json <<'EOF'
+{
+  "permissions": {
+    "allow": ["Bash(git add *)"]
+  }
+}
+EOF
+    printf "y\nn\n" | setup_claude_permissions node
+    # Count occurrences of "git add" -- should be exactly 1
+    local count
+    count=$(grep -c '"Bash(git add \*)"' .claude/settings.local.json)
+    [ "$count" -eq 1 ]
+}
+
+# ── setup_wiggum_skill ───────────────────────────────────────────────────────
+
+@test "setup_wiggum_skill: creates skill file when approved" {
+    echo "y" | setup_wiggum_skill
+    [ -f ".claude/skills/wiggum/SKILL.md" ]
+    grep -q "name: wiggum" .claude/skills/wiggum/SKILL.md
+    grep -q "disable-model-invocation: true" .claude/skills/wiggum/SKILL.md
+    grep -q '\$ARGUMENTS' .claude/skills/wiggum/SKILL.md
+}
+
+@test "setup_wiggum_skill: skips when declined" {
+    echo "n" | setup_wiggum_skill
+    [ ! -f ".claude/skills/wiggum/SKILL.md" ]
+}
+
+@test "setup_wiggum_skill: skips when skill already exists" {
+    mkdir -p .claude/skills/wiggum
+    echo "existing" > .claude/skills/wiggum/SKILL.md
+    run setup_wiggum_skill
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already exists"* ]]
+    # Original content preserved
+    grep -q "existing" .claude/skills/wiggum/SKILL.md
+}
+
+@test "setup_wiggum_skill: skill contains verify loop instructions" {
+    echo "y" | setup_wiggum_skill
+    grep -q "wiggumrc" .claude/skills/wiggum/SKILL.md
+    grep -q "autofix" .claude/skills/wiggum/SKILL.md
+    grep -q "5 times" .claude/skills/wiggum/SKILL.md
+}
+
+@test "run_init: creates skill when approved" {
+    INIT_PRESET="node"
+    # y=permissions, n=pkg-manager, y=skill
+    printf "y\nn\ny\n" | run_init
+    [ -f ".claude/skills/wiggum/SKILL.md" ]
 }
 
 @test "run_init: aborts on existing .wiggumrc when user says no" {
