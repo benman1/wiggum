@@ -162,7 +162,7 @@ Wiggum can also run as a slash command inside Claude Code itself. The `/wiggum` 
 
 The skill accepts either a file path (which it reads) or a plain-text description. It follows the same workflow as the CLI -- plan, implement iteratively, verify against `.wiggumrc`, self-heal, commit -- but runs natively inside Claude Code using its own tools rather than shelling out to the `claude` CLI.
 
-The skill is installed by `wiggum init` at `.claude/skills/wiggum/SKILL.md`. You can also install it manually by copying the file from this repo.
+The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKILL.md`) so it works in every project. Running `wiggum init` in a specific project installs a project-local copy at `.claude/skills/wiggum/SKILL.md`.
 
 ## Prerequisites
 
@@ -179,7 +179,7 @@ git clone <repo-url> && cd wiggum
 ./install.sh
 ```
 
-This copies `wiggum.sh` and `lib/wiggum.sh` to `/usr/local/lib/wiggum/`, symlinks `/usr/local/bin/wiggum` to the entry point, and seeds `~/.wiggumrc` from the example config if you don't have one yet. May prompt for sudo.
+This copies `wiggum.sh` and `lib/wiggum.sh` to `/usr/local/lib/wiggum/`, symlinks `/usr/local/bin/wiggum` to the entry point, seeds `~/.wiggumrc` from the example config if you don't have one yet, and installs the `/wiggum` Claude Code skill globally. May prompt for sudo.
 
 Or just run it directly from the repo without installing:
 

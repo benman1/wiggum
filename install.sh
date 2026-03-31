@@ -78,6 +78,15 @@ if [[ ! -f "$HOME/.wiggumrc" ]]; then
     fi
 fi
 
+# Install /wiggum skill globally for Claude Code
+SKILL_DIR="$HOME/.claude/skills/wiggum"
+SKILL_SRC="$SOURCE_DIR/.claude/skills/wiggum/SKILL.md"
+if [[ -f "$SKILL_SRC" ]]; then
+    mkdir -p "$SKILL_DIR"
+    cp "$SKILL_SRC" "$SKILL_DIR/SKILL.md"
+    echo "Installed /wiggum skill to $SKILL_DIR/SKILL.md"
+fi
+
 # Verify
 if command -v wiggum &>/dev/null; then
     echo ""
