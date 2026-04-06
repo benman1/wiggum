@@ -15,6 +15,7 @@ export EXIT_BAD_ARGS=1
 export EXIT_NO_CONFIG=2
 export EXIT_VALIDATION_FAILED=3
 export EXIT_CLAUDE_FAILED=4
+export EXIT_PLAN_FAILED=5
 
 # ── State (reset by wiggum_reset for testing) ───────────────────────────────
 
@@ -29,6 +30,7 @@ wiggum_reset() {
     INIT_PRESET=""
     VERIFY_STEPS=()
     VERBOSE=false
+    WIGGUM_SHOW_OUTPUT=false
     CLAUDE_EXTRA_ARGS=()
     CLI_MAX_ITERATIONS=""
     CLI_MAX_RETRIES=""
@@ -437,15 +439,29 @@ persist_stdin() {
     local dir="docs"
     mkdir -p "$dir"
     local dest="${dir}/stdin.md"
-    if [[ -f "$dest" ]]; then
-        local n=1
-        while [[ -f "${dir}/stdin_${n}.md" ]]; do
-            n=$((n + 1))
-        done
-        dest="${dir}/stdin_${n}.md"
-    fi
     cp "$STDIN_FILE" "$dest"
     echo "$dest"
+}
+
+# Derive a filename-safe slug from a file's first heading or first line.
+# Falls back to a date stamp if nothing usable is found.
+slugify() {
+    local file="$1"
+    local text=""
+    # Try first markdown heading
+    text="$(grep -m1 '^#' "$file" 2>/dev/null | sed 's/^#* *//')"
+    # Fall back to first non-empty line
+    if [[ -z "$text" ]]; then
+        text="$(grep -m1 '.' "$file" 2>/dev/null)"
+    fi
+    # Lowercase, replace non-alnum with hyphens, trim, truncate
+    text="$(echo "$text" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-//;s/-$//' | cut -c1-50)"
+    # Strip trailing hyphen from truncation
+    text="${text%-}"
+    if [[ -z "$text" ]]; then
+        text="$(date +%Y-%m-%d)"
+    fi
+    echo "$text"
 }
 
 # ── Output filenames ─────────────────────────────────────────────────────────
@@ -886,7 +902,7 @@ run_claude() {
             if [[ -n "$WIGGUM_LAST_SESSION_ID" ]]; then
                 session_args=("--session-id" "$session_id" "--resume" "$WIGGUM_LAST_SESSION_ID" "--fork-session")
                 log_entry "$label" "session $session_id (resumed from $WIGGUM_LAST_SESSION_ID)"
-                echo "  session: $session_id (resumed from $WIGGUM_LAST_SESSION_ID)"
+                echo "  session: $session_id (resumed from $WIGGUM_LAST_SESSION_ID)" >&2
             fi
         else
             filtered_args+=("$arg")
@@ -895,13 +911,18 @@ run_claude() {
 
     if [[ "${session_args[*]}" != *"--resume"* ]]; then
         log_entry "$label" "session $session_id"
-        echo "  session: $session_id"
+        echo "  session: $session_id" >&2
     fi
 
     WIGGUM_LAST_SESSION_ID="$session_id"
 
-    claude "${session_args[@]}" \
-        ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}"
+    if [[ "$VERBOSE" == true || "$WIGGUM_SHOW_OUTPUT" == true ]]; then
+        claude "${session_args[@]}" \
+            ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}"
+    else
+        claude "${session_args[@]}" \
+            ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}" >/dev/null
+    fi
 
     log_entry "$label" "done"
 }
@@ -917,7 +938,7 @@ run_plan() {
     echo "=== WIGGUM PLAN MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
     if [[ "$piped" == true ]]; then
-        echo "Output: stdout (via $PLAN_FILE)" >&2
+        echo "Output: stdout" >&2
     else
         echo "Output plan: $PLAN_FILE" >&2
     fi
@@ -931,11 +952,15 @@ run_plan() {
     local file_list="${FILES[*]}"
 
     WIGGUM_CURRENT_LABEL="plan"
+    if [[ "$piped" != true ]]; then
+        WIGGUM_SHOW_OUTPUT=true
+    fi
     run_claude -p --permission-mode bypassPermissions \
-        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), acceptance criteria, and dependencies. Use the Write tool to save the plan to: $PLAN_FILE. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), acceptance criteria, and dependencies. Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
+    WIGGUM_SHOW_OUTPUT=false
 
-    if [[ -f "$PLAN_FILE" ]]; then
+    if [[ -f "$PLAN_FILE" && -s "$PLAN_FILE" ]]; then
         if [[ "$piped" == true ]]; then
             cat "$PLAN_FILE"
             rm -f "$PLAN_FILE" "$STDIN_FILE"
@@ -944,7 +969,8 @@ run_plan() {
             echo "Plan created: $PLAN_FILE" >&2
         fi
     else
-        echo "Warning: plan file was not created. Check Claude output above." >&2
+        echo "Error: plan file was not created or is empty. Check Claude output above." >&2
+        return "$EXIT_PLAN_FAILED"
     fi
 }
 
@@ -1154,9 +1180,6 @@ run_execute() {
         "$(prompt_commit "$SUMMARY_FILE and $file_list")"
 
     echo "" >&2
-    if [[ -f "$SUMMARY_FILE" ]]; then
-        echo "Summary written to: $SUMMARY_FILE" >&2
-    fi
 
     # Phase 4 (optional): Update documentation
     if [[ ${#UPDATE_DOCS[@]} -gt 0 ]]; then
@@ -1171,8 +1194,25 @@ run_execute() {
         rm -f "$STDIN_FILE"
     fi
 
+    # Rename plan and summary to meaningful filenames
+    if [[ "${FILES[0]}" == docs/stdin.md ]]; then
+        local slug
+        slug="$(slugify "${FILES[0]}")"
+        local final_plan="docs/${slug}_plan.md"
+        local final_summary="docs/${slug}_summary.md"
+        mv "${FILES[0]}" "$final_plan"
+        echo "Plan: $final_plan" >&2
+        if [[ -f "$SUMMARY_FILE" ]]; then
+            mv "$SUMMARY_FILE" "$final_summary"
+            echo "Summary: $final_summary" >&2
+        fi
+    elif [[ -f "$SUMMARY_FILE" ]]; then
+        echo "Summary: $SUMMARY_FILE" >&2
+    fi
+
     log_entry "complete" "wiggum execution finished"
     echo "Log: $WIGGUM_LOG_FILE" >&2
+    echo "Session: $WIGGUM_LAST_SESSION_ID" >&2
     echo "=== WIGGUM EXECUTION COMPLETE ===" >&2
 }
 
@@ -1234,9 +1274,15 @@ run_check() {
             run_claude -p --permission-mode bypassPermissions \
                 "$(prompt_commit)"
         fi
+        if [[ -n "${WIGGUM_LAST_SESSION_ID:-}" ]]; then
+            echo "Session: $WIGGUM_LAST_SESSION_ID"
+        fi
         echo "=== ALL CHECKS PASSED ==="
     else
         echo ""
+        if [[ -n "${WIGGUM_LAST_SESSION_ID:-}" ]]; then
+            echo "Session: $WIGGUM_LAST_SESSION_ID"
+        fi
         echo "=== CHECKS FAILED ==="
         return "$EXIT_VALIDATION_FAILED"
     fi

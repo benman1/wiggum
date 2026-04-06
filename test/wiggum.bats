@@ -354,47 +354,16 @@ EOF
     rm -f "$STDIN_FILE"
 }
 
-@test "persist_stdin: increments number when docs/stdin.md exists" {
+@test "persist_stdin: overwrites docs/stdin.md when it exists" {
     STDIN_FILE="$(mktemp)"
-    echo "new issue" > "$STDIN_FILE"
+    echo "new plan" > "$STDIN_FILE"
     FILES=("$STDIN_FILE")
     mkdir -p docs
-    echo "old" > docs/stdin.md
+    echo "old plan" > docs/stdin.md
     local result
     result="$(persist_stdin)"
-    [ "$result" = "docs/stdin_1.md" ]
-    [[ "$(cat docs/stdin_1.md)" == "new issue" ]]
-    [[ "$(cat docs/stdin.md)" == "old" ]]
-    rm -f "$STDIN_FILE"
-}
-
-@test "persist_stdin: skips to next number when gap-free" {
-    STDIN_FILE="$(mktemp)"
-    echo "third" > "$STDIN_FILE"
-    FILES=("$STDIN_FILE")
-    mkdir -p docs
-    echo "first" > docs/stdin.md
-    echo "second" > docs/stdin_1.md
-    local result
-    result="$(persist_stdin)"
-    [ "$result" = "docs/stdin_2.md" ]
-    [[ "$(cat docs/stdin_2.md)" == "third" ]]
-    rm -f "$STDIN_FILE"
-}
-
-@test "persist_stdin: increments past single-digit numbers" {
-    STDIN_FILE="$(mktemp)"
-    echo "eleventh" > "$STDIN_FILE"
-    FILES=("$STDIN_FILE")
-    mkdir -p docs
-    echo "base" > docs/stdin.md
-    for i in $(seq 1 10); do
-        echo "entry $i" > "docs/stdin_${i}.md"
-    done
-    local result
-    result="$(persist_stdin)"
-    [ "$result" = "docs/stdin_11.md" ]
-    [[ "$(cat docs/stdin_11.md)" == "eleventh" ]]
+    [ "$result" = "docs/stdin.md" ]
+    [[ "$(cat docs/stdin.md)" == "new plan" ]]
     rm -f "$STDIN_FILE"
 }
 
@@ -407,6 +376,45 @@ EOF
     [ -d docs ]
     [ -f docs/stdin.md ]
     rm -f "$STDIN_FILE"
+}
+
+# ── slugify ──────────────────────────────────────────────────────────────────
+
+@test "slugify: extracts slug from markdown heading" {
+    echo "# Improve Chunking for Dashboards" > plan.md
+    local result
+    result="$(slugify plan.md)"
+    [ "$result" = "improve-chunking-for-dashboards" ]
+}
+
+@test "slugify: falls back to first non-empty line" {
+    echo "Fix the login bug" > plan.md
+    local result
+    result="$(slugify plan.md)"
+    [ "$result" = "fix-the-login-bug" ]
+}
+
+@test "slugify: strips special characters" {
+    echo "# Add SSO (SAML 2.0) & OAuth!" > plan.md
+    local result
+    result="$(slugify plan.md)"
+    [ "$result" = "add-sso-saml-2-0-oauth" ]
+}
+
+@test "slugify: truncates long headings at 50 chars" {
+    echo "# This is a very long heading that should be truncated to fit within a reasonable filename length" > plan.md
+    local result
+    result="$(slugify plan.md)"
+    [ "${#result}" -le 50 ]
+    # Should not end with a hyphen from truncation
+    [[ "$result" != *- ]]
+}
+
+@test "slugify: falls back to date when file is empty" {
+    touch plan.md
+    local result
+    result="$(slugify plan.md)"
+    [[ "$result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
 }
 
 # ── find_config ──────────────────────────────────────────────────────────────
@@ -1304,6 +1312,50 @@ S
     [ "${ids[0]}" != "${ids[2]}" ]
 }
 
+@test "run_claude: suppresses stdout by default" {
+    log_init "plan.md"
+    claude() { echo "visible output"; return 0; }
+    export -f claude
+    WIGGUM_CURRENT_LABEL="test"
+    local output
+    output="$(run_claude -p "hello" 2>/dev/null)"
+    [ -z "$output" ]
+}
+
+@test "run_claude: shows stdout when VERBOSE is true" {
+    log_init "plan.md"
+    claude() { echo "visible output"; return 0; }
+    export -f claude
+    VERBOSE=true
+    WIGGUM_CURRENT_LABEL="test"
+    local output
+    output="$(run_claude -p "hello" 2>/dev/null)"
+    [ "$output" = "visible output" ]
+}
+
+@test "run_claude: shows stdout when WIGGUM_SHOW_OUTPUT is true" {
+    log_init "plan.md"
+    claude() { echo "visible output"; return 0; }
+    export -f claude
+    WIGGUM_SHOW_OUTPUT=true
+    WIGGUM_CURRENT_LABEL="test"
+    local output
+    output="$(run_claude -p "hello" 2>/dev/null)"
+    [ "$output" = "visible output" ]
+}
+
+@test "run_claude: session ID goes to stderr not stdout" {
+    log_init "plan.md"
+    claude() { return 0; }
+    export -f claude
+    WIGGUM_CURRENT_LABEL="test"
+    local stdout stderr
+    stdout="$(run_claude -p "hello" 2>/dev/null)"
+    stderr="$(run_claude -p "hello" 2>&1 >/dev/null)"
+    [ -z "$stdout" ]
+    [[ "$stderr" == *"session:"* ]]
+}
+
 # ── Exit codes ───────────────────────────────────────────────────────────────
 
 @test "exit codes: constants are distinct non-zero integers" {
@@ -1311,13 +1363,111 @@ S
     [ "$EXIT_NO_CONFIG" -ne 0 ]
     [ "$EXIT_VALIDATION_FAILED" -ne 0 ]
     [ "$EXIT_CLAUDE_FAILED" -ne 0 ]
+    [ "$EXIT_PLAN_FAILED" -ne 0 ]
     # All distinct
     [ "$EXIT_BAD_ARGS" -ne "$EXIT_NO_CONFIG" ]
     [ "$EXIT_BAD_ARGS" -ne "$EXIT_VALIDATION_FAILED" ]
     [ "$EXIT_BAD_ARGS" -ne "$EXIT_CLAUDE_FAILED" ]
+    [ "$EXIT_BAD_ARGS" -ne "$EXIT_PLAN_FAILED" ]
     [ "$EXIT_NO_CONFIG" -ne "$EXIT_VALIDATION_FAILED" ]
     [ "$EXIT_NO_CONFIG" -ne "$EXIT_CLAUDE_FAILED" ]
+    [ "$EXIT_NO_CONFIG" -ne "$EXIT_PLAN_FAILED" ]
     [ "$EXIT_VALIDATION_FAILED" -ne "$EXIT_CLAUDE_FAILED" ]
+    [ "$EXIT_VALIDATION_FAILED" -ne "$EXIT_PLAN_FAILED" ]
+    [ "$EXIT_CLAUDE_FAILED" -ne "$EXIT_PLAN_FAILED" ]
+}
+
+# ── run_plan ─────────────────────────────────────────────────────────────────
+
+@test "run_plan: outputs plan file content to stdout when piped" {
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    # Stub claude to write the plan file
+    claude() { echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    local output
+    output="$(run_plan 2>/dev/null)"
+    [ "$output" = "# Plan" ]
+    # Plan file should be cleaned up
+    [ ! -f "$PLAN_FILE" ]
+}
+
+@test "run_plan: fails when plan file is empty" {
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    # Stub claude to create empty file
+    claude() { touch "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run run_plan
+    [ "$status" -eq "$EXIT_PLAN_FAILED" ]
+    [[ "$output" == *"not created or is empty"* ]]
+}
+
+@test "run_plan: fails when plan file is not created" {
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    # Stub claude to do nothing
+    claude() { return 0; }
+    export -f claude
+
+    run run_plan
+    [ "$status" -eq "$EXIT_PLAN_FAILED" ]
+    [[ "$output" == *"not created or is empty"* ]]
+}
+
+@test "run_plan: keeps plan file when not piped" {
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE=""
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    claude() { echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>/dev/null
+    [ -f "$PLAN_FILE" ]
+    [ "$(cat "$PLAN_FILE")" = "# Plan" ]
+}
+
+@test "run_plan: piped mode suppresses claude stdout" {
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    # Stub claude to write plan file AND print chatter to stdout
+    claude() {
+        echo "Plan saved to docs/issue_plan.md. It covers 8 phases:"
+        echo "# Plan" > "$PLAN_FILE"
+        return 0
+    }
+    export -f claude
+
+    local output
+    output="$(run_plan 2>/dev/null)"
+    # Should only contain the file content, not Claude's chatter
+    [ "$output" = "# Plan" ]
 }
 
 # ── Strict mode ──────────────────────────────────────────────────────────────
