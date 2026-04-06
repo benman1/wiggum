@@ -68,7 +68,7 @@ Before writing any code, Wiggum compares the plan against the actual state of th
 
 **Phase 2 -- Iterative Implementation**
 
-For each iteration (controlled by `--iterations` or the config file):
+For each iteration (up to `--max-iterations` or the config file value, stopping early if all tasks are done or progress stalls):
 
 1. **Implement** -- Claude reads the plan, picks the next discrete task, writes the code, and creates tests for new logic.
 2. **Verify** -- The verification waterfall runs each configured step in order. On failure:
@@ -76,10 +76,11 @@ For each iteration (controlled by `--iterations` or the config file):
    - *Verify steps* capture the error output and ask Claude to fix the code directly.
    - This cycle repeats up to `max_validation_retries` times before moving on.
 3. **Commit** -- Uncommitted changes are reviewed and committed with isolated, imperative-mood messages.
+4. **Progress check** -- Wiggum counts unchecked `[ ]` boxes in the plan. If none remain, execution stops early (all done). If the count didn't decrease for 2 consecutive iterations, execution stops (stalled). Otherwise, the next iteration begins.
 
 **Phase 3 -- Summary & Alignment**
 
-After all iterations complete, Wiggum:
+After all iterations complete (or early stop), Wiggum:
 
 - Updates the plan file, marking completed tasks with `[x]`
 - Writes an execution summary covering what was implemented, what was deferred, issues encountered, and verification results
@@ -92,25 +93,33 @@ After all iterations complete, Wiggum:
             +--------+---------+
                      |
           +----------v-----------+
-          |  Implement next step |  Phase 2 (x N iterations)
-          +----------+-----------+
-                     |
-               +-----v------+
-               |   Verify    |<--+
-               +-----+------+   |
-                     |           |
-                fail |     pass  |
-                     v           |
-              +------+------+   |
-              | Autofix /   +---+
-              | Claude fix  |  (up to max_validation_retries)
-              +-------------+
-                     |
-               +-----v------+
-               |   Commit    |
-               +-----+------+
-                     |
-            +--------v---------+
+     +--->|  Implement next step |  Phase 2 (up to N iterations)
+     |    +----------+-----------+
+     |               |
+     |         +-----v------+
+     |         |   Verify    |<--+
+     |         +-----+------+   |
+     |               |           |
+     |          fail |     pass  |
+     |               v           |
+     |        +------+------+   |
+     |        | Autofix /   +---+
+     |        | Claude fix  |  (up to max_validation_retries)
+     |        +-------------+
+     |               |
+     |         +-----v------+
+     |         |   Commit    |
+     |         +-----+------+
+     |               |
+     |       +-------v--------+
+     |       | Progress check |
+     |       +---+----+---+---+
+     |           |    |   |
+     |  progress |    |   | all done / stalled
+     +-----------+    |   |
+                      |   +--------+
+                      v            v
+            +------------------+  (early stop)
             |  Summary &       |  Phase 3
             |  Plan Update     |
             +------------------+
@@ -253,7 +262,7 @@ When given files, default output is `<input-basename>_plan.md` in the same direc
 wiggum execute docs/login_plan.md
 
 # More iterations for larger plans
-wiggum execute docs/plan.md --iterations 10
+wiggum execute docs/plan.md --max-iterations 10
 
 # Custom summary location
 wiggum execute docs/plan.md --summary-file reports/run1_summary.md
@@ -292,7 +301,7 @@ wiggum plan issues/auth-bug.md issues/rate-limiting.md --plan-file docs/sprint_p
 
 ```bash
 for plan in docs/*_plan.md; do
-    wiggum execute "$plan" --iterations 3
+    wiggum execute "$plan" --max-iterations 3
 done
 ```
 
@@ -306,10 +315,10 @@ wiggum plan issues/*.md --plan-file docs/backlog_plan.md
 
 ```bash
 # First run: completes 4 of 10 tasks
-wiggum execute docs/plan.md --iterations 4
+wiggum execute docs/plan.md --max-iterations 4
 
 # Second run: starts from task 5
-wiggum execute docs/plan.md --iterations 6
+wiggum execute docs/plan.md --max-iterations 6
 ```
 
 **Pass supporting context alongside a plan.** Extra files (specs, schemas, PDFs) are passed to Claude as context but aren't treated as the plan:
@@ -334,7 +343,7 @@ Modes:
 Options:
   --plan-file <path>       Output path for the plan (plan mode)
   --summary-file <path>    Output path for the summary (execute mode)
-  --iterations <n>         Number of implementation iterations (execute mode, default: 3)
+  --max-iterations <n>    Maximum implementation iterations (execute mode, default: 3)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
   --verbose                Pass --verbose to Claude Code for detailed output
   -i <files...>            Input files (docs mode)
@@ -367,7 +376,7 @@ Wiggum looks for a `.wiggumrc` file, first in the current directory, then in `$H
 |-----|-------------|---------|
 | `verify` | A shell command to run as a verification step. Fails are sent to Claude for fixing. Multiple lines define an ordered waterfall. | *(none)* |
 | `autofix` | Like `verify`, but the command is run once first to let it self-correct (e.g. linters with `--fix`). Only escalates to Claude if it still fails after autofix. | *(none)* |
-| `iterations` | Number of implementation iterations per run. | `3` |
+| `max_iterations` | Maximum implementation iterations per run. Stops early if all tasks complete or progress stalls. | `3` |
 | `max_validation_retries` | Max times the validation cycle retries before giving up. | `5` |
 
 ### Verify vs autofix
@@ -451,7 +460,7 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-iterations = 5
+max_iterations = 5
 ```
 
 **Python project:**
@@ -461,7 +470,7 @@ iterations = 5
 autofix = ruff format app tests && ruff check --fix app tests
 verify = pytest
 
-iterations = 3
+max_iterations = 3
 max_validation_retries = 3
 ```
 
@@ -485,14 +494,14 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-iterations = 3
+max_iterations = 3
 ```
 
 **Minimal (no verification):**
 
 ```
 # .wiggumrc
-iterations = 2
+max_iterations = 2
 ```
 
 Without any `verify` or `autofix` lines, wiggum still implements and commits but skips the validation loop entirely.
@@ -625,7 +634,7 @@ brew install bats-core shellcheck
 
 ## Tips
 
-- **Start small.** Use `--iterations 1` for a trial run to see how wiggum interprets your plan before committing to a longer run.
+- **Start small.** Use `--max-iterations 1` for a trial run to see how wiggum interprets your plan before committing to a longer run.
 - **Review the plan before executing.** `wiggum plan` is cheap. Edit the generated plan to remove, reorder, or clarify tasks before feeding it to `execute`.
 - **Use a branch.** Run wiggum on a feature branch so you can review the full diff before merging.
 - **Keep issues focused.** One issue file per feature or bug works better than a single monolithic document.

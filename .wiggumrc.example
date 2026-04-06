@@ -16,8 +16,8 @@
 # autofix = ruff format app tests scripts && ruff check --fix app tests scripts
 # verify = pytest
 
-# Number of implementation iterations (default: 3)
-iterations = 3
+# Max implementation iterations — stops early if all tasks complete or stalled (default: 3)
+max_iterations = 3
 
 # Max retries per validation cycle (default: 5)
 max_validation_retries = 5

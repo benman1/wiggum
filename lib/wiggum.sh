@@ -23,13 +23,14 @@ wiggum_reset() {
     FILES=()
     PLAN_FILE=""
     SUMMARY_FILE=""
-    ITERATIONS=3
+    MAX_ITERATIONS=3
     MAX_VALIDATION_RETRIES=5
+    MAX_STALL_COUNT=2
     INIT_PRESET=""
     VERIFY_STEPS=()
     VERBOSE=false
     CLAUDE_EXTRA_ARGS=()
-    CLI_ITERATIONS=""
+    CLI_MAX_ITERATIONS=""
     CLI_MAX_RETRIES=""
     UPDATE_DOCS=()
     DOCS_INPUT=()
@@ -64,7 +65,7 @@ load_config_from() {
         value="$(echo "$value" | xargs)"
 
         case "$key" in
-            verify|autofix|iterations|max_validation_retries)
+            verify|autofix|iterations|max_iterations|max_validation_retries)
                 echo "$key=$value"
                 ;;
             *)
@@ -86,9 +87,9 @@ apply_config() {
             autofix)
                 VERIFY_STEPS+=("autofix:$value")
                 ;;
-            iterations)
-                if [[ -z "$CLI_ITERATIONS" ]]; then
-                    ITERATIONS="$value"
+            iterations|max_iterations)
+                if [[ -z "$CLI_MAX_ITERATIONS" ]]; then
+                    MAX_ITERATIONS="$value"
                 fi
                 ;;
             max_validation_retries)
@@ -174,14 +175,16 @@ Usage:
   wiggum plan issue.md | wiggum execute
 
 Options:
-  --iterations <n>       Number of implementation iterations (default: 3)
+  --max-iterations <n>   Maximum implementation iterations (default: 3)
   --summary-file <path>  Output path for the summary (default: <base>_summary.md)
   --update-docs <files>  Comma-separated doc files to update after execution
   --verbose              Pass --verbose to Claude Code
 
 Phases:
   1. Diagnostic & Status Sync - reconcile plan against repo state
-  2. Iterative Implementation - implement, verify, commit (x N iterations)
+  2. Iterative Implementation - implement, verify, commit, progress check
+     Stops early when all tasks are checked off, or when no progress
+     is made for 2 consecutive iterations.
   3. Summary & Alignment     - update plan checkboxes, write summary
   4. Documentation Update     - update docs (if --update-docs is set)
 
@@ -189,7 +192,7 @@ When no files are given, reads from stdin.
 
 Examples:
   wiggum execute docs/plan.md
-  wiggum execute docs/plan.md --iterations 5 --update-docs README.md
+  wiggum execute docs/plan.md --max-iterations 5 --update-docs README.md
   wiggum plan issue.md | wiggum execute
   echo "Add dark mode" | wiggum plan | wiggum execute
 EOF
@@ -308,9 +311,9 @@ parse_args() {
                 SUMMARY_FILE="$2"
                 shift 2
                 ;;
-            --iterations)
-                ITERATIONS="$2"
-                CLI_ITERATIONS="$2"
+            --iterations|--max-iterations)
+                MAX_ITERATIONS="$2"
+                CLI_MAX_ITERATIONS="$2"
                 shift 2
                 ;;
             --verbose)
@@ -415,6 +418,19 @@ parse_args() {
     done
 }
 
+# ── Plan progress ────────────────────────────────────────────────────────────
+
+count_unchecked() {
+    local count=0
+    local f
+    for f in "$@"; do
+        if [[ -f "$f" ]]; then
+            count=$((count + $(grep -cE '^\s*-\s*\[ \]' "$f" || true)))
+        fi
+    done
+    echo "$count"
+}
+
 # ── Output filenames ─────────────────────────────────────────────────────────
 
 derive_output_file() {
@@ -470,7 +486,7 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-iterations = 3
+max_iterations = 3
 max_validation_retries = 5
 RCEOF
             ;;
@@ -482,7 +498,7 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-iterations = 3
+max_iterations = 3
 max_validation_retries = 5
 RCEOF
             ;;
@@ -492,7 +508,7 @@ RCEOF
 autofix = ruff format . && ruff check --fix .
 verify = pytest
 
-iterations = 3
+max_iterations = 3
 max_validation_retries = 5
 RCEOF
             ;;
@@ -504,7 +520,7 @@ verify = npm test
 verify = npm run build
 autofix = npx prettier --write .
 
-iterations = 3
+max_iterations = 3
 max_validation_retries = 5
 RCEOF
             ;;
@@ -514,7 +530,7 @@ RCEOF
 verify = shellcheck -s bash *.sh **/*.sh
 verify = bats test/
 
-iterations = 3
+max_iterations = 3
 max_validation_retries = 5
 RCEOF
             ;;
@@ -998,7 +1014,7 @@ run_validation() {
 run_execute() {
     echo "=== WIGGUM EXECUTE MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
-    echo "Iterations: $ITERATIONS" >&2
+    echo "Max iterations: $MAX_ITERATIONS" >&2
     echo "Summary output: $SUMMARY_FILE" >&2
     if [[ ${#VERIFY_STEPS[@]} -gt 0 ]]; then
         echo "Verification steps: ${VERIFY_STEPS[*]}" >&2
@@ -1027,10 +1043,14 @@ run_execute() {
         "Check if $file_list has any changes (modified or untracked). If so, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. Do not ask for confirmation -- just do it. If there are no changes, do nothing."
 
     # Phase 2: Iterative implementation
-    for ((i = 1; i <= ITERATIONS; i++)); do
+    local stall_count=0
+    local prev_remaining
+    prev_remaining="$(count_unchecked "${FILES[@]}")"
+
+    for ((i = 1; i <= MAX_ITERATIONS; i++)); do
         echo "" >&2
-        echo "--- Phase 2: Implementation step $i of $ITERATIONS ---" >&2
-        log_entry "phase" "2 - implementation step $i of $ITERATIONS"
+        echo "--- Phase 2: Implementation step $i of $MAX_ITERATIONS ($prev_remaining tasks remaining) ---" >&2
+        log_entry "phase" "2 - implementation step $i of $MAX_ITERATIONS ($prev_remaining remaining)"
 
         # Implementation: acceptEdits so file changes are auto-approved
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
@@ -1047,6 +1067,31 @@ run_execute() {
         WIGGUM_CURRENT_LABEL="phase2-commit-$i"
         run_claude -p --permission-mode bypassPermissions \
             "Review all uncommitted changes (modified and untracked files). For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
+
+        # Check progress
+        local remaining
+        remaining="$(count_unchecked "${FILES[@]}")"
+
+        if [[ "$remaining" -eq 0 ]]; then
+            echo "All tasks complete — stopping early." >&2
+            log_entry "stop" "all tasks complete after iteration $i"
+            break
+        fi
+
+        if [[ "$remaining" -ge "$prev_remaining" ]]; then
+            stall_count=$((stall_count + 1))
+            echo "No progress detected ($remaining tasks remaining, stall $stall_count of $MAX_STALL_COUNT)." >&2
+            log_entry "stall" "no progress on iteration $i ($remaining remaining, stall $stall_count)"
+            if [[ "$stall_count" -ge "$MAX_STALL_COUNT" ]]; then
+                echo "Stalled for $MAX_STALL_COUNT consecutive iterations — stopping." >&2
+                log_entry "stop" "stalled after iteration $i"
+                break
+            fi
+        else
+            stall_count=0
+        fi
+
+        prev_remaining="$remaining"
     done
 
     # Phase 3: Summary & alignment

@@ -68,7 +68,7 @@ make_file() {
     run parse_args help execute
     [ "$status" -eq 0 ]
     [[ "$output" == *"wiggum execute"* ]]
-    [[ "$output" == *"--iterations"* ]]
+    [[ "$output" == *"--max-iterations"* ]]
     [[ "$output" == *"Phases"* ]]
 }
 
@@ -180,22 +180,28 @@ make_file() {
     [ "$PLAN_FILE" = "custom.md" ]
 }
 
-@test "parse_args: execute mode with --iterations" {
+@test "parse_args: execute mode with --max-iterations" {
     make_file plan.md
-    parse_args execute plan.md --iterations 7
+    parse_args execute plan.md --max-iterations 7
     [ "$MODE" = "execute" ]
-    [ "$ITERATIONS" = "7" ]
+    [ "$MAX_ITERATIONS" = "7" ]
 }
 
-@test "parse_args: --iterations takes precedence over config" {
+@test "parse_args: --max-iterations takes precedence over config" {
     make_file plan.md
-    parse_args execute plan.md --iterations 7
-    # Config would set iterations=3, but CLI should win
+    parse_args execute plan.md --max-iterations 7
+    # Config would set max_iterations=3, but CLI should win
     cat > test.rc <<'EOF'
-iterations = 3
+max_iterations = 3
 EOF
     apply_config < <(load_config_from test.rc)
-    [ "$ITERATIONS" = "7" ]
+    [ "$MAX_ITERATIONS" = "7" ]
+}
+
+@test "parse_args: legacy --iterations still works" {
+    make_file plan.md
+    parse_args execute plan.md --iterations 5
+    [ "$MAX_ITERATIONS" = "5" ]
 }
 
 @test "parse_args: --summary-file sets SUMMARY_FILE" {
@@ -239,9 +245,62 @@ EOF
     [ -z "$MODE" ]
     [ "${#FILES[@]}" -eq 0 ]
     [ -z "$PLAN_FILE" ]
-    [ "$ITERATIONS" -eq 3 ]
+    [ "$MAX_ITERATIONS" -eq 3 ]
     [ -z "$STDIN_FILE" ]
     [ -z "$CLI_PLAN_FILE" ]
+}
+
+# ── count_unchecked ──────────────────────────────────────────────────────────
+
+@test "count_unchecked: counts unchecked boxes" {
+    cat > plan.md <<'EOF'
+- [ ] Task one
+- [x] Task two
+- [ ] Task three
+EOF
+    local result
+    result="$(count_unchecked plan.md)"
+    [ "$result" -eq 2 ]
+}
+
+@test "count_unchecked: returns zero when all checked" {
+    cat > plan.md <<'EOF'
+- [x] Task one
+- [x] Task two
+EOF
+    local result
+    result="$(count_unchecked plan.md)"
+    [ "$result" -eq 0 ]
+}
+
+@test "count_unchecked: counts across multiple files" {
+    cat > a.md <<'EOF'
+- [ ] Task one
+EOF
+    cat > b.md <<'EOF'
+- [ ] Task two
+- [ ] Task three
+EOF
+    local result
+    result="$(count_unchecked a.md b.md)"
+    [ "$result" -eq 3 ]
+}
+
+@test "count_unchecked: returns zero for missing file" {
+    local result
+    result="$(count_unchecked nonexistent.md)"
+    [ "$result" -eq 0 ]
+}
+
+@test "count_unchecked: handles indented checkboxes" {
+    cat > plan.md <<'EOF'
+  - [ ] Indented task
+    - [ ] Deeply indented
+- [x] Done
+EOF
+    local result
+    result="$(count_unchecked plan.md)"
+    [ "$result" -eq 2 ]
 }
 
 # ── derive_output_file ───────────────────────────────────────────────────────
@@ -396,17 +455,22 @@ EOF
     [ "${VERIFY_STEPS[2]}" = "npm run build" ]
 }
 
-@test "apply_config: sets iterations and max_validation_retries" {
-    apply_config <<< "$(printf "iterations=10\nmax_validation_retries=2")"
-    [ "$ITERATIONS" = "10" ]
+@test "apply_config: sets max_iterations and max_validation_retries" {
+    apply_config <<< "$(printf "max_iterations=10\nmax_validation_retries=2")"
+    [ "$MAX_ITERATIONS" = "10" ]
     [ "$MAX_VALIDATION_RETRIES" = "2" ]
 }
 
-@test "apply_config: CLI_ITERATIONS takes precedence over config" {
-    CLI_ITERATIONS="7"
-    ITERATIONS="7"
+@test "apply_config: legacy iterations key still works" {
     apply_config <<< "iterations=10"
-    [ "$ITERATIONS" = "7" ]
+    [ "$MAX_ITERATIONS" = "10" ]
+}
+
+@test "apply_config: CLI_MAX_ITERATIONS takes precedence over config" {
+    CLI_MAX_ITERATIONS="7"
+    MAX_ITERATIONS="7"
+    apply_config <<< "max_iterations=10"
+    [ "$MAX_ITERATIONS" = "7" ]
 }
 
 @test "apply_config: CLI_MAX_RETRIES takes precedence over config" {
