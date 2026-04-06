@@ -75,19 +75,22 @@ If no `.wiggumrc` exists, skip verification.
 
 Count the remaining unchecked `[ ]` tasks in `docs/<slug>_plan.md`.
 
-- **All done** (0 remaining): stop iterating, go to Step 3.
-- **No progress** (same or more remaining as last iteration): if this has happened **2 iterations in a row**, stop iterating and go to Step 3.
+- **All done** (0 remaining): stop reason is **complete**. Go to Step 3.
+- **No progress** (same or more remaining as last iteration): if this has happened **2 iterations in a row**, stop reason is **stalled**. Go to Step 3.
+- **Max iterations reached**: stop reason is **incomplete**. Go to Step 3.
 - **Otherwise**: continue to the next iteration.
 
 ## Step 3: Summarize
 
 1. Update `docs/<slug>_plan.md` — mark all completed tasks with `[x]`.
 2. Write a summary to `docs/<slug>_summary.md` covering:
+   - **Stop reason**: complete, stalled, or incomplete
    - What was implemented
    - What was deferred (if anything)
    - Issues encountered
    - Verification results
 3. Commit the summary and updated plan.
+4. Report the stop reason to the user.
 
 ## Rules
 
