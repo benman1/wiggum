@@ -60,7 +60,7 @@ wiggum execute < plan.md
 wiggum plan issue.md | wiggum execute
 ```
 
-Takes a workplan (typically one produced by `plan` mode, but any structured markdown will do) and implements it through three phases. When no files are given, reads the plan from stdin.
+Takes a workplan (typically one produced by `plan` mode, but any structured markdown will do) and implements it through three phases. When no files are given, reads the plan from stdin. At the end, the completed plan and summary are saved with descriptive filenames derived from the plan content (e.g., `docs/improve-chunking_plan.md` and `docs/improve-chunking_summary.md`).
 
 **Phase 1 -- Diagnostic & Status Sync**
 
@@ -161,7 +161,7 @@ Useful for:
 
 ```bash
 wiggum check              # run all verify/autofix steps
-wiggum check --verbose    # with detailed Claude output
+wiggum check --verbose    # show Claude output
 ```
 
 If all steps pass, exits 0. If any step fails after `max_validation_retries` fix attempts, exits non-zero.
@@ -345,7 +345,7 @@ Options:
   --summary-file <path>    Output path for the summary (execute mode)
   --max-iterations <n>    Maximum implementation iterations (execute mode, default: 3)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
-  --verbose                Pass --verbose to Claude Code for detailed output
+  --verbose                Show Claude output (suppressed by default)
   -i <files...>            Input files (docs mode)
   -o <files...>            Output doc files to update (docs mode)
   --                       End of options (remaining args are files)
@@ -358,13 +358,13 @@ output). Use -- to pass filenames that start with a dash.
 
 ### Verbose mode
 
-Pass `--verbose` to see detailed output from Claude Code, including API calls, tool usage, and token counts:
+By default, Claude's response text is suppressed — wiggum shows only its own status lines. Pass `--verbose` to see Claude's full output at each step:
 
 ```bash
 wiggum execute docs/plan.md --verbose
 ```
 
-This is useful for debugging or understanding what Claude is doing at each step. The flag is forwarded to every `claude` invocation wiggum makes.
+This is useful for debugging or understanding what Claude is doing at each step.
 
 ## Configuration
 
@@ -639,7 +639,7 @@ brew install bats-core shellcheck
 - **Use a branch.** Run wiggum on a feature branch so you can review the full diff before merging.
 - **Keep issues focused.** One issue file per feature or bug works better than a single monolithic document.
 - **Tune retries to your project.** If your test suite is flaky, increase `max_validation_retries`. If you're paying close attention to token costs, decrease it.
-- **Use `--verbose` to debug.** If wiggum isn't doing what you expect, `--verbose` shows exactly what Claude is doing at each step.
+- **Use `--verbose` to debug.** Claude's output is suppressed by default. Pass `--verbose` to see what Claude is doing at each step.
 - **Resume any step with `claude -r`.** Wiggum logs a Claude session ID for every step. Find the session ID in the `.log` file and resume it interactively: `claude -r <session-id>`. Useful for asking follow-up questions about what Claude did during a specific implementation or validation step.
 - **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` reminds you if one is missing.
 - **Use `/wiggum` inside Claude Code.** If you're already in a Claude Code session and want to kick off the full loop without switching to the terminal, use `/wiggum <issue>`. It runs the same workflow natively.
