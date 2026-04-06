@@ -29,6 +29,7 @@ wiggum_reset() {
     MAX_STALL_COUNT=2
     INIT_PRESET=""
     VERIFY_STEPS=()
+    BENCHMARK_SCRIPTS=()
     VERBOSE=false
     WIGGUM_SHOW_OUTPUT=false
     CLAUDE_EXTRA_ARGS=()
@@ -67,7 +68,7 @@ load_config_from() {
         value="$(echo "$value" | xargs)"
 
         case "$key" in
-            verify|autofix|iterations|max_iterations|max_validation_retries)
+            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries)
                 echo "$key=$value"
                 ;;
             *)
@@ -88,6 +89,9 @@ apply_config() {
                 ;;
             autofix)
                 VERIFY_STEPS+=("autofix:$value")
+                ;;
+            benchmark)
+                BENCHMARK_SCRIPTS+=("$value")
                 ;;
             iterations|max_iterations)
                 if [[ -z "$CLI_MAX_ITERATIONS" ]]; then
@@ -179,6 +183,7 @@ Usage:
 Options:
   --max-iterations <n>   Maximum implementation iterations (default: 3)
   --summary-file <path>  Output path for the summary (default: <base>_summary.md)
+  --benchmark <script>   Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>  Comma-separated doc files to update after execution
   --verbose              Show Claude output (suppressed by default)
 
@@ -325,6 +330,10 @@ parse_args() {
                 ;;
             --update-docs)
                 IFS=',' read -ra UPDATE_DOCS <<< "$2"
+                shift 2
+                ;;
+            --benchmark)
+                BENCHMARK_SCRIPTS+=("$2")
                 shift 2
                 ;;
             -i)
@@ -1104,6 +1113,26 @@ run_validation() {
     done
 }
 
+# ── Benchmarks ───────────────────────────────────────────────────────────────
+
+# Run all benchmark scripts and capture concatenated output.
+# Returns empty string if no benchmarks are configured.
+run_benchmarks() {
+    if [[ ${#BENCHMARK_SCRIPTS[@]} -eq 0 ]]; then
+        return 0
+    fi
+    local script output
+    for script in "${BENCHMARK_SCRIPTS[@]}"; do
+        echo "--- Benchmark: $script ---"
+        if output=$(eval "$script" 2>&1); then
+            echo "$output"
+        else
+            echo "(failed with exit code $?)"
+            echo "$output"
+        fi
+    done
+}
+
 # ── Execute ──────────────────────────────────────────────────────────────────
 
 run_execute() {
@@ -1112,6 +1141,13 @@ run_execute() {
     echo "Max iterations: $MAX_ITERATIONS" >&2
     echo "Summary output: $SUMMARY_FILE" >&2
     print_verify_steps 2
+    if [[ ${#BENCHMARK_SCRIPTS[@]} -gt 0 ]]; then
+        echo "Benchmarks:" >&2
+        local script
+        for script in "${BENCHMARK_SCRIPTS[@]}"; do
+            echo "  - $script" >&2
+        done
+    fi
     echo "" >&2
 
     if [[ -n "$STDIN_FILE" ]]; then
@@ -1138,6 +1174,7 @@ run_execute() {
     local prev_remaining
     prev_remaining="$(count_unchecked "${FILES[@]}")"
     local stop_reason="incomplete"
+    local benchmark_output=""
 
     for ((i = 1; i <= MAX_ITERATIONS; i++)); do
         echo "" >&2
@@ -1145,9 +1182,13 @@ run_execute() {
         log_entry "phase" "2 - implementation step $i of $MAX_ITERATIONS ($prev_remaining remaining)"
 
         # Implementation: bypassPermissions so file changes are auto-approved
+        local benchmark_context=""
+        if [[ -n "$benchmark_output" ]]; then
+            benchmark_context="\n\nBenchmark results from the previous iteration:\n$benchmark_output\n\nUse these results to guide your implementation — focus on improving the metrics."
+        fi
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
         run_claude -p -c --permission-mode bypassPermissions \
-            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found. $PROMPT_SUFFIX" \
+            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found.${benchmark_context} $PROMPT_SUFFIX" \
             "${FILES[@]}"
 
         # Validation: uses -c to keep implementation context for fixes
@@ -1159,6 +1200,14 @@ run_execute() {
         WIGGUM_CURRENT_LABEL="phase2-commit-$i"
         run_claude -p --permission-mode bypassPermissions \
             "$(prompt_commit)"
+
+        # Run benchmarks after commit (output feeds into next iteration)
+        if [[ ${#BENCHMARK_SCRIPTS[@]} -gt 0 ]]; then
+            echo "Running benchmarks..." >&2
+            benchmark_output="$(run_benchmarks)"
+            echo "$benchmark_output" >&2
+            log_entry "benchmark" "$benchmark_output"
+        fi
 
         # Check progress
         local remaining
