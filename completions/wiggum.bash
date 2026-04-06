@@ -49,7 +49,7 @@ _wiggum() {
                     _filedir md
                     return
                     ;;
-                --iterations)
+                --max-iterations|--iterations)
                     mapfile -t COMPREPLY < <(compgen -W "1 2 3 5 10" -- "$cur")
                     return
                     ;;
@@ -59,7 +59,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--iterations --summary-file --update-docs --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--max-iterations --summary-file --update-docs --verbose --help" -- "$cur")
             else
                 _filedir md
             fi

@@ -2,5 +2,5 @@
 verify = shellcheck -s bash wiggum.sh lib/wiggum.sh install.sh
 verify = bats test/wiggum.bats
 
-iterations = 3
+max_iterations = 3
 max_validation_retries = 5

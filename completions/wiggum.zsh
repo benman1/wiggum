@@ -39,7 +39,7 @@ _wiggum() {
             ;;
         execute)
             _arguments \
-                '--iterations[Number of implementation iterations]:count:(1 2 3 5 10)' \
+                '--max-iterations[Maximum implementation iterations]:count:(1 2 3 5 10)' \
                 '--summary-file[Output path for the summary]:file:_files -g "*.md"' \
                 '--update-docs[Comma-separated doc files to update]:files:_files -g "*.md"' \
                 '--verbose[Pass --verbose to Claude Code]' \
