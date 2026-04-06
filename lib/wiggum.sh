@@ -1208,6 +1208,12 @@ run_check() {
     WIGGUM_CURRENT_LABEL="check"
     if run_validation; then
         echo ""
+        if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+            echo "Committing changes..."
+            WIGGUM_CURRENT_LABEL="check-commit"
+            run_claude -p --permission-mode bypassPermissions \
+                "Review all uncommitted changes (modified and untracked files). For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
+        fi
         echo "=== ALL CHECKS PASSED ==="
     else
         echo ""
