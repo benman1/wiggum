@@ -917,7 +917,7 @@ run_plan() {
     echo "=== WIGGUM PLAN MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
     if [[ "$piped" == true ]]; then
-        echo "Output: stdout" >&2
+        echo "Output: stdout (via $PLAN_FILE)" >&2
     else
         echo "Output plan: $PLAN_FILE" >&2
     fi
