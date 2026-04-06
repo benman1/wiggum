@@ -48,7 +48,7 @@ Wiggum is a **self-driving agent loop** that orchestrates Claude Code to turn is
 These matter because wiggum's prompts are its primary interface with Claude Code:
 
 - Always name the plan files explicitly: "The workplan is defined ONLY in: `<files>`".
-- Always include: "Ignore README.md and other documentation -- they are NOT the plan."
+- Always include: "You may read README.md and other project documentation for context, but they are not the plan."
 - Commit prompts must say: "Do not ask for confirmation -- just do it."
 - Commit prompts must say: "DO NOT include any trailers, footers, or attributions."
 - Commit prompts must cover "modified and untracked files" (not just "modified").
