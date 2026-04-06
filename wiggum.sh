@@ -28,7 +28,11 @@ main() {
     load_config
 
     local base_file="${FILES[0]}"
-    if [[ -n "$STDIN_FILE" ]]; then
+    if [[ -n "$STDIN_FILE" && "$MODE" == "execute" ]]; then
+        base_file="$(persist_stdin)"
+        FILES[0]="$base_file"
+        echo "Persisted stdin to: $base_file" >&2
+    elif [[ -n "$STDIN_FILE" ]]; then
         base_file="docs/stdin.md"
     fi
 

@@ -431,6 +431,23 @@ count_unchecked() {
     echo "$count"
 }
 
+# ── Stdin persistence ────────────────────────────────────────────────────────
+
+persist_stdin() {
+    local dir="docs"
+    mkdir -p "$dir"
+    local dest="${dir}/stdin.md"
+    if [[ -f "$dest" ]]; then
+        local n=1
+        while [[ -f "${dir}/stdin_${n}.md" ]]; do
+            n=$((n + 1))
+        done
+        dest="${dir}/stdin_${n}.md"
+    fi
+    cp "$STDIN_FILE" "$dest"
+    echo "$dest"
+}
+
 # ── Output filenames ─────────────────────────────────────────────────────────
 
 derive_output_file() {
