@@ -170,6 +170,8 @@ wiggum execute - Implement a workplan with iterative validation
 
 Usage:
   wiggum execute <files...> [options]
+  wiggum execute [options] < plan.md
+  wiggum plan issue.md | wiggum execute
 
 Options:
   --iterations <n>       Number of implementation iterations (default: 3)
@@ -183,9 +185,13 @@ Phases:
   3. Summary & Alignment     - update plan checkboxes, write summary
   4. Documentation Update     - update docs (if --update-docs is set)
 
+When no files are given, reads from stdin.
+
 Examples:
   wiggum execute docs/plan.md
   wiggum execute docs/plan.md --iterations 5 --update-docs README.md
+  wiggum plan issue.md | wiggum execute
+  echo "Add dark mode" | wiggum plan | wiggum execute
 EOF
             ;;
         docs)
@@ -234,7 +240,8 @@ EOF
 wiggum $VERSION - Self-driving agent loop
 
 Usage:
-  wiggum <command> [options]
+  wiggum <command> [files...] [options]
+  command | wiggum <command> [options]
   wiggum help <command>
 
 Commands:
@@ -989,22 +996,26 @@ run_validation() {
 # ── Execute ──────────────────────────────────────────────────────────────────
 
 run_execute() {
-    echo "=== WIGGUM EXECUTE MODE ==="
-    echo "Input files: ${FILES[*]}"
-    echo "Iterations: $ITERATIONS"
-    echo "Summary output: $SUMMARY_FILE"
+    echo "=== WIGGUM EXECUTE MODE ===" >&2
+    echo "Input files: ${FILES[*]}" >&2
+    echo "Iterations: $ITERATIONS" >&2
+    echo "Summary output: $SUMMARY_FILE" >&2
     if [[ ${#VERIFY_STEPS[@]} -gt 0 ]]; then
-        echo "Verification steps: ${VERIFY_STEPS[*]}"
+        echo "Verification steps: ${VERIFY_STEPS[*]}" >&2
     else
-        echo "Verification steps: (none configured)"
+        echo "Verification steps: (none configured)" >&2
     fi
-    echo ""
+    echo "" >&2
 
-    log_init "${FILES[0]}"
+    if [[ -n "$STDIN_FILE" ]]; then
+        log_init "$SUMMARY_FILE"
+    else
+        log_init "${FILES[0]}"
+    fi
     local file_list="${FILES[*]}"
 
     # Phase 1: Diagnostic & status sync
-    echo "--- Phase 1: Diagnostic & Status Sync ---"
+    echo "--- Phase 1: Diagnostic & Status Sync ---" >&2
     log_entry "phase" "1 - diagnostic & status sync"
     WIGGUM_CURRENT_LABEL="phase1-diagnostic"
     run_claude -p --permission-mode bypassPermissions \
@@ -1017,8 +1028,8 @@ run_execute() {
 
     # Phase 2: Iterative implementation
     for ((i = 1; i <= ITERATIONS; i++)); do
-        echo ""
-        echo "--- Phase 2: Implementation step $i of $ITERATIONS ---"
+        echo "" >&2
+        echo "--- Phase 2: Implementation step $i of $ITERATIONS ---" >&2
         log_entry "phase" "2 - implementation step $i of $ITERATIONS"
 
         # Implementation: acceptEdits so file changes are auto-approved
@@ -1029,18 +1040,18 @@ run_execute() {
 
         # Validation: uses -c to keep implementation context for fixes
         WIGGUM_CURRENT_LABEL="phase2-validate-$i"
-        run_validation || echo "Warning: validation did not fully pass on iteration $i"
+        run_validation || echo "Warning: validation did not fully pass on iteration $i" >&2
 
         # Commit: bypassPermissions so git commands run without prompting
-        echo "Committing changes..."
+        echo "Committing changes..." >&2
         WIGGUM_CURRENT_LABEL="phase2-commit-$i"
         run_claude -p --permission-mode bypassPermissions \
             "Review all uncommitted changes (modified and untracked files). For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
     done
 
     # Phase 3: Summary & alignment
-    echo ""
-    echo "--- Phase 3: Summary & Alignment ---"
+    echo "" >&2
+    echo "--- Phase 3: Summary & Alignment ---" >&2
     log_entry "phase" "3 - summary & alignment"
     WIGGUM_CURRENT_LABEL="phase3-summary"
     run_claude -p -c --permission-mode bypassPermissions \
@@ -1051,23 +1062,27 @@ run_execute() {
     run_claude -p --permission-mode bypassPermissions \
         "Review all uncommitted changes (modified and untracked files) including $SUMMARY_FILE and $file_list. For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
 
-    echo ""
+    echo "" >&2
     if [[ -f "$SUMMARY_FILE" ]]; then
-        echo "Summary written to: $SUMMARY_FILE"
+        echo "Summary written to: $SUMMARY_FILE" >&2
     fi
 
     # Phase 4 (optional): Update documentation
     if [[ ${#UPDATE_DOCS[@]} -gt 0 ]]; then
-        echo ""
-        echo "--- Phase 4: Documentation Update ---"
+        echo "" >&2
+        echo "--- Phase 4: Documentation Update ---" >&2
         log_entry "phase" "4 - documentation update"
         WIGGUM_CURRENT_LABEL="phase4-docs"
         run_update_docs "$SUMMARY_FILE" "${FILES[@]}" -- "${UPDATE_DOCS[@]}"
     fi
 
+    if [[ -n "$STDIN_FILE" ]]; then
+        rm -f "$STDIN_FILE"
+    fi
+
     log_entry "complete" "wiggum execution finished"
-    echo "Log: $WIGGUM_LOG_FILE"
-    echo "=== WIGGUM EXECUTION COMPLETE ==="
+    echo "Log: $WIGGUM_LOG_FILE" >&2
+    echo "=== WIGGUM EXECUTION COMPLETE ===" >&2
 }
 
 # ── Docs ─────────────────────────────────────────────────────────────────────

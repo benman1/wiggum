@@ -27,13 +27,18 @@ main() {
 
     load_config
 
+    local base_file="${FILES[0]}"
+    if [[ -n "$STDIN_FILE" ]]; then
+        base_file="docs/stdin.md"
+    fi
+
     case "$MODE" in
         plan)
-            PLAN_FILE="$(derive_output_file "$MODE" "${FILES[0]}" "$PLAN_FILE")"
+            PLAN_FILE="$(derive_output_file "$MODE" "$base_file" "$PLAN_FILE")"
             run_plan
             ;;
         execute)
-            SUMMARY_FILE="$(derive_output_file "$MODE" "${FILES[0]}" "$SUMMARY_FILE")"
+            SUMMARY_FILE="$(derive_output_file "$MODE" "$base_file" "$SUMMARY_FILE")"
             run_execute
             ;;
         check)
