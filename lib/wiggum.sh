@@ -932,7 +932,7 @@ run_plan() {
 
     WIGGUM_CURRENT_LABEL="plan"
     run_claude -p --permission-mode bypassPermissions \
-        "You are a project planner. The issue/spec files to analyze are ONLY: $file_list. Ignore README.md and other repo documentation -- they are not input. Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), acceptance criteria, and dependencies. Write the plan to: $PLAN_FILE" \
+        "You are a project planner. The issue/spec files to analyze are ONLY: $file_list. Ignore README.md and other repo documentation -- they are not input. Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), acceptance criteria, and dependencies. Use the Write tool to save the plan to: $PLAN_FILE. Do not ask for confirmation -- just do it." \
         "${FILES[@]}"
 
     if [[ -f "$PLAN_FILE" ]]; then
@@ -1078,10 +1078,10 @@ run_execute() {
         echo "--- Phase 2: Implementation step $i of $MAX_ITERATIONS ($prev_remaining tasks remaining) ---" >&2
         log_entry "phase" "2 - implementation step $i of $MAX_ITERATIONS ($prev_remaining remaining)"
 
-        # Implementation: acceptEdits so file changes are auto-approved
+        # Implementation: bypassPermissions so file changes are auto-approved
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
         run_claude -p -c --permission-mode bypassPermissions \
-            "The workplan is defined ONLY in: $file_list. Ignore README.md and other documentation -- they are NOT the plan. Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found." \
+            "The workplan is defined ONLY in: $file_list. Ignore README.md and other documentation -- they are NOT the plan. Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found. Do not ask for confirmation -- just do it." \
             "${FILES[@]}"
 
         # Validation: uses -c to keep implementation context for fixes
