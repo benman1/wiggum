@@ -37,6 +37,8 @@ This is the recommended first step when adopting wiggum in a new project. The ge
 
 ```
 wiggum plan <issue-files...>
+wiggum plan < description.txt
+echo "description" | wiggum plan
 ```
 
 Reads issue descriptions, specs, or requirements documents and produces a structured workplan. The plan is a markdown document with:
@@ -46,15 +48,19 @@ Reads issue descriptions, specs, or requirements documents and produces a struct
 - Acceptance criteria
 - Dependencies between tasks
 
+When given files, the plan is written to disk (default: `<basename>_plan.md`). When reading from stdin, the plan is written to stdout -- enabling Unix pipelines.
+
 This is a read-only analysis step. It does not modify your codebase.
 
 ### Execute mode
 
 ```
 wiggum execute <plan-files...>
+wiggum execute < plan.md
+wiggum plan issue.md | wiggum execute
 ```
 
-Takes a workplan (typically one produced by `plan` mode, but any structured markdown will do) and implements it through three phases:
+Takes a workplan (typically one produced by `plan` mode, but any structured markdown will do) and implements it through three phases. When no files are given, reads the plan from stdin.
 
 **Phase 1 -- Diagnostic & Status Sync**
 
@@ -230,9 +236,15 @@ wiggum plan docs/spec.md docs/requirements.md
 
 # With a custom output path
 wiggum plan issues/login-bug.md --plan-file docs/login_plan.md
+
+# From a string (plan goes to stdout)
+echo "Add dark mode toggle to settings" | wiggum plan
+
+# Here-string shorthand
+wiggum plan <<< "Fix the login timeout bug"
 ```
 
-Default output: `<input-basename>_plan.md` in the same directory as the first input file.
+When given files, default output is `<input-basename>_plan.md` in the same directory as the first input file. When reading from stdin, the plan is written to stdout (use `--plan-file` to override).
 
 ### Executing a plan
 
@@ -254,6 +266,12 @@ wiggum execute docs/plan.md --update-docs README.md,docs/API.md
 
 # Multiple context files (plan + supporting docs)
 wiggum execute docs/plan.md docs/api_spec.md docs/schema.csv
+
+# Pipe a plan directly from stdin
+wiggum plan issues/bug.md | wiggum execute
+
+# One-liner: describe, plan, and execute
+echo "Add rate limiting to /api/upload" | wiggum plan | wiggum execute
 ```
 
 Default output: `<input-basename>_summary.md` in the same directory as the first input file.
@@ -304,6 +322,7 @@ wiggum execute docs/plan.md docs/api_spec.md docs/schema.csv
 
 ```
 wiggum <mode> [files...] [options]
+command | wiggum <mode> [options]
 
 Modes:
   init        Generate a .wiggumrc for the current project
@@ -320,7 +339,12 @@ Options:
   --verbose                Pass --verbose to Claude Code for detailed output
   -i <files...>            Input files (docs mode)
   -o <files...>            Output doc files to update (docs mode)
+  --                       End of options (remaining args are files)
   -h, --help               Show help
+
+When no files are given, plan and execute read from stdin. Plan writes to
+stdout in this mode; execute always writes to files (side effects are the
+output). Use -- to pass filenames that start with a dash.
 ```
 
 ### Verbose mode
@@ -545,10 +569,12 @@ This file is per-machine (not committed to git). See the [Claude Code permission
 | Mode | Default output | Override flag |
 |------|---------------|---------------|
 | `plan` | `<dir>/<basename>_plan.md` | `--plan-file` |
+| `plan` (stdin) | stdout | `--plan-file` |
 | `execute` | `<dir>/<basename>_summary.md` | `--summary-file` |
+| `execute` (stdin) | `docs/stdin_summary.md` | `--summary-file` |
 | `execute`/`plan`/`docs` | `<dir>/<basename>.log` | *(always created)* |
 
-The directory and basename are derived from the first input file. For example:
+The directory and basename are derived from the first input file. When reading from stdin, files default to `docs/`. For example:
 
 ```
 wiggum plan docs/auth-issue.md
@@ -556,6 +582,12 @@ wiggum plan docs/auth-issue.md
 
 wiggum execute docs/auth-issue_plan.md
 # produces: docs/auth-issue_plan_summary.md
+
+echo "Fix auth bug" | wiggum plan
+# produces: plan on stdout
+
+echo "Fix auth bug" | wiggum plan --plan-file docs/plan.md
+# produces: docs/plan.md
 ```
 
 ## Project structure
