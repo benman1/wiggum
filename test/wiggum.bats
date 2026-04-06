@@ -341,6 +341,74 @@ EOF
     [ "$result" = "./notes.txt_plan.md" ]
 }
 
+# ── persist_stdin ────────────────────────────────────────────────────────────
+
+@test "persist_stdin: creates docs/stdin.md when none exists" {
+    STDIN_FILE="$(mktemp)"
+    echo "my issue text" > "$STDIN_FILE"
+    FILES=("$STDIN_FILE")
+    local result
+    result="$(persist_stdin)"
+    [ "$result" = "docs/stdin.md" ]
+    [[ "$(cat docs/stdin.md)" == "my issue text" ]]
+    rm -f "$STDIN_FILE"
+}
+
+@test "persist_stdin: increments number when docs/stdin.md exists" {
+    STDIN_FILE="$(mktemp)"
+    echo "new issue" > "$STDIN_FILE"
+    FILES=("$STDIN_FILE")
+    mkdir -p docs
+    echo "old" > docs/stdin.md
+    local result
+    result="$(persist_stdin)"
+    [ "$result" = "docs/stdin_1.md" ]
+    [[ "$(cat docs/stdin_1.md)" == "new issue" ]]
+    [[ "$(cat docs/stdin.md)" == "old" ]]
+    rm -f "$STDIN_FILE"
+}
+
+@test "persist_stdin: skips to next number when gap-free" {
+    STDIN_FILE="$(mktemp)"
+    echo "third" > "$STDIN_FILE"
+    FILES=("$STDIN_FILE")
+    mkdir -p docs
+    echo "first" > docs/stdin.md
+    echo "second" > docs/stdin_1.md
+    local result
+    result="$(persist_stdin)"
+    [ "$result" = "docs/stdin_2.md" ]
+    [[ "$(cat docs/stdin_2.md)" == "third" ]]
+    rm -f "$STDIN_FILE"
+}
+
+@test "persist_stdin: increments past single-digit numbers" {
+    STDIN_FILE="$(mktemp)"
+    echo "eleventh" > "$STDIN_FILE"
+    FILES=("$STDIN_FILE")
+    mkdir -p docs
+    echo "base" > docs/stdin.md
+    for i in $(seq 1 10); do
+        echo "entry $i" > "docs/stdin_${i}.md"
+    done
+    local result
+    result="$(persist_stdin)"
+    [ "$result" = "docs/stdin_11.md" ]
+    [[ "$(cat docs/stdin_11.md)" == "eleventh" ]]
+    rm -f "$STDIN_FILE"
+}
+
+@test "persist_stdin: creates docs directory if missing" {
+    STDIN_FILE="$(mktemp)"
+    echo "content" > "$STDIN_FILE"
+    FILES=("$STDIN_FILE")
+    [ ! -d docs ]
+    persist_stdin > /dev/null
+    [ -d docs ]
+    [ -f docs/stdin.md ]
+    rm -f "$STDIN_FILE"
+}
+
 # ── find_config ──────────────────────────────────────────────────────────────
 
 @test "find_config: returns local .wiggumrc when present" {
