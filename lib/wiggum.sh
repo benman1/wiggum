@@ -152,7 +152,7 @@ Usage:
 
 Options:
   --plan-file <path>   Output path for the plan (default: <base>_plan.md)
-  --verbose            Pass --verbose to Claude Code
+  --verbose            Show Claude output (suppressed by default)
 
 Reads issue descriptions, specs, or requirements and produces a structured
 markdown workplan with phases, tasks, acceptance criteria, and dependencies.
@@ -180,7 +180,7 @@ Options:
   --max-iterations <n>   Maximum implementation iterations (default: 3)
   --summary-file <path>  Output path for the summary (default: <base>_summary.md)
   --update-docs <files>  Comma-separated doc files to update after execution
-  --verbose              Pass --verbose to Claude Code
+  --verbose              Show Claude output (suppressed by default)
 
 Phases:
   1. Diagnostic & Status Sync - reconcile plan against repo state
@@ -209,7 +209,7 @@ Usage:
 Options:
   -i <files...>   Input files (summaries, plans, changelogs, code)
   -o <files...>   Output doc files to update
-  --verbose       Pass --verbose to Claude Code
+  --verbose       Show Claude output (suppressed by default)
 
 Reads input files for context, then updates each output file to reflect
 the changes. Preserves existing structure and style.
@@ -227,7 +227,7 @@ Usage:
   wiggum check [options]
 
 Options:
-  --verbose   Pass --verbose to Claude Code
+  --verbose   Show Claude output (suppressed by default)
 
 Runs the verify/autofix steps from .wiggumrc against the current codebase.
 When a step fails, Claude is asked to fix the issue. Repeats up to
@@ -259,7 +259,7 @@ Commands:
 Run 'wiggum help <command>' for details on a specific command.
 
 Options:
-  --verbose   Pass --verbose to Claude Code for detailed output
+  --verbose   Show Claude output (suppressed by default)
   -h, --help  Show this help
 
 Configuration:
