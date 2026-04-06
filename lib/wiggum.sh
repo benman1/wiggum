@@ -35,6 +35,8 @@ wiggum_reset() {
     DOCS_INPUT=()
     DOCS_OUTPUT=()
     WIGGUM_LOG_FILE=""
+    STDIN_FILE=""
+    CLI_PLAN_FILE=""
 }
 
 wiggum_reset
@@ -142,6 +144,8 @@ wiggum plan - Create a workplan from issue/spec files
 
 Usage:
   wiggum plan <files...> [options]
+  wiggum plan [options] < description.txt
+  echo "description" | wiggum plan [options]
 
 Options:
   --plan-file <path>   Output path for the plan (default: <base>_plan.md)
@@ -151,9 +155,13 @@ Reads issue descriptions, specs, or requirements and produces a structured
 markdown workplan with phases, tasks, acceptance criteria, and dependencies.
 Does not modify your codebase.
 
+When no files are given, reads from stdin.
+
 Examples:
   wiggum plan issues/login-bug.md
   wiggum plan issues/*.md --plan-file docs/sprint_plan.md
+  echo "Add dark mode toggle" | wiggum plan
+  wiggum plan <<< "Fix the login timeout bug"
 EOF
             ;;
         execute)
@@ -286,6 +294,7 @@ parse_args() {
         case "$1" in
             --plan-file)
                 PLAN_FILE="$2"
+                CLI_PLAN_FILE="$2"
                 shift 2
                 ;;
             --summary-file)
@@ -324,6 +333,10 @@ parse_args() {
                 usage
                 return 0
                 ;;
+            --)
+                shift
+                break
+                ;;
             -*)
                 echo "Error: unknown option '$1'" >&2
                 return "$EXIT_BAD_ARGS"
@@ -333,6 +346,12 @@ parse_args() {
                 shift
                 ;;
         esac
+    done
+
+    # remaining args after -- are all files
+    while [[ $# -gt 0 ]]; do
+        FILES+=("$1")
+        shift
     done
 
     # check mode needs no input files
@@ -354,13 +373,27 @@ parse_args() {
     fi
 
     if [[ ${#FILES[@]} -eq 0 ]]; then
-        echo "Error: no input files specified." >&2
-        return "$EXIT_BAD_ARGS"
+        if [[ -t 0 ]]; then
+            echo "Error: no input files specified (or pipe text via stdin)." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+        STDIN_FILE="$(mktemp "${TMPDIR:-/tmp}/wiggum_stdin.XXXXXX")"
+        cat > "$STDIN_FILE"
+        if [[ ! -s "$STDIN_FILE" ]]; then
+            rm -f "$STDIN_FILE"
+            echo "Error: stdin was empty." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+        FILES+=("$STDIN_FILE")
     fi
 
     local work_dir
     work_dir="$(pwd)"
     for f in "${FILES[@]}"; do
+        # stdin temp file is outside the project — skip validation for it
+        if [[ "$f" == "$STDIN_FILE" ]]; then
+            continue
+        fi
         if [[ ! -f "$f" ]]; then
             echo "Error: file not found: $f" >&2
             return "$EXIT_BAD_ARGS"
@@ -836,12 +869,25 @@ run_claude() {
 # ── Plan ─────────────────────────────────────────────────────────────────────
 
 run_plan() {
-    echo "=== WIGGUM PLAN MODE ==="
-    echo "Input files: ${FILES[*]}"
-    echo "Output plan: $PLAN_FILE"
-    echo ""
+    local piped=false
+    if [[ -n "$STDIN_FILE" && -z "$CLI_PLAN_FILE" ]]; then
+        piped=true
+    fi
 
-    log_init "${FILES[0]}"
+    echo "=== WIGGUM PLAN MODE ===" >&2
+    echo "Input files: ${FILES[*]}" >&2
+    if [[ "$piped" == true ]]; then
+        echo "Output: stdout" >&2
+    else
+        echo "Output plan: $PLAN_FILE" >&2
+    fi
+    echo "" >&2
+
+    if [[ -n "$STDIN_FILE" ]]; then
+        log_init "$PLAN_FILE"
+    else
+        log_init "${FILES[0]}"
+    fi
     local file_list="${FILES[*]}"
 
     WIGGUM_CURRENT_LABEL="plan"
@@ -850,10 +896,15 @@ run_plan() {
         "${FILES[@]}"
 
     if [[ -f "$PLAN_FILE" ]]; then
-        echo ""
-        echo "Plan created: $PLAN_FILE"
+        if [[ "$piped" == true ]]; then
+            cat "$PLAN_FILE"
+            rm -f "$PLAN_FILE" "$STDIN_FILE"
+        else
+            echo "" >&2
+            echo "Plan created: $PLAN_FILE" >&2
+        fi
     else
-        echo "Warning: plan file was not created. Check Claude output above."
+        echo "Warning: plan file was not created. Check Claude output above." >&2
     fi
 }
 
