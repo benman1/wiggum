@@ -1134,6 +1134,7 @@ run_execute() {
     local stall_count=0
     local prev_remaining
     prev_remaining="$(count_unchecked "${FILES[@]}")"
+    local stop_reason="incomplete"
 
     for ((i = 1; i <= MAX_ITERATIONS; i++)); do
         echo "" >&2
@@ -1163,6 +1164,7 @@ run_execute() {
         if [[ "$remaining" -eq 0 ]]; then
             echo "All tasks complete — stopping early." >&2
             log_entry "stop" "all tasks complete after iteration $i"
+            stop_reason="complete"
             break
         fi
 
@@ -1173,6 +1175,7 @@ run_execute() {
             if [[ "$stall_count" -ge "$MAX_STALL_COUNT" ]]; then
                 echo "Stalled for $MAX_STALL_COUNT consecutive iterations — stopping." >&2
                 log_entry "stop" "stalled after iteration $i"
+                stop_reason="stalled"
                 break
             fi
         else
@@ -1184,11 +1187,11 @@ run_execute() {
 
     # Phase 3: Summary & alignment
     echo "" >&2
-    echo "--- Phase 3: Summary & Alignment ---" >&2
-    log_entry "phase" "3 - summary & alignment"
+    echo "--- Phase 3: Summary & Alignment (${stop_reason}) ---" >&2
+    log_entry "phase" "3 - summary & alignment ($stop_reason)"
     WIGGUM_CURRENT_LABEL="phase3-summary"
     run_claude -p -c --permission-mode bypassPermissions \
-        "$(prompt_workplan "$file_list") Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, and verification results. $PROMPT_SUFFIX" \
+        "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, and why execution stopped ($stop_reason). $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
     WIGGUM_CURRENT_LABEL="phase3-commit"
@@ -1226,7 +1229,8 @@ run_execute() {
         echo "Summary: $SUMMARY_FILE" >&2
     fi
 
-    log_entry "complete" "wiggum execution finished"
+    log_entry "complete" "wiggum execution finished ($stop_reason)"
+    echo "Status: $stop_reason" >&2
     echo "Log: $WIGGUM_LOG_FILE" >&2
     echo "Session: $WIGGUM_LAST_SESSION_ID" >&2
     echo "=== WIGGUM EXECUTION COMPLETE ===" >&2
