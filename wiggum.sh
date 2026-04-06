@@ -27,23 +27,23 @@ main() {
 
     load_config
 
-    local base_file="${FILES[0]}"
-    if [[ -n "$STDIN_FILE" && "$MODE" == "execute" ]]; then
-        base_file="$(persist_stdin)"
-        FILES[0]="$base_file"
-        echo "Persisted stdin to: $base_file" >&2
-    elif [[ -n "$STDIN_FILE" ]]; then
-        base_file="docs/stdin.md"
-    fi
-
     case "$MODE" in
-        plan)
-            PLAN_FILE="$(derive_output_file "$MODE" "$base_file" "$PLAN_FILE")"
-            run_plan
-            ;;
-        execute)
-            SUMMARY_FILE="$(derive_output_file "$MODE" "$base_file" "$SUMMARY_FILE")"
-            run_execute
+        plan|execute)
+            local base_file="${FILES[0]}"
+            if [[ -n "$STDIN_FILE" && "$MODE" == "execute" ]]; then
+                base_file="$(persist_stdin)"
+                FILES[0]="$base_file"
+                echo "Persisted stdin to: $base_file" >&2
+            elif [[ -n "$STDIN_FILE" ]]; then
+                base_file="docs/stdin.md"
+            fi
+            if [[ "$MODE" == "plan" ]]; then
+                PLAN_FILE="$(derive_output_file "$MODE" "$base_file" "$PLAN_FILE")"
+                run_plan
+            else
+                SUMMARY_FILE="$(derive_output_file "$MODE" "$base_file" "$SUMMARY_FILE")"
+                run_execute
+            fi
             ;;
         check)
             run_check
