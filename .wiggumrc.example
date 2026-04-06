@@ -16,6 +16,11 @@
 # autofix = ruff format app tests scripts && ruff check --fix app tests scripts
 # verify = pytest
 
+# Benchmark scripts (optional) — run after each iteration, output fed to Claude.
+# Purely informational: helps Claude see if changes are improving metrics.
+# benchmark = ./scripts/measure_bundle_size.sh
+# benchmark = npx lighthouse http://localhost:3000 --output json --quiet | jq '.categories.performance.score'
+
 # Max implementation iterations — stops early if all tasks complete or stalled (default: 3)
 max_iterations = 3
 

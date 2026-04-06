@@ -378,6 +378,59 @@ EOF
     rm -f "$STDIN_FILE"
 }
 
+# ── run_benchmarks ───────────────────────────────────────────────────────────
+
+@test "run_benchmarks: returns nothing when no scripts configured" {
+    BENCHMARK_SCRIPTS=()
+    local output
+    output="$(run_benchmarks)"
+    [ -z "$output" ]
+}
+
+@test "run_benchmarks: captures output from single script" {
+    BENCHMARK_SCRIPTS=("echo 'score: 42'")
+    local output
+    output="$(run_benchmarks)"
+    [[ "$output" == *"score: 42"* ]]
+    [[ "$output" == *"Benchmark:"* ]]
+}
+
+@test "run_benchmarks: concatenates output from multiple scripts" {
+    BENCHMARK_SCRIPTS=("echo 'size: 100kb'" "echo 'speed: 200ms'")
+    local output
+    output="$(run_benchmarks)"
+    [[ "$output" == *"size: 100kb"* ]]
+    [[ "$output" == *"speed: 200ms"* ]]
+}
+
+@test "run_benchmarks: handles failing scripts gracefully" {
+    BENCHMARK_SCRIPTS=("false")
+    local output
+    output="$(run_benchmarks)"
+    [[ "$output" == *"failed with exit code"* ]]
+}
+
+@test "parse_config: benchmark lines populate BENCHMARK_SCRIPTS" {
+    mkdir -p "$TEST_DIR"
+    cat > "$TEST_DIR/.wiggumrc" <<'EOF'
+benchmark = ./measure.sh
+benchmark = ./score.sh
+EOF
+    HOME="$TEST_DIR"
+    load_config
+    [ "${#BENCHMARK_SCRIPTS[@]}" -eq 2 ]
+    [ "${BENCHMARK_SCRIPTS[0]}" = "./measure.sh" ]
+    [ "${BENCHMARK_SCRIPTS[1]}" = "./score.sh" ]
+}
+
+@test "parse_args: --benchmark adds to BENCHMARK_SCRIPTS" {
+    touch file.md
+    parse_args execute --benchmark "./measure.sh" --benchmark "./score.sh" file.md
+    [ "${#BENCHMARK_SCRIPTS[@]}" -eq 2 ]
+    [ "${BENCHMARK_SCRIPTS[0]}" = "./measure.sh" ]
+    [ "${BENCHMARK_SCRIPTS[1]}" = "./score.sh" ]
+}
+
 # ── slugify ──────────────────────────────────────────────────────────────────
 
 @test "slugify: extracts slug from markdown heading" {

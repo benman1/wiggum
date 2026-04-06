@@ -344,6 +344,7 @@ Options:
   --plan-file <path>       Output path for the plan (plan mode)
   --summary-file <path>    Output path for the summary (execute mode)
   --max-iterations <n>    Maximum implementation iterations (execute mode, default: 3)
+  --benchmark <script>    Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
   --verbose                Show Claude output (suppressed by default)
   -i <files...>            Input files (docs mode)
@@ -376,6 +377,7 @@ Wiggum looks for a `.wiggumrc` file, first in the current directory, then in `$H
 |-----|-------------|---------|
 | `verify` | A shell command to run as a verification step. Fails are sent to Claude for fixing. Multiple lines define an ordered waterfall. | *(none)* |
 | `autofix` | Like `verify`, but the command is run once first to let it self-correct (e.g. linters with `--fix`). Only escalates to Claude if it still fails after autofix. | *(none)* |
+| `benchmark` | A shell command to run after each iteration. Output is fed to Claude as context for the next iteration. Purely informational — does not gate or block. Multiple lines are supported. | *(none)* |
 | `max_iterations` | Maximum implementation iterations per run. Stops early if all tasks complete or progress stalls. | `3` |
 | `max_validation_retries` | Max times the validation cycle retries before giving up. | `5` |
 
@@ -449,6 +451,33 @@ echo "Smoke test passed."
 
 Because smoke tests are just `verify` lines, they participate in the normal waterfall: if the smoke test fails, Claude sees the output and tries to fix the underlying issue.
 
+### Benchmarks
+
+Benchmarks are different from verification steps. Verification is pass/fail — "is the code correct?" Benchmarks answer "is the code better?" Their output is fed to Claude as context for the next iteration, but they never block or gate progress.
+
+Configure them in `.wiggumrc`, on the command line, or both:
+
+```
+# .wiggumrc
+benchmark = ./scripts/measure_bundle_size.sh
+benchmark = ./scripts/lighthouse_score.sh
+```
+
+```bash
+wiggum execute docs/plan.md --benchmark "./measure_load_time.sh"
+```
+
+After each implementation iteration (post-commit), wiggum runs all benchmark scripts and includes their concatenated output in the next iteration's prompt. Claude uses this to guide its approach — focusing on what's improving and what isn't.
+
+**Examples of benchmark scripts:**
+
+- **Bundle size:** `du -sh dist/ && wc -l dist/**/*.js`
+- **Performance score:** `npx lighthouse http://localhost:3000 --output json --quiet | jq '.categories.performance.score'`
+- **Test coverage:** `npx jest --coverage --coverageReporters=text-summary 2>&1 | grep Statements`
+- **Claude as evaluator:** Have the benchmark script produce the artifact (rendered HTML, API response, generated report) and dump it to stdout. Claude sees the raw output in the next iteration and can judge quality, completeness, or correctness — no external scoring tool needed.
+
+If no benchmark scripts are configured, the loop works exactly as before.
+
 ### Example configs
 
 **TypeScript / Node.js project:**
@@ -474,7 +503,7 @@ max_iterations = 3
 max_validation_retries = 3
 ```
 
-**Astro / static site with smoke test:**
+**Astro / static site with smoke test and performance benchmark:**
 
 ```
 # .wiggumrc
@@ -483,6 +512,7 @@ verify = npm test
 verify = npm run build
 verify = ./smoke.sh
 autofix = npm run format
+benchmark = du -sh dist/
 ```
 
 **Next.js project:**
