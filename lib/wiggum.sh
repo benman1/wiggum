@@ -932,7 +932,7 @@ run_plan() {
 
     WIGGUM_CURRENT_LABEL="plan"
     run_claude -p --permission-mode bypassPermissions \
-        "You are a project planner. The issue/spec files to analyze are ONLY: $file_list. You may read README.md and other project documentation for context, but they are not the plan. Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), acceptance criteria, and dependencies. Use the Write tool to save the plan to: $PLAN_FILE. Do not ask for confirmation -- just do it." \
+        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), acceptance criteria, and dependencies. Use the Write tool to save the plan to: $PLAN_FILE. $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
     if [[ -f "$PLAN_FILE" ]]; then
@@ -946,6 +946,26 @@ run_plan() {
     else
         echo "Warning: plan file was not created. Check Claude output above." >&2
     fi
+}
+
+# ── Prompt templates ─────────────────────────────────────────────────────────
+
+# Common suffix appended to all prompts.
+PROMPT_SUFFIX="Do not ask for confirmation -- just do it."
+
+# Build workplan context preamble.  Usage: $(prompt_workplan "$file_list")
+prompt_workplan() {
+    echo "The workplan is defined ONLY in: $1. You may read README.md and other project documentation for context, but they are not the plan."
+}
+
+# Build a commit prompt.  Optional arg: extra files to mention.
+prompt_commit() {
+    local extra="${1:-}"
+    local files_clause="modified and untracked files"
+    if [[ -n "$extra" ]]; then
+        files_clause="uncommitted changes (modified and untracked files) including $extra"
+    fi
+    echo "Review all $files_clause. For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. $PROMPT_SUFFIX The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
 }
 
 # ── Validation ───────────────────────────────────────────────────────────────
@@ -998,7 +1018,7 @@ run_validation() {
                     echo "--- Error output ---"
                     echo "$output"
                     echo "--------------------"
-                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code.\n\nCommand: $cmd\nSource: .wiggumrc (autofix step)\nExit code: non-zero\n\nError output:\n$output"
+                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code. $PROMPT_SUFFIX\n\nCommand: $cmd\nSource: .wiggumrc (autofix step)\nExit code: non-zero\n\nError output:\n$output"
                     needs_fix=true
                     break
                 fi
@@ -1011,7 +1031,7 @@ run_validation() {
                     echo "--- Error output ---"
                     echo "$output"
                     echo "--------------------"
-                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code.\n\nCommand: $cmd\nSource: .wiggumrc (verify step)\nExit code: non-zero\n\nError output:\n$output"
+                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code. $PROMPT_SUFFIX\n\nCommand: $cmd\nSource: .wiggumrc (verify step)\nExit code: non-zero\n\nError output:\n$output"
                     needs_fix=true
                     break
                 fi
@@ -1061,12 +1081,12 @@ run_execute() {
     log_entry "phase" "1 - diagnostic & status sync"
     WIGGUM_CURRENT_LABEL="phase1-diagnostic"
     run_claude -p --permission-mode bypassPermissions \
-        "The workplan is defined ONLY in: $file_list. You may read README.md and other project documentation for context, but they are not the plan. Analyze the repository against the workplan. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement." \
+        "$(prompt_workplan "$file_list") Analyze the repository against the workplan. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement. $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
     WIGGUM_CURRENT_LABEL="phase1-commit"
     run_claude -p --permission-mode bypassPermissions \
-        "Check if $file_list has any changes (modified or untracked). If so, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. Do not ask for confirmation -- just do it. If there are no changes, do nothing."
+        "Check if $file_list has any changes (modified or untracked). If so, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. $PROMPT_SUFFIX If there are no changes, do nothing."
 
     # Phase 2: Iterative implementation
     local stall_count=0
@@ -1081,7 +1101,7 @@ run_execute() {
         # Implementation: bypassPermissions so file changes are auto-approved
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
         run_claude -p -c --permission-mode bypassPermissions \
-            "The workplan is defined ONLY in: $file_list. You may read README.md and other project documentation for context, but they are not the plan. Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found. Do not ask for confirmation -- just do it." \
+            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found. $PROMPT_SUFFIX" \
             "${FILES[@]}"
 
         # Validation: uses -c to keep implementation context for fixes
@@ -1092,7 +1112,7 @@ run_execute() {
         echo "Committing changes..." >&2
         WIGGUM_CURRENT_LABEL="phase2-commit-$i"
         run_claude -p --permission-mode bypassPermissions \
-            "Review all uncommitted changes (modified and untracked files). For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
+            "$(prompt_commit)"
 
         # Check progress
         local remaining
@@ -1126,12 +1146,12 @@ run_execute() {
     log_entry "phase" "3 - summary & alignment"
     WIGGUM_CURRENT_LABEL="phase3-summary"
     run_claude -p -c --permission-mode bypassPermissions \
-        "The workplan is defined ONLY in: $file_list. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, and verification results." \
+        "$(prompt_workplan "$file_list") Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, and verification results. $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
     WIGGUM_CURRENT_LABEL="phase3-commit"
     run_claude -p --permission-mode bypassPermissions \
-        "Review all uncommitted changes (modified and untracked files) including $SUMMARY_FILE and $file_list. For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
+        "$(prompt_commit "$SUMMARY_FILE and $file_list")"
 
     echo "" >&2
     if [[ -f "$SUMMARY_FILE" ]]; then
@@ -1186,12 +1206,12 @@ run_update_docs() {
     local prev_label="${WIGGUM_CURRENT_LABEL:-docs}"
     WIGGUM_CURRENT_LABEL="${prev_label}-update"
     run_claude -p --permission-mode bypassPermissions \
-        "Update the following documentation files: $output_list. Use the input files as context for what has changed: $input_list. For each output file: read its current content, then update it to reflect the changes described in the input files. Preserve the existing structure and style of each document. Only update sections that are affected by the changes. Do not rewrite sections that are already accurate." \
+        "Update the following documentation files: $output_list. Use the input files as context for what has changed: $input_list. For each output file: read its current content, then update it to reflect the changes described in the input files. Preserve the existing structure and style of each document. Only update sections that are affected by the changes. Do not rewrite sections that are already accurate. $PROMPT_SUFFIX" \
         "${inputs[@]}" "${outputs[@]}"
 
     WIGGUM_CURRENT_LABEL="${prev_label}-commit"
     run_claude -p --permission-mode bypassPermissions \
-        "Review all uncommitted changes to: $output_list. For each modified file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. Single line imperative messages only. DO NOT include any trailers, footers, or attributions."
+        "$(prompt_commit "$output_list")"
 
     echo "Documentation updated: $output_list"
 }
@@ -1212,7 +1232,7 @@ run_check() {
             echo "Committing changes..."
             WIGGUM_CURRENT_LABEL="check-commit"
             run_claude -p --permission-mode bypassPermissions \
-                "Review all uncommitted changes (modified and untracked files). For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. Do not ask for confirmation -- just do it. The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
+                "$(prompt_commit)"
         fi
         echo "=== ALL CHECKS PASSED ==="
     else
