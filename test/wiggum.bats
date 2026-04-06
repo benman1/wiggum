@@ -99,10 +99,42 @@ make_file() {
     [[ "$output" == *"unknown mode"* ]]
 }
 
-@test "parse_args: plan mode requires files" {
-    run parse_args plan
+@test "parse_args: plan mode requires files when stdin is a terminal" {
+    run parse_args plan < /dev/null
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"no input files"* ]]
+    [[ "$output" == *"stdin was empty"* ]]
+}
+
+@test "parse_args: plan reads from stdin when no files given" {
+    # pipe runs in subshell so globals won't propagate; capture STDIN_FILE path
+    local tmp
+    tmp="$(echo "Add dark mode toggle" | { parse_args plan; echo "$STDIN_FILE"; })"
+    local sfile
+    sfile="$(echo "$tmp" | tail -1)"
+    [ -f "$sfile" ]
+    [[ "$(cat "$sfile")" == "Add dark mode toggle" ]]
+    rm -f "$sfile"
+}
+
+@test "parse_args: stdin rejects empty input" {
+    run parse_args plan < /dev/null
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"stdin was empty"* ]]
+}
+
+@test "parse_args: stdin with --plan-file sets CLI_PLAN_FILE" {
+    local out
+    out="$(echo "Fix the bug" | { parse_args plan --plan-file my_plan.md; echo "$CLI_PLAN_FILE"; })"
+    local val
+    val="$(echo "$out" | tail -1)"
+    [[ "$val" == "my_plan.md" ]]
+}
+
+@test "parse_args: -- collects multiple remaining files" {
+    make_file "a.md"
+    make_file "b.md"
+    parse_args plan -- "a.md" "b.md"
+    [[ "${#FILES[@]}" -eq 2 ]]
 }
 
 @test "parse_args: plan mode rejects missing file" {
@@ -119,6 +151,13 @@ make_file() {
     rm -rf "$outside"
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"outside the project directory"* ]]
+}
+
+@test "parse_args: -- ends option parsing" {
+    make_file "issue.md"
+    parse_args plan --verbose -- "issue.md"
+    [[ " ${FILES[*]} " == *"issue.md"* ]]
+    [[ "$VERBOSE" == "true" ]]
 }
 
 @test "parse_args: plan mode accepts existing file" {
@@ -201,6 +240,8 @@ EOF
     [ "${#FILES[@]}" -eq 0 ]
     [ -z "$PLAN_FILE" ]
     [ "$ITERATIONS" -eq 3 ]
+    [ -z "$STDIN_FILE" ]
+    [ -z "$CLI_PLAN_FILE" ]
 }
 
 # ── derive_output_file ───────────────────────────────────────────────────────
