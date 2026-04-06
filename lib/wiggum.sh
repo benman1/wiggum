@@ -950,6 +950,19 @@ run_plan() {
 
 # ── Validation ───────────────────────────────────────────────────────────────
 
+print_verify_steps() {
+    local fd="${1:-2}"  # default to stderr
+    if [[ ${#VERIFY_STEPS[@]} -eq 0 ]]; then
+        echo "Verification steps: (none configured)" >&"$fd"
+        return
+    fi
+    echo "Verification steps:" >&"$fd"
+    local step
+    for step in "${VERIFY_STEPS[@]}"; do
+        echo "  - $step" >&"$fd"
+    done
+}
+
 run_validation() {
     if [[ ${#VERIFY_STEPS[@]} -eq 0 ]]; then
         echo "(No verification steps configured in .wiggumrc - skipping validation)"
@@ -1033,11 +1046,7 @@ run_execute() {
     echo "Input files: ${FILES[*]}" >&2
     echo "Max iterations: $MAX_ITERATIONS" >&2
     echo "Summary output: $SUMMARY_FILE" >&2
-    if [[ ${#VERIFY_STEPS[@]} -gt 0 ]]; then
-        echo "Verification steps: ${VERIFY_STEPS[*]}" >&2
-    else
-        echo "Verification steps: (none configured)" >&2
-    fi
+    print_verify_steps 2
     echo "" >&2
 
     if [[ -n "$STDIN_FILE" ]]; then
@@ -1193,7 +1202,7 @@ run_check() {
         echo "No verification steps configured in .wiggumrc. Nothing to check."
         return 0
     fi
-    echo "Verification steps: ${VERIFY_STEPS[*]}"
+    print_verify_steps 1
     echo ""
 
     WIGGUM_CURRENT_LABEL="check"
