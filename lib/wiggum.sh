@@ -181,11 +181,17 @@ Usage:
   wiggum plan issue.md | wiggum execute
 
 Options:
-  --max-iterations <n>   Maximum implementation iterations (default: 3)
-  --summary-file <path>  Output path for the summary (default: <base>_summary.md)
-  --benchmark <script>   Run script after each iteration, feed output to Claude (repeatable)
-  --update-docs <files>  Comma-separated doc files to update after execution
-  --verbose              Show Claude output (suppressed by default)
+  --max-iterations <n>          Maximum implementation iterations (default: 3)
+  --max-validation-retries <n>  Max fix attempts per verification step (default: 5)
+  --summary-file <path>         Output path for the summary (default: <base>_summary.md)
+  --benchmark <script>          Run script after each iteration, feed output to Claude (repeatable)
+  --update-docs <files>         Comma-separated doc files to update after execution
+  --verbose                     Show Claude output (suppressed by default)
+
+Verification steps:
+  Loaded from .wiggumrc. Each step is run after implementation:
+    verify  = <cmd>    Run command; fail if non-zero exit (e.g., pytest, npm test)
+    autofix = <cmd>    Run command to fix, then re-run to verify (e.g., ruff check --fix)
 
 Phases:
   1. Diagnostic & Status Sync - reconcile plan against repo state
@@ -232,17 +238,23 @@ Usage:
   wiggum check [options]
 
 Options:
-  --verbose   Show Claude output (suppressed by default)
+  --max-validation-retries <n>  Max fix attempts per step (default: 5)
+  --verbose                     Show Claude output (suppressed by default)
 
 Runs the verify/autofix steps from .wiggumrc against the current codebase.
 When a step fails, Claude is asked to fix the issue. Repeats up to
 max_validation_retries times. Does not implement new features or commit.
+
+Verification steps (from .wiggumrc):
+  verify  = <cmd>    Run command; fail if non-zero exit (e.g., pytest)
+  autofix = <cmd>    Run command to fix, then re-run to verify (e.g., ruff check --fix)
 
 Useful after manual edits or before committing to ensure everything passes.
 
 Examples:
   wiggum check
   wiggum check --verbose
+  wiggum check --max-validation-retries 3
 EOF
             ;;
         *)
@@ -321,6 +333,11 @@ parse_args() {
             --iterations|--max-iterations)
                 MAX_ITERATIONS="$2"
                 CLI_MAX_ITERATIONS="$2"
+                shift 2
+                ;;
+            --max-retries|--max-validation-retries)
+                MAX_VALIDATION_RETRIES="$2"
+                CLI_MAX_RETRIES="$2"
                 shift 2
                 ;;
             --verbose)
