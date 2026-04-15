@@ -1292,9 +1292,15 @@ run_execute() {
     echo "" >&2
     echo "--- Phase 3: Summary & Alignment (${stop_reason}) ---" >&2
     log_entry "phase" "3 - summary & alignment ($stop_reason)"
+
+    local final_benchmark_context=""
+    if [[ ${#BENCHMARK_SCRIPTS[@]} -gt 0 && -n "$benchmark_output" ]]; then
+        final_benchmark_context="\n\nFinal benchmark results:\n$benchmark_output\n\nInclude these benchmark results in the summary."
+    fi
+
     WIGGUM_CURRENT_LABEL="phase3-summary"
     run_claude -p -c --permission-mode bypassPermissions \
-        "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, and why execution stopped ($stop_reason). $PROMPT_SUFFIX" \
+        "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, and why execution stopped ($stop_reason).${final_benchmark_context} $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
     WIGGUM_CURRENT_LABEL="phase3-commit"
