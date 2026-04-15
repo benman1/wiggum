@@ -1132,6 +1132,20 @@ run_validation() {
 
 # ── Benchmarks ───────────────────────────────────────────────────────────────
 
+# Extract all numeric values from text (integers and decimals).
+# Returns one number per line, suitable for comparison.
+extract_benchmark_numbers() {
+    grep -oE '[0-9]+(\.[0-9]+)?' | sort -n
+}
+
+# Compare two sets of benchmark numbers.  Returns 0 (true) if
+# the numbers differ, meaning the benchmark made progress.
+benchmark_numbers_changed() {
+    local prev_nums="$1"
+    local curr_nums="$2"
+    [[ "$curr_nums" != "$prev_nums" ]]
+}
+
 # Run all benchmark scripts and capture concatenated output.
 # Returns empty string if no benchmarks are configured.
 run_benchmarks() {
@@ -1192,6 +1206,7 @@ run_execute() {
     prev_remaining="$(count_unchecked "${FILES[@]}")"
     local stop_reason="incomplete"
     local benchmark_output=""
+    local prev_benchmark_nums=""
 
     for ((i = 1; i <= MAX_ITERATIONS; i++)); do
         echo "" >&2
@@ -1219,14 +1234,16 @@ run_execute() {
             "$(prompt_commit)"
 
         # Run benchmarks after commit (output feeds into next iteration)
+        local curr_benchmark_nums=""
         if [[ ${#BENCHMARK_SCRIPTS[@]} -gt 0 ]]; then
             echo "Running benchmarks..." >&2
             benchmark_output="$(run_benchmarks)"
             echo "$benchmark_output" >&2
             log_entry "benchmark" "$benchmark_output"
+            curr_benchmark_nums="$(echo "$benchmark_output" | extract_benchmark_numbers)"
         fi
 
-        # Check progress
+        # Check progress: tasks completed OR benchmark numbers changed
         local remaining
         remaining="$(count_unchecked "${FILES[@]}")"
 
@@ -1237,7 +1254,24 @@ run_execute() {
             break
         fi
 
-        if [[ "$remaining" -ge "$prev_remaining" ]]; then
+        local task_progress=false
+        if [[ "$remaining" -lt "$prev_remaining" ]]; then
+            task_progress=true
+        fi
+
+        local benchmark_progress=false
+        if [[ ${#BENCHMARK_SCRIPTS[@]} -gt 0 ]] \
+              && benchmark_numbers_changed "$prev_benchmark_nums" "$curr_benchmark_nums"; then
+            benchmark_progress=true
+        fi
+
+        if $task_progress || $benchmark_progress; then
+            stall_count=0
+            if $benchmark_progress && ! $task_progress; then
+                echo "Benchmark metrics changed ($remaining tasks remaining — benchmark progress counts)." >&2
+                log_entry "progress" "benchmark metrics changed on iteration $i ($remaining remaining)"
+            fi
+        else
             stall_count=$((stall_count + 1))
             echo "No progress detected ($remaining tasks remaining, stall $stall_count of $MAX_STALL_COUNT)." >&2
             log_entry "stall" "no progress on iteration $i ($remaining remaining, stall $stall_count)"
@@ -1247,9 +1281,9 @@ run_execute() {
                 stop_reason="stalled"
                 break
             fi
-        else
-            stall_count=0
         fi
+
+        prev_benchmark_nums="$curr_benchmark_nums"
 
         prev_remaining="$remaining"
     done
