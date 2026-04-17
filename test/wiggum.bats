@@ -1667,7 +1667,29 @@ S
     [[ "$output" == *"not created or is empty"* ]]
 }
 
-@test "run_plan: keeps plan file when not piped" {
+@test "run_plan: keeps plan file when explicit -o given" {
+    # With an explicit CLI_PLAN_FILE the plan stays on disk regardless of
+    # stdin/stdout pipe state. (Without -o, run_plan now also treats
+    # non-TTY stdout as piped, which bats can't simulate cleanly.)
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE=""
+    CLI_PLAN_FILE="docs/issue_plan.md"
+    PLAN_FILE="docs/issue_plan.md"
+
+    claude() { echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>/dev/null
+    [ -f "$PLAN_FILE" ]
+    [ "$(cat "$PLAN_FILE")" = "# Plan" ]
+}
+
+@test "run_plan: pipes to stdout when stdout is not a TTY" {
+    # The new behavior: file argument + piped stdout => plan emitted to
+    # stdout and PLAN_FILE cleaned up. This is what makes
+    # `wiggum plan X.md | wiggum execute` work correctly.
     mkdir -p docs
     echo "Fix the bug" > issue.md
     FILES=("issue.md")
@@ -1678,9 +1700,10 @@ S
     claude() { echo "# Plan" > "$PLAN_FILE"; return 0; }
     export -f claude
 
-    run_plan 2>/dev/null
-    [ -f "$PLAN_FILE" ]
-    [ "$(cat "$PLAN_FILE")" = "# Plan" ]
+    local output
+    output="$(run_plan 2>/dev/null)"
+    [ "$output" = "# Plan" ]
+    [ ! -f "$PLAN_FILE" ]
 }
 
 @test "run_plan: piped mode suppresses claude stdout" {
