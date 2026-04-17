@@ -976,7 +976,12 @@ run_claude() {
 
 run_plan() {
     local piped=false
-    if [[ -n "$STDIN_FILE" && -z "$CLI_PLAN_FILE" ]]; then
+    # Pipe the plan to stdout when no explicit -o was given AND either stdin
+    # was piped in (echo ... | wiggum plan) or stdout is a pipe (wiggum plan
+    # docs/X.md | wiggum execute). Without the stdout check, a file-argument
+    # invocation would leak Claude's chat reply into the downstream pipe
+    # while the real plan stays on disk.
+    if [[ -z "$CLI_PLAN_FILE" ]] && { [[ -n "$STDIN_FILE" ]] || [[ ! -t 1 ]]; }; then
         piped=true
     fi
 
