@@ -735,6 +735,39 @@ EOF
     [[ "$output" == *"unknown config key"* ]]
 }
 
+# ── load_config (outer) ──────────────────────────────────────────────────────
+
+@test "load_config: 'Loading config from ...' goes to stderr not stdout" {
+    # Regression guard: this message used to leak on stdout, which poisoned
+    # pipelines like `wiggum plan X | wiggum execute` — the receiving wiggum
+    # would treat the chatter as a plan.
+    echo "iterations = 1" > .wiggumrc
+    local out err
+    out="$(load_config 2>/dev/null)"
+    err="$(load_config 2>&1 >/dev/null)"
+    [ -z "$out" ]
+    [[ "$err" == *"Loading config from"* ]]
+}
+
+@test "load_config: 'no config found' message goes to stderr not stdout" {
+    HOME="$TEST_DIR/nohome"
+    mkdir -p "$HOME"
+    local out err
+    out="$(load_config 2>/dev/null)"
+    err="$(load_config 2>&1 >/dev/null)"
+    [ -z "$out" ]
+    [[ "$err" == *"No .wiggumrc found"* ]]
+}
+
+@test "load_config: stdout stays clean so it can be piped downstream" {
+    # Integration-flavoured: run load_config inside a pipeline and verify
+    # nothing flows through the pipe.
+    echo "iterations = 1" > .wiggumrc
+    local piped
+    piped="$(load_config 2>/dev/null | cat)"
+    [ -z "$piped" ]
+}
+
 # ── apply_config ─────────────────────────────────────────────────────────────
 
 @test "apply_config: applies verify steps in order" {

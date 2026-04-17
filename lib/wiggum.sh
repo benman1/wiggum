@@ -112,11 +112,14 @@ load_config() {
     config_file="$(find_config)"
 
     if [[ -z "$config_file" ]]; then
-        echo "No .wiggumrc found (checked ./ and ~/). Using defaults."
+        # Informational output must go to stderr. Otherwise it leaks into
+        # downstream pipes (e.g. `wiggum plan X | wiggum execute`), where the
+        # next command sees config chatter instead of a real plan.
+        echo "No .wiggumrc found (checked ./ and ~/). Using defaults." >&2
         return
     fi
 
-    echo "Loading config from $config_file"
+    echo "Loading config from $config_file" >&2
     apply_config < <(load_config_from "$config_file")
 }
 
