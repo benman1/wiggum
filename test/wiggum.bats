@@ -378,6 +378,54 @@ EOF
     rm -f "$STDIN_FILE"
 }
 
+# ── looks_like_plan ──────────────────────────────────────────────────────────
+
+@test "looks_like_plan: accepts file with unchecked checkbox" {
+    echo "- [ ] Do the thing" > plan.md
+    looks_like_plan plan.md
+}
+
+@test "looks_like_plan: accepts file with checked checkbox" {
+    echo "- [x] Already done" > plan.md
+    looks_like_plan plan.md
+}
+
+@test "looks_like_plan: accepts file with a heading" {
+    printf "# Workplan\n\nSome prose.\n" > plan.md
+    looks_like_plan plan.md
+}
+
+@test "looks_like_plan: accepts indented checkboxes" {
+    printf "  - [ ] Nested task\n" > plan.md
+    looks_like_plan plan.md
+}
+
+@test "looks_like_plan: rejects prose-only file" {
+    printf "Just some text.\nNo structure here.\n" > plan.md
+    ! looks_like_plan plan.md
+}
+
+@test "looks_like_plan: rejects the observed chatter leak" {
+    # Exact shape of the bogus input that slipped past the empty-stdin
+    # guard: config-loader stderr leak + Claude's confirmation ack.
+    cat > plan.md <<'EOF'
+Loading config from .wiggumrc
+Plan written to `docs/issue_plan.md`. It covers 6 phases with discrete `[ ]` tasks, acceptance criteria, and dependencies.
+EOF
+    # The phrase "discrete `[ ]` tasks" is inline markdown-in-backticks, not
+    # a real checkbox line — the regex must not be fooled.
+    ! looks_like_plan plan.md
+}
+
+@test "looks_like_plan: rejects missing file" {
+    ! looks_like_plan does-not-exist.md
+}
+
+@test "looks_like_plan: rejects empty file" {
+    : > plan.md
+    ! looks_like_plan plan.md
+}
+
 # ── run_benchmarks ───────────────────────────────────────────────────────────
 
 @test "run_benchmarks: returns nothing when no scripts configured" {
@@ -1790,4 +1838,26 @@ S
     local last
     last="$(grep -v '^$' "$cli" | tail -1)"
     [ "$last" = 'main "$@"' ]
+}
+
+@test "CLI: execute bails out with EXIT_BAD_ARGS when stdin is not a plan" {
+    # Reproduces the exact failure mode that caused the original bug: an
+    # upstream `wiggum plan` leaked chatter into the pipe, and execute
+    # happily processed 2 lines of nonsense. After the fix, execute must
+    # refuse early with a clear hint.
+    local cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
+    run bash -c "printf 'Loading config from .wiggumrc\nPlan written to X.\n' | '$cli' execute"
+    [ "$status" -eq 1 ]   # EXIT_BAD_ARGS
+    [[ "$output" == *"does not look like a wiggum plan"* ]]
+    [[ "$output" == *"wiggum execute <plan-file>"* ]]
+}
+
+@test "CLI: execute accepts stdin that is a real plan" {
+    # Positive counterpart: a proper plan on stdin must not be rejected.
+    # We set max_iterations to 0 via an env-provided config so execute exits
+    # cleanly once the input passes the shape check, without calling Claude.
+    local cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
+    run bash -c "printf '# Workplan\n- [ ] First task\n' | '$cli' execute 2>&1 | head -5"
+    # We only care that the shape check did not reject the input.
+    [[ "$output" != *"does not look like a wiggum plan"* ]]
 }

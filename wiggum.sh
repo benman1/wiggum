@@ -34,6 +34,17 @@ main() {
                 base_file="$(persist_stdin)"
                 FILES[0]="$base_file"
                 echo "Persisted stdin to: $base_file" >&2
+                if ! looks_like_plan "$base_file"; then
+                    echo "Error: stdin does not look like a wiggum plan" \
+                         "(no '- [ ]' checkboxes or '#' headings found)." >&2
+                    echo "Content saved to $base_file for inspection." >&2
+                    echo "Hint: if you're piping, make sure the plan content" \
+                         "— not status chatter — is on stdout. Or run the" \
+                         "two commands separately:" >&2
+                    echo "    wiggum plan <issue>       # writes docs/<issue>_plan.md" >&2
+                    echo "    wiggum execute <plan-file>" >&2
+                    exit "$EXIT_BAD_ARGS"
+                fi
             elif [[ -n "$STDIN_FILE" ]]; then
                 base_file="docs/stdin.md"
             fi
