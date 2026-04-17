@@ -472,6 +472,20 @@ persist_stdin() {
     echo "$dest"
 }
 
+# Returns 0 if the file looks like a wiggum plan (has at least one markdown
+# checkbox `- [ ]`/`- [x]` or one `#` heading). Returns 1 otherwise.
+#
+# Guards against a failure mode seen in the wild: upstream tools (another
+# wiggum process, a shell function with stray `echo`, etc.) accidentally
+# leak a few lines of chatter into the pipe feeding `wiggum execute`. A
+# non-empty but non-plan input would otherwise be silently accepted,
+# consuming Claude tokens on nonsense and stopping early with "0 tasks".
+looks_like_plan() {
+    local f="$1"
+    [[ -f "$f" ]] || return 1
+    grep -qE '^\s*-\s*\[[ xX]\]|^#' "$f"
+}
+
 # Derive a filename-safe slug from a file's first heading or first line.
 # Falls back to a date stamp if nothing usable is found.
 slugify() {
