@@ -39,6 +39,7 @@ This is the recommended first step when adopting wiggum in a new project. The ge
 wiggum plan <issue-files...>
 wiggum plan < description.txt
 echo "description" | wiggum plan
+wiggum plan <issue-files...> | wiggum execute
 ```
 
 Reads issue descriptions, specs, or requirements documents and produces a structured workplan. The plan is a markdown document with:
@@ -48,7 +49,17 @@ Reads issue descriptions, specs, or requirements documents and produces a struct
 - Acceptance criteria
 - Dependencies between tasks
 
-When given files, the plan is written to disk (default: `<basename>_plan.md`). When reading from stdin, the plan is written to stdout -- enabling Unix pipelines.
+Output destination depends on how `plan` is invoked:
+
+| Invocation | Plan goes to |
+|---|---|
+| File arg, TTY stdout (interactive) | `<basename>_plan.md` on disk |
+| File arg, piped stdout (`... \| wiggum execute`, `> file`) | stdout |
+| Stdin, TTY stdout | stdout |
+| Stdin, piped stdout | stdout |
+| `--plan-file <path>` (any invocation) | the specified path |
+
+In short: if stdout is not a terminal, the plan streams through stdout; otherwise it's written to `<basename>_plan.md`. Pass `--plan-file` to force a specific on-disk path.
 
 This is a read-only analysis step. It does not modify your codebase.
 
@@ -276,12 +287,24 @@ wiggum execute docs/plan.md --update-docs README.md,docs/API.md
 # Multiple context files (plan + supporting docs)
 wiggum execute docs/plan.md docs/api_spec.md docs/schema.csv
 
-# Pipe a plan directly from stdin
+# Pipe a plan directly from stdin (plan streams to execute, no intermediate file)
 wiggum plan issues/bug.md | wiggum execute
 
 # One-liner: describe, plan, and execute
 echo "Add rate limiting to /api/upload" | wiggum plan | wiggum execute
 ```
+
+Two equivalent patterns for plan → execute:
+
+1. **Explicit** (preferred when you want to review or reuse the plan): run each step separately and point `execute` at the plan file on disk.
+   ```bash
+   wiggum plan    issues/bug.md           # writes issues/bug_plan.md
+   wiggum execute issues/bug_plan.md
+   ```
+2. **Piped** (preferred for one-shot runs): `plan` detects the non-TTY stdout and streams the plan into `execute`. No intermediate file.
+   ```bash
+   wiggum plan issues/bug.md | wiggum execute
+   ```
 
 Default output: `<input-basename>_summary.md` in the same directory as the first input file.
 
@@ -353,8 +376,9 @@ Options:
   -h, --help               Show help
 
 When no files are given, plan and execute read from stdin. Plan writes to
-stdout in this mode; execute always writes to files (side effects are the
-output). Use -- to pass filenames that start with a dash.
+stdout whenever stdout is not a terminal (e.g. pipe or redirect), otherwise
+to `<basename>_plan.md` on disk. Execute always writes to files (side
+effects are the output). Use -- to pass filenames that start with a dash.
 ```
 
 ### Verbose mode
@@ -607,8 +631,8 @@ This file is per-machine (not committed to git). See the [Claude Code permission
 
 | Mode | Default output | Override flag |
 |------|---------------|---------------|
-| `plan` | `<dir>/<basename>_plan.md` | `--plan-file` |
-| `plan` (stdin) | stdout | `--plan-file` |
+| `plan` (TTY stdout) | `<dir>/<basename>_plan.md` | `--plan-file` |
+| `plan` (piped stdout or stdin input) | stdout | `--plan-file` |
 | `execute` | `<dir>/<basename>_summary.md` | `--summary-file` |
 | `execute` (stdin) | `docs/stdin_summary.md` | `--summary-file` |
 | `execute`/`plan`/`docs` | `<dir>/<basename>.log` | *(always created)* |
