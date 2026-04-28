@@ -120,37 +120,37 @@ suppresses wiggum's own verify pass.
 
 ## Acceptance criteria
 
-- [ ] `wiggum execute --no-verify <plan>` runs phases 1–4 without
+- [x] `wiggum execute --no-verify <plan>` runs phases 1–4 without
       invoking `run_validation`. Stderr contains
       `(verification skipped via --no-verify)`.
-- [ ] `wiggum execute --no-commit <plan>` completes without any
+- [x] `wiggum execute --no-commit <plan>` completes without any
       `git commit` invocation by wiggum (Claude may still commit if it
       decides to — that's not in scope, but the wiggum-issued prompts
       are gone). Stderr contains `(commit skipped via --no-commit)` at
       each gated site.
-- [ ] Both flags can be combined.
-- [ ] `wiggum check --no-verify` exits with `EXIT_BAD_ARGS` and a clear
+- [x] Both flags can be combined.
+- [x] `wiggum check --no-verify` exits with `EXIT_BAD_ARGS` and a clear
       error.
-- [ ] `wiggum check --no-commit` runs verification but does not commit
+- [x] `wiggum check --no-commit` runs verification but does not commit
       after fixes.
-- [ ] `.wiggumrc` containing `skip_verify = true` and/or
+- [x] `.wiggumrc` containing `skip_verify = true` and/or
       `skip_commit = true` produces the same behavior as the CLI flags.
-- [ ] CLI flag overrides config when they disagree.
-- [ ] Unknown values for `skip_verify` / `skip_commit` (e.g.,
+- [x] CLI flag overrides config when they disagree.
+- [x] Unknown values for `skip_verify` / `skip_commit` (e.g.,
       `skip_verify = maybe`) emit a warning and are treated as `false`.
-- [ ] `shellcheck -s bash wiggum.sh lib/wiggum.sh install.sh` passes
+- [x] `shellcheck -s bash wiggum.sh lib/wiggum.sh install.sh` passes
       with zero warnings.
-- [ ] `bats test/wiggum.bats` passes, with new tests covering:
+- [x] `bats test/wiggum.bats` passes, with new tests covering:
       - `--no-verify` skips `run_validation` in execute
       - `--no-commit` skips all five commit sites
       - `skip_verify = true` in `.wiggumrc` works
       - `skip_commit = true` in `.wiggumrc` works
       - CLI overrides config
       - `wiggum check --no-verify` errors out
-- [ ] README documents both flags and config keys, including the
+- [x] README documents both flags and config keys, including the
       caveat that `--no-verify` does not stop Claude from running
       tests during implementation.
-- [ ] `usage` strings for `execute` and `check` list the new flags.
+- [x] `usage` strings for `execute` and `check` list the new flags.
 
 ## Files to touch
 
