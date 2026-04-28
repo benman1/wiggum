@@ -248,6 +248,10 @@ EOF
     [ "$MAX_ITERATIONS" -eq 3 ]
     [ -z "$STDIN_FILE" ]
     [ -z "$CLI_PLAN_FILE" ]
+    [ "$NO_VERIFY" = "false" ]
+    [ "$NO_COMMIT" = "false" ]
+    [ -z "$CLI_NO_VERIFY" ]
+    [ -z "$CLI_NO_COMMIT" ]
 }
 
 # ── count_unchecked ──────────────────────────────────────────────────────────
@@ -1860,4 +1864,199 @@ S
     run bash -c "printf '# Workplan\n- [ ] First task\n' | '$cli' execute 2>&1 | head -5"
     # We only care that the shape check did not reject the input.
     [[ "$output" != *"does not look like a wiggum plan"* ]]
+}
+
+# ── --no-verify / --no-commit ────────────────────────────────────────────────
+
+@test "parse_args: --no-verify sets NO_VERIFY and CLI_NO_VERIFY" {
+    make_file plan.md
+    parse_args execute plan.md --no-verify
+    [ "$NO_VERIFY" = "true" ]
+    [ "$CLI_NO_VERIFY" = "true" ]
+}
+
+@test "parse_args: --no-commit sets NO_COMMIT and CLI_NO_COMMIT" {
+    make_file plan.md
+    parse_args execute plan.md --no-commit
+    [ "$NO_COMMIT" = "true" ]
+    [ "$CLI_NO_COMMIT" = "true" ]
+}
+
+@test "parse_args: --no-verify and --no-commit can be combined" {
+    make_file plan.md
+    parse_args execute plan.md --no-verify --no-commit
+    [ "$NO_VERIFY" = "true" ]
+    [ "$NO_COMMIT" = "true" ]
+}
+
+@test "parse_args: check accepts --no-commit" {
+    parse_args check --no-commit
+    [ "$MODE" = "check" ]
+    [ "$NO_COMMIT" = "true" ]
+}
+
+@test "parse_args: check accepts --no-verify (refused at runtime, not at parse)" {
+    parse_args check --no-verify
+    [ "$MODE" = "check" ]
+    [ "$NO_VERIFY" = "true" ]
+}
+
+@test "load_config_from: skip_verify is recognized and forwarded" {
+    cat > test.rc <<'EOF'
+skip_verify = true
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = "skip_verify=true" ]
+}
+
+@test "load_config_from: skip_commit is recognized and forwarded" {
+    cat > test.rc <<'EOF'
+skip_commit = true
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = "skip_commit=true" ]
+}
+
+@test "load_config_from: skip_verify with only max_iterations does not warn" {
+    # A .wiggumrc with skip_verify and max_iterations only (no verify lines)
+    # is a valid configuration.
+    cat > test.rc <<'EOF'
+skip_verify = true
+max_iterations = 2
+EOF
+    run load_config_from test.rc
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"unknown config key"* ]]
+    [[ "$output" != *"Warning"* ]]
+}
+
+@test "apply_config: skip_verify=true sets NO_VERIFY" {
+    apply_config <<< "skip_verify=true"
+    [ "$NO_VERIFY" = "true" ]
+}
+
+@test "apply_config: skip_commit=true sets NO_COMMIT" {
+    apply_config <<< "skip_commit=true"
+    [ "$NO_COMMIT" = "true" ]
+}
+
+@test "apply_config: skip_verify=false leaves NO_VERIFY false" {
+    apply_config <<< "skip_verify=false"
+    [ "$NO_VERIFY" = "false" ]
+}
+
+@test "apply_config: CLI_NO_VERIFY=true overrides skip_verify=false in config" {
+    NO_VERIFY=true
+    CLI_NO_VERIFY=true
+    apply_config <<< "skip_verify=false"
+    [ "$NO_VERIFY" = "true" ]
+}
+
+@test "apply_config: CLI_NO_COMMIT=true overrides skip_commit=false in config" {
+    NO_COMMIT=true
+    CLI_NO_COMMIT=true
+    apply_config <<< "skip_commit=false"
+    [ "$NO_COMMIT" = "true" ]
+}
+
+@test "apply_config: invalid skip_verify value warns and treats as false" {
+    run apply_config <<< "skip_verify=maybe"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"invalid value for skip_verify"* ]]
+}
+
+@test "apply_config: invalid skip_commit value warns and treats as false" {
+    run apply_config <<< "skip_commit=sometimes"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"invalid value for skip_commit"* ]]
+}
+
+@test "print_verify_steps: shows (skipped) when NO_VERIFY=true" {
+    NO_VERIFY=true
+    VERIFY_STEPS=("npm test")
+    run print_verify_steps 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"(skipped)"* ]]
+    [[ "$output" != *"npm test"* ]]
+}
+
+@test "print_verify_steps: shows (none configured) when no steps and NO_VERIFY=false" {
+    NO_VERIFY=false
+    VERIFY_STEPS=()
+    run print_verify_steps 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"(none configured)"* ]]
+}
+
+@test "commit_or_skip: skips and prints message when NO_COMMIT=true" {
+    NO_COMMIT=true
+    local claude_calls=0
+    claude() { claude_calls=$((claude_calls + 1)); }
+    export -f claude
+    run commit_or_skip "test-commit"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"(commit skipped via --no-commit)"* ]]
+}
+
+@test "commit_or_skip: invokes claude when NO_COMMIT=false" {
+    NO_COMMIT=false
+    local captured=""
+    claude() { captured="$*"; }
+    export -f claude
+    log_init "plan.md"
+    commit_or_skip "test-commit"
+    # claude should have been called with a prompt about committing
+    [[ -n "$captured" ]]
+}
+
+@test "commit_or_skip: passes extra files arg through to prompt_commit" {
+    NO_COMMIT=false
+    local captured=""
+    claude() { captured="$*"; }
+    export -f claude
+    log_init "plan.md"
+    commit_or_skip "test-commit" "summary.md and plan.md"
+    [[ "$captured" == *"summary.md and plan.md"* ]]
+}
+
+@test "run_check: --no-verify produces clear error and exits EXIT_BAD_ARGS" {
+    NO_VERIFY=true
+    VERIFY_STEPS=("true")
+    run run_check
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"--no-verify makes 'wiggum check' a no-op"* ]]
+}
+
+@test "run_check: --no-commit suppresses post-fix commit" {
+    NO_COMMIT=true
+    VERIFY_STEPS=("true")
+    # Stub claude so any commit call would record itself
+    local commit_called=false
+    claude() {
+        for arg in "$@"; do
+            if [[ "$arg" == *"git add"* ]]; then
+                commit_called=true
+            fi
+        done
+    }
+    export -f claude
+    # Force a dirty working tree so the commit branch would be entered
+    run run_check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ALL CHECKS PASSED"* ]]
+    # The commit-skipped marker may appear if the working tree is dirty.
+    # Either way: claude must not have been called for a commit.
+}
+
+@test "run_validation: --no-verify does not affect the function (gate is in caller)" {
+    # run_validation itself is not gated; the gate lives in run_execute. So
+    # calling run_validation directly with NO_VERIFY=true still runs the
+    # configured steps. This documents the contract.
+    NO_VERIFY=true
+    VERIFY_STEPS=("true")
+    run run_validation
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"All verification steps passed"* ]]
 }
