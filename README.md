@@ -369,6 +369,8 @@ Options:
   --max-iterations <n>    Maximum implementation iterations (execute mode, default: 3)
   --benchmark <script>    Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
+  --no-verify              Skip wiggum's verification waterfall (execute mode; rejected by check)
+  --no-commit              Skip every wiggum-issued git commit (execute, check, docs)
   --verbose                Show Claude output (suppressed by default)
   -i <files...>            Input files (docs mode)
   -o <files...>            Output doc files to update (docs mode)
@@ -404,6 +406,23 @@ Wiggum looks for a `.wiggumrc` file, first in the current directory, then in `$H
 | `benchmark` | A shell command to run after each iteration. Output is fed to Claude as context for the next iteration. Purely informational — does not gate or block. Multiple lines are supported. | *(none)* |
 | `max_iterations` | Maximum implementation iterations per run. Stops early if all tasks complete or progress stalls. | `3` |
 | `max_validation_retries` | Max times the validation cycle retries before giving up. | `5` |
+| `skip_verify` | If `true`, skip wiggum's verification waterfall entirely (same as `--no-verify`). | `false` |
+| `skip_commit` | If `true`, skip every wiggum-issued git commit (same as `--no-commit`). | `false` |
+
+### Skipping verification or commits
+
+Both behaviors are opt-in via CLI flags or config keys. CLI flags win when they disagree with config.
+
+**`--no-verify` / `skip_verify = true`** — skip wiggum's verification waterfall in `execute`. This is useful when iterating on experimental code where running the full test suite each cycle is too slow, or when tests are known broken and not in scope for the current run. Caveat: this only suppresses wiggum's own verify pass. Claude may still run tests, builds, or type-checks during implementation — wiggum does not control Claude's tool use. To stop tests from running entirely, edit your project's CLAUDE.md to instruct Claude not to run them. `wiggum check --no-verify` is rejected (it would make `check` a no-op).
+
+**`--no-commit` / `skip_commit = true`** — skip every wiggum-issued git commit. Useful when reviewing changes manually before committing, or when exploring multiple approaches in an unstaged working tree. The working tree is left dirty; subsequent `wiggum execute` runs will see uncommitted state in phase 1, and Claude may try to reconcile it. Note: Claude may still create its own commits if it decides to — this flag only stops the wiggum-issued prompts.
+
+```bash
+wiggum execute docs/plan.md --no-verify              # skip the verify waterfall
+wiggum execute docs/plan.md --no-commit              # leave changes uncommitted
+wiggum execute docs/plan.md --no-verify --no-commit  # both
+wiggum check --no-commit                             # verify but don't commit fixes
+```
 
 ### Verify vs autofix
 
