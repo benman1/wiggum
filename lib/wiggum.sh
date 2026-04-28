@@ -41,6 +41,10 @@ wiggum_reset() {
     WIGGUM_LOG_FILE=""
     STDIN_FILE=""
     CLI_PLAN_FILE=""
+    NO_VERIFY=false
+    NO_COMMIT=false
+    CLI_NO_VERIFY=""
+    CLI_NO_COMMIT=""
 }
 
 wiggum_reset
@@ -68,7 +72,7 @@ load_config_from() {
         value="$(echo "$value" | xargs)"
 
         case "$key" in
-            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries)
+            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|skip_verify|skip_commit)
                 echo "$key=$value"
                 ;;
             *)
@@ -101,6 +105,30 @@ apply_config() {
             max_validation_retries)
                 if [[ -z "$CLI_MAX_RETRIES" ]]; then
                     MAX_VALIDATION_RETRIES="$value"
+                fi
+                ;;
+            skip_verify)
+                if [[ -z "$CLI_NO_VERIFY" ]]; then
+                    case "$value" in
+                        true|1|yes|on)   NO_VERIFY=true ;;
+                        false|0|no|off)  NO_VERIFY=false ;;
+                        *)
+                            echo "Warning: invalid value for skip_verify: '$value' (expected true/false). Treating as false." >&2
+                            NO_VERIFY=false
+                            ;;
+                    esac
+                fi
+                ;;
+            skip_commit)
+                if [[ -z "$CLI_NO_COMMIT" ]]; then
+                    case "$value" in
+                        true|1|yes|on)   NO_COMMIT=true ;;
+                        false|0|no|off)  NO_COMMIT=false ;;
+                        *)
+                            echo "Warning: invalid value for skip_commit: '$value' (expected true/false). Treating as false." >&2
+                            NO_COMMIT=false
+                            ;;
+                    esac
                 fi
                 ;;
         esac
@@ -189,6 +217,9 @@ Options:
   --summary-file <path>         Output path for the summary (default: <base>_summary.md)
   --benchmark <script>          Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>         Comma-separated doc files to update after execution
+  --no-verify                   Skip wiggum's verification waterfall (Claude may
+                                still run tests during implementation)
+  --no-commit                   Skip every wiggum-issued git commit
   --verbose                     Show Claude output (suppressed by default)
 
 Verification steps:
@@ -242,7 +273,10 @@ Usage:
 
 Options:
   --max-validation-retries <n>  Max fix attempts per step (default: 5)
+  --no-commit                   Skip the post-fix wiggum commit
   --verbose                     Show Claude output (suppressed by default)
+
+Note: --no-verify is rejected here -- it would make 'wiggum check' a no-op.
 
 Runs the verify/autofix steps from .wiggumrc against the current codebase.
 When a step fails, Claude is asked to fix the issue. Repeats up to
@@ -346,6 +380,16 @@ parse_args() {
             --verbose)
                 export VERBOSE=true
                 CLAUDE_EXTRA_ARGS+=("--verbose")
+                shift
+                ;;
+            --no-verify)
+                NO_VERIFY=true
+                CLI_NO_VERIFY=true
+                shift
+                ;;
+            --no-commit)
+                NO_COMMIT=true
+                CLI_NO_COMMIT=true
                 shift
                 ;;
             --update-docs)
@@ -1061,10 +1105,27 @@ prompt_commit() {
     echo "Review all $files_clause. For each file, execute 'git add <file>' and 'git commit -m \"<message>\"'. $PROMPT_SUFFIX The message MUST be a single line. DO NOT include any trailers, footers, or attributions. Use only the imperative mood describing the logic change."
 }
 
+# Run a wiggum-issued commit step, or skip it under --no-commit.
+# Args: <session-label> [extra-files-to-mention]
+commit_or_skip() {
+    if [[ "$NO_COMMIT" == true ]]; then
+        echo "(commit skipped via --no-commit)" >&2
+        return 0
+    fi
+    local label="$1"
+    shift
+    WIGGUM_CURRENT_LABEL="$label"
+    run_claude -p --permission-mode bypassPermissions "$(prompt_commit "$@")"
+}
+
 # ── Validation ───────────────────────────────────────────────────────────────
 
 print_verify_steps() {
     local fd="${1:-2}"  # default to stderr
+    if [[ "$NO_VERIFY" == true ]]; then
+        echo "Verification steps: (skipped)" >&"$fd"
+        return
+    fi
     if [[ ${#VERIFY_STEPS[@]} -eq 0 ]]; then
         echo "Verification steps: (none configured)" >&"$fd"
         return
@@ -1218,9 +1279,13 @@ run_execute() {
         "$(prompt_workplan "$file_list") Analyze the repository against the workplan. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement. $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
-    WIGGUM_CURRENT_LABEL="phase1-commit"
-    run_claude -p --permission-mode bypassPermissions \
-        "Check if $file_list has any changes (modified or untracked). If so, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. $PROMPT_SUFFIX If there are no changes, do nothing."
+    if [[ "$NO_COMMIT" == true ]]; then
+        echo "(commit skipped via --no-commit)" >&2
+    else
+        WIGGUM_CURRENT_LABEL="phase1-commit"
+        run_claude -p --permission-mode bypassPermissions \
+            "Check if $file_list has any changes (modified or untracked). If so, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. $PROMPT_SUFFIX If there are no changes, do nothing."
+    fi
 
     # Phase 2: Iterative implementation
     local stall_count=0
@@ -1246,14 +1311,16 @@ run_execute() {
             "${FILES[@]}"
 
         # Validation: uses -c to keep implementation context for fixes
-        WIGGUM_CURRENT_LABEL="phase2-validate-$i"
-        run_validation || echo "Warning: validation did not fully pass on iteration $i" >&2
+        if [[ "$NO_VERIFY" == true ]]; then
+            echo "(verification skipped via --no-verify)" >&2
+        else
+            WIGGUM_CURRENT_LABEL="phase2-validate-$i"
+            run_validation || echo "Warning: validation did not fully pass on iteration $i" >&2
+        fi
 
         # Commit: bypassPermissions so git commands run without prompting
         echo "Committing changes..." >&2
-        WIGGUM_CURRENT_LABEL="phase2-commit-$i"
-        run_claude -p --permission-mode bypassPermissions \
-            "$(prompt_commit)"
+        commit_or_skip "phase2-commit-$i"
 
         # Run benchmarks after commit (output feeds into next iteration)
         local curr_benchmark_nums=""
@@ -1325,9 +1392,7 @@ run_execute() {
         "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, and why execution stopped ($stop_reason).${final_benchmark_context} $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
-    WIGGUM_CURRENT_LABEL="phase3-commit"
-    run_claude -p --permission-mode bypassPermissions \
-        "$(prompt_commit "$SUMMARY_FILE and $file_list")"
+    commit_or_skip "phase3-commit" "$SUMMARY_FILE and $file_list"
 
     echo "" >&2
 
@@ -1400,15 +1465,17 @@ run_update_docs() {
         "Update the following documentation files: $output_list. Use the input files as context for what has changed: $input_list. For each output file: read its current content, then update it to reflect the changes described in the input files. Preserve the existing structure and style of each document. Only update sections that are affected by the changes. Do not rewrite sections that are already accurate. $PROMPT_SUFFIX" \
         "${inputs[@]}" "${outputs[@]}"
 
-    WIGGUM_CURRENT_LABEL="${prev_label}-commit"
-    run_claude -p --permission-mode bypassPermissions \
-        "$(prompt_commit "$output_list")"
+    commit_or_skip "${prev_label}-commit" "$output_list"
 
     echo "Documentation updated: $output_list"
 }
 
 run_check() {
     echo "=== WIGGUM CHECK MODE ==="
+    if [[ "$NO_VERIFY" == true ]]; then
+        echo "Error: --no-verify makes 'wiggum check' a no-op. Drop the flag or use a different command." >&2
+        return "$EXIT_BAD_ARGS"
+    fi
     if [[ ${#VERIFY_STEPS[@]} -eq 0 ]]; then
         echo "No verification steps configured in .wiggumrc. Nothing to check."
         return 0
@@ -1421,9 +1488,7 @@ run_check() {
         echo ""
         if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
             echo "Committing changes..."
-            WIGGUM_CURRENT_LABEL="check-commit"
-            run_claude -p --permission-mode bypassPermissions \
-                "$(prompt_commit)"
+            commit_or_skip "check-commit"
         fi
         if [[ -n "${WIGGUM_LAST_SESSION_ID:-}" ]]; then
             echo "Session: $WIGGUM_LAST_SESSION_ID"
