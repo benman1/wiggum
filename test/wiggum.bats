@@ -307,6 +307,66 @@ EOF
     [ "$result" -eq 2 ]
 }
 
+# ── count_total_tasks ────────────────────────────────────────────────────────
+
+@test "count_total_tasks: counts both checked and unchecked" {
+    cat > plan.md <<'EOF'
+- [ ] todo
+- [x] done
+- [X] also done
+- not a task
+# heading
+EOF
+    local result
+    result="$(count_total_tasks plan.md)"
+    [ "$result" -eq 3 ]
+}
+
+@test "count_total_tasks: returns zero for missing file" {
+    local result
+    result="$(count_total_tasks nonexistent.md)"
+    [ "$result" -eq 0 ]
+}
+
+# ── warn_if_plan_large ───────────────────────────────────────────────────────
+
+@test "warn_if_plan_large: warns when total tasks exceed threshold" {
+    : > plan.md
+    local i
+    for ((i = 1; i <= 41; i++)); do
+        echo "- [ ] task $i" >> plan.md
+    done
+    run warn_if_plan_large plan.md
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Warning"* ]]
+    [[ "$output" == *"41 tasks"* ]]
+}
+
+@test "warn_if_plan_large: silent at the threshold" {
+    : > plan.md
+    local i
+    for ((i = 1; i <= 40; i++)); do
+        echo "- [ ] task $i" >> plan.md
+    done
+    run warn_if_plan_large plan.md
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "warn_if_plan_large: counts checked and unchecked together" {
+    : > plan.md
+    local i
+    for ((i = 1; i <= 21; i++)); do
+        echo "- [ ] todo $i" >> plan.md
+    done
+    for ((i = 1; i <= 20; i++)); do
+        echo "- [x] done $i" >> plan.md
+    done
+    run warn_if_plan_large plan.md
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"41 tasks"* ]]
+}
+
 # ── derive_output_file ───────────────────────────────────────────────────────
 
 @test "derive_output_file: plan mode produces <base>_plan.md" {

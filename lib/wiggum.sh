@@ -506,6 +506,33 @@ count_unchecked() {
     echo "$count"
 }
 
+# Count both checked and unchecked tasks across one or more plan files.
+count_total_tasks() {
+    local count=0
+    local f
+    for f in "$@"; do
+        if [[ -f "$f" ]]; then
+            count=$((count + $(grep -cE '^\s*-\s*\[[ xX]\]' "$f" || true)))
+        fi
+    done
+    echo "$count"
+}
+
+# Threshold for the large-plan warning. Plans above this tend to stall and
+# lose focus; the warning nudges the user to split them.
+WIGGUM_LARGE_PLAN_THRESHOLD=40
+
+# Emit a stderr warning if the combined task count across the given files
+# exceeds WIGGUM_LARGE_PLAN_THRESHOLD. Always returns 0.
+warn_if_plan_large() {
+    local total
+    total="$(count_total_tasks "$@")"
+    if [[ "$total" -gt "$WIGGUM_LARGE_PLAN_THRESHOLD" ]]; then
+        echo "Warning: plan has $total tasks (threshold: $WIGGUM_LARGE_PLAN_THRESHOLD). Large plans tend to stall and lose focus -- consider splitting into smaller, sequential workplans." >&2
+    fi
+    return 0
+}
+
 # ── Stdin persistence ────────────────────────────────────────────────────────
 
 persist_stdin() {
@@ -1072,6 +1099,7 @@ run_plan() {
     WIGGUM_SHOW_OUTPUT=false
 
     if [[ -f "$PLAN_FILE" && -s "$PLAN_FILE" ]]; then
+        warn_if_plan_large "$PLAN_FILE"
         if [[ "$piped" == true ]]; then
             cat "$PLAN_FILE"
             rm -f "$PLAN_FILE" "$STDIN_FILE"
@@ -1270,6 +1298,8 @@ run_execute() {
         log_init "${FILES[0]}"
     fi
     local file_list="${FILES[*]}"
+
+    warn_if_plan_large "${FILES[@]}"
 
     # Phase 1: Diagnostic & status sync
     echo "--- Phase 1: Diagnostic & Status Sync ---" >&2
