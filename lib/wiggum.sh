@@ -884,7 +884,7 @@ Before starting, derive a short kebab-case slug from the issue (e.g., "improve-c
 3. Analyze the repository to understand the relevant code, tests, and architecture.
 4. Produce a detailed workplan as a markdown checklist with:
    - Phases and discrete tasks (each with `[ ]` status)
-   - Acceptance criteria for each task
+   - An `Acceptance:` line on every task stating an observable outcome (a passing test, a specific log line, a file that exists, a command that exits 0). Not a feeling. A task without observable acceptance is a wish, not a step.
    - Dependencies between tasks
 5. Write the plan to `docs/<slug>_plan.md`.
 6. Commit the plan: `git add docs/<slug>_plan.md && git commit -m "add workplan for <slug>"`
@@ -1067,7 +1067,7 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p --permission-mode bypassPermissions \
-        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), acceptance criteria, and dependencies. Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), and dependencies. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
@@ -1172,7 +1172,7 @@ run_validation() {
                     echo "--- Error output ---"
                     echo "$output"
                     echo "--------------------"
-                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code. $PROMPT_SUFFIX\n\nCommand: $cmd\nSource: .wiggumrc (autofix step)\nExit code: non-zero\n\nError output:\n$output"
+                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code. Read the actual error output below before forming a hypothesis -- do not guess from the filename or command alone. After editing, re-run the failing command yourself and confirm it now passes; do not infer success from the edit. $PROMPT_SUFFIX\n\nCommand: $cmd\nSource: .wiggumrc (autofix step)\nExit code: non-zero\n\nError output:\n$output"
                     needs_fix=true
                     break
                 fi
@@ -1185,7 +1185,7 @@ run_validation() {
                     echo "--- Error output ---"
                     echo "$output"
                     echo "--------------------"
-                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code. $PROMPT_SUFFIX\n\nCommand: $cmd\nSource: .wiggumrc (verify step)\nExit code: non-zero\n\nError output:\n$output"
+                    prompt="WIGGUM VALIDATION FAILURE. The command below was run by wiggum (from .wiggumrc), NOT by your code. If the command itself is wrong (e.g. wrong script name), you CANNOT fix it -- tell the user to update .wiggumrc. Only fix issues in the actual source code. Read the actual error output below before forming a hypothesis -- do not guess from the filename or command alone. After editing, re-run the failing command yourself and confirm it now passes; do not infer success from the edit. $PROMPT_SUFFIX\n\nCommand: $cmd\nSource: .wiggumrc (verify step)\nExit code: non-zero\n\nError output:\n$output"
                     needs_fix=true
                     break
                 fi
@@ -1276,7 +1276,7 @@ run_execute() {
     log_entry "phase" "1 - diagnostic & status sync"
     WIGGUM_CURRENT_LABEL="phase1-diagnostic"
     run_claude -p --permission-mode bypassPermissions \
-        "$(prompt_workplan "$file_list") Analyze the repository against the workplan. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement. $PROMPT_SUFFIX" \
+        "$(prompt_workplan "$file_list") Analyze the repository against the workplan. Verify before claiming -- when checking whether a task is done, read the actual file or run the actual command. Do not infer status from filenames, comments, or commit messages. If a task touches state shared with other modules (a status column, a config flag, a lifecycle field), grep every site that writes it and enumerate the values it can leave behind, including transient ones from interrupted runs. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement. $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
     if [[ "$NO_COMMIT" == true ]]; then
@@ -1307,7 +1307,7 @@ run_execute() {
         fi
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
         run_claude -p -c --permission-mode bypassPermissions \
-            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found.${benchmark_context} $PROMPT_SUFFIX" \
+            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found. Do your own legwork -- if a question can be answered by running a command, reading a file, or grepping the repo, do it yourself rather than stopping to ask. Only ask the user when you genuinely lack access or the action is destructive.${benchmark_context} $PROMPT_SUFFIX" \
             "${FILES[@]}"
 
         # Validation: uses -c to keep implementation context for fixes
