@@ -63,6 +63,29 @@ In short: if stdout is not a terminal, the plan streams through stdout; otherwis
 
 This is a read-only analysis step. It does not modify your codebase.
 
+#### Dropped tasks
+
+Plans use three checkbox states:
+
+- `[ ]` -- pending. Wiggum will pick this up on the next iteration.
+- `[x]` -- done. Terminal.
+- `[~]` -- dropped. Terminal. The work was intentionally abandoned mid-execution -- typically because the task turned out to be inapplicable, redundant, or out of scope once the surrounding implementation came into focus. Wiggum treats `[~]` exactly like `[x]` for control-flow purposes: it is not counted as remaining, the phase-2 loop will not re-pick it, and phase-1 reconcile will not convert it back to `[ ]`.
+
+Record the rationale on the same line as the marker so future readers (and future iterations) understand why the task was dropped:
+
+```
+- [~] **2.6** -- surprisal/burstiness. Dropped: llm-server has no perplexity endpoint.
+- [~] **3.1** -- cross-document coreference. Dropped: covered by upstream embeddings already.
+```
+
+What `[~]` is **not**:
+
+- Not "deferred to a later phase". If the work is still planned, leave it `[ ]`.
+- Not "blocked". If the work is paused waiting on something, leave it `[ ]` and note the blocker in the line.
+- Not a way to silence stalls. `[~]` is a recorded decision in the plan, not a control knob.
+
+GitHub-rendering caveat: `[~]` renders as plain text in GitHub's task-list view (only `[ ]` and `[x]` get the interactive checkbox treatment). This is acceptable because plans are primarily read in IDEs, `cat`, and `grep` -- the marker stays distinct everywhere it matters.
+
 ### Execute mode
 
 ```
