@@ -154,7 +154,7 @@ Goal: prevent the phase-1 diagnostic from "fixing" `[~]` back to
 
 Depends on: Phase 1 (so the convention is established).
 
-- [ ] **5.1** Update the phase-1 prompt (around `lib/wiggum.sh:1309`)
+- [x] **5.1** Update the phase-1 prompt (around `lib/wiggum.sh:1309`)
       so the reconcile instruction reads, in addition to the current
       `[x] for done, [ ] for not done` guidance: "Leave `[~]` lines
       untouched. `[~]` is the terminal dropped state -- the work was
@@ -163,9 +163,9 @@ Depends on: Phase 1 (so the convention is established).
 
 ### Acceptance criteria for Phase 5
 
-- [ ] The phase-1 prompt string contains the `[~]`-is-terminal
+- [x] The phase-1 prompt string contains the `[~]`-is-terminal
       instruction.
-- [ ] `shellcheck -s bash lib/wiggum.sh` still passes.
+- [x] `shellcheck -s bash lib/wiggum.sh` still passes.
 
 ---
 
