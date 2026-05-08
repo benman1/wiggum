@@ -412,6 +412,68 @@ EOF
     [ "$result" -eq 3 ]
 }
 
+# ── build_dropped_context ────────────────────────────────────────────────────
+
+@test "build_dropped_context: empty when no [~] lines" {
+    cat > plan.md <<'EOF'
+- [ ] todo
+- [x] done
+EOF
+    local result
+    result="$(build_dropped_context plan.md)"
+    [ -z "$result" ]
+}
+
+@test "build_dropped_context: empty for missing file" {
+    local result
+    result="$(build_dropped_context nonexistent.md)"
+    [ -z "$result" ]
+}
+
+@test "build_dropped_context: includes count, verbatim lines, and do-not-re-mark instruction" {
+    cat > plan.md <<'EOF'
+- [ ] still pending
+- [~] **2.6** dropped: no perplexity endpoint
+- [~] **3.1** dropped: covered by upstream
+- [x] done
+EOF
+    local result
+    result="$(build_dropped_context plan.md)"
+    [[ "$result" == *"There are 2 dropped tasks"* ]]
+    [[ "$result" == *"What was dropped"* ]]
+    [[ "$result" == *"Do not re-mark"* ]]
+    [[ "$result" == *"[~]"* ]]
+    [[ "$result" == *"**2.6** dropped: no perplexity endpoint"* ]]
+    [[ "$result" == *"**3.1** dropped: covered by upstream"* ]]
+}
+
+@test "build_dropped_context: starts with literal \\n\\n separator" {
+    cat > plan.md <<'EOF'
+- [~] dropped
+EOF
+    local result
+    result="$(build_dropped_context plan.md)"
+    # Match the conditional-context pattern in run_execute, which prepends
+    # a literal `\n\n` so the appended block reads as a fresh paragraph.
+    [[ "$result" == '\n\n'* ]]
+}
+
+@test "build_dropped_context: aggregates across multiple files" {
+    cat > a.md <<'EOF'
+- [~] from a
+EOF
+    cat > b.md <<'EOF'
+- [~] from b1
+- [~] from b2
+EOF
+    local result
+    result="$(build_dropped_context a.md b.md)"
+    [[ "$result" == *"There are 3 dropped tasks"* ]]
+    [[ "$result" == *"from a"* ]]
+    [[ "$result" == *"from b1"* ]]
+    [[ "$result" == *"from b2"* ]]
+}
+
 # ── warn_if_plan_large ───────────────────────────────────────────────────────
 
 @test "warn_if_plan_large: warns when total tasks exceed threshold" {
