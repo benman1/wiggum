@@ -257,25 +257,25 @@ Goal: document the marker so plan authors actually use it.
 
 Depends on: Phases 1-6 (so the documented behavior is real).
 
-- [ ] **8.1** In README.md, add a short "Dropped tasks" subsection
+- [x] **8.1** In README.md, add a short "Dropped tasks" subsection
       under the plan-file conventions area. Cover: what `[~]` means,
       when to use it (mid-execution discovery that a task is no longer
       applicable), how to record the rationale on the same line, and
       that wiggum will not pick `[~]` tasks up again.
-- [ ] **8.2** Note the GitHub-rendering caveat: `[~]` renders as
+- [x] **8.2** Note the GitHub-rendering caveat: `[~]` renders as
       plain text in GitHub's task-list view, which is acceptable
       because plans are primarily read in IDEs / `cat` / `grep`.
-- [ ] **8.3** Add a concrete example showing a `[~]` line with
+- [x] **8.3** Add a concrete example showing a `[~]` line with
       inline rationale, mirroring the issue's examples (e.g.
       `- [~] **2.6** -- surprisal/burstiness. Dropped: llm-server has
       no perplexity endpoint.`).
-- [ ] **8.4** Briefly mention what `[~]` is NOT: it is not "deferred
+- [x] **8.4** Briefly mention what `[~]` is NOT: it is not "deferred
       to a later phase" and it is not "blocked" -- it is a terminal
       decision recorded in the plan itself.
 
 ### Acceptance criteria for Phase 8
 
-- [ ] README contains the `[~]` subsection with meaning, usage,
+- [x] README contains the `[~]` subsection with meaning, usage,
       rationale-on-same-line guidance, GitHub-rendering caveat, an
       example, and a "what it is NOT" note.
 
