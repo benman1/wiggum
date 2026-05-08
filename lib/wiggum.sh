@@ -1324,7 +1324,7 @@ run_execute() {
     log_entry "phase" "1 - diagnostic & status sync"
     WIGGUM_CURRENT_LABEL="phase1-diagnostic"
     run_claude -p --permission-mode bypassPermissions \
-        "$(prompt_workplan "$file_list") Analyze the repository against the workplan. Verify before claiming -- when checking whether a task is done, read the actual file or run the actual command. Do not infer status from filenames, comments, or commit messages. If a task touches state shared with other modules (a status column, a config flag, a lifecycle field), grep every site that writes it and enumerate the values it can leave behind, including transient ones from interrupted runs. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Do not change the plan structure. List the next steps to implement. $PROMPT_SUFFIX" \
+        "$(prompt_workplan "$file_list") Analyze the repository against the workplan. Verify before claiming -- when checking whether a task is done, read the actual file or run the actual command. Do not infer status from filenames, comments, or commit messages. If a task touches state shared with other modules (a status column, a config flag, a lifecycle field), grep every site that writes it and enumerate the values it can leave behind, including transient ones from interrupted runs. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Leave \`[~]\` lines untouched. \`[~]\` is the terminal dropped state -- the work was intentionally abandoned and is not pending. Do not convert \`[~]\` to \`[ ]\` or \`[x]\`. Do not change the plan structure. List the next steps to implement. $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
     if [[ "$NO_COMMIT" == true ]]; then
