@@ -307,6 +307,20 @@ EOF
     [ "$result" -eq 2 ]
 }
 
+@test "count_unchecked: ignores [~] dropped lines" {
+    cat > plan.md <<'EOF'
+- [ ] todo one
+- [ ] todo two
+- [~] dropped one
+- [~] dropped two
+- [~] dropped three
+- [x] done
+EOF
+    local result
+    result="$(count_unchecked plan.md)"
+    [ "$result" -eq 2 ]
+}
+
 # ── count_total_tasks ────────────────────────────────────────────────────────
 
 @test "count_total_tasks: counts both checked and unchecked" {
@@ -326,6 +340,76 @@ EOF
     local result
     result="$(count_total_tasks nonexistent.md)"
     [ "$result" -eq 0 ]
+}
+
+@test "count_total_tasks: counts [~] as a task" {
+    cat > plan.md <<'EOF'
+- [ ] todo one
+- [ ] todo two
+- [~] dropped one
+- [~] dropped two
+- [~] dropped three
+- [x] done
+EOF
+    local result
+    result="$(count_total_tasks plan.md)"
+    [ "$result" -eq 6 ]
+}
+
+# ── count_dropped ────────────────────────────────────────────────────────────
+
+@test "count_dropped: counts only [~] lines" {
+    cat > plan.md <<'EOF'
+- [ ] todo one
+- [ ] todo two
+- [~] dropped one
+- [~] dropped two
+- [~] dropped three
+- [x] done
+EOF
+    local result
+    result="$(count_dropped plan.md)"
+    [ "$result" -eq 3 ]
+}
+
+@test "count_dropped: returns zero when no [~] lines" {
+    cat > plan.md <<'EOF'
+- [ ] todo
+- [x] done
+EOF
+    local result
+    result="$(count_dropped plan.md)"
+    [ "$result" -eq 0 ]
+}
+
+@test "count_dropped: returns zero for missing file" {
+    local result
+    result="$(count_dropped nonexistent.md)"
+    [ "$result" -eq 0 ]
+}
+
+@test "count_dropped: handles indented [~] lines" {
+    cat > plan.md <<'EOF'
+  - [~] Indented dropped
+    - [~] Deeply indented dropped
+- [x] Done
+EOF
+    local result
+    result="$(count_dropped plan.md)"
+    [ "$result" -eq 2 ]
+}
+
+@test "count_dropped: counts across multiple files" {
+    cat > a.md <<'EOF'
+- [~] dropped one
+EOF
+    cat > b.md <<'EOF'
+- [~] dropped two
+- [~] dropped three
+EOF
+    local result
+    result="$(count_dropped a.md b.md)"
+    [ "$result" -eq 3 ]
 }
 
 # ── warn_if_plan_large ───────────────────────────────────────────────────────
