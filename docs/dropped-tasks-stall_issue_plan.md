@@ -178,33 +178,33 @@ without inventing it from prose.
 Depends on: Phase 1 (for `count_dropped`) and Phase 3 (so `dropped`
 is already in scope inside `run_execute`).
 
-- [ ] **6.1** Before the phase-3 Claude call (around
+- [x] **6.1** Before the phase-3 Claude call (around
       `lib/wiggum.sh:1421`), capture the list of dropped task lines
       from the plan files into a shell variable, e.g.
       `dropped_lines="$(grep -hE '^\s*-\s*\[~\]' "${FILES[@]}" || true)"`.
-- [ ] **6.2** Capture the dropped count as well via
+- [x] **6.2** Capture the dropped count as well via
       `final_dropped="$(count_dropped "${FILES[@]}")"`.
-- [ ] **6.3** Build a `dropped_context` string that, when non-empty,
+- [x] **6.3** Build a `dropped_context` string that, when non-empty,
       reads roughly: "There are $final_dropped dropped tasks ([~]).
       Render them in the summary under a 'What was dropped' subsection,
       preserving the rationale recorded on each line. The dropped lines
       are: \n$dropped_lines". When `final_dropped == 0`, leave
       `dropped_context` empty so the prompt is unchanged.
-- [ ] **6.4** Append `${dropped_context}` to the phase-3 prompt
+- [x] **6.4** Append `${dropped_context}` to the phase-3 prompt
       argument, after `final_benchmark_context`. Mirror the existing
       conditional context pattern.
-- [ ] **6.5** Update the phase-3 prompt to instruct Claude that `[~]`
+- [x] **6.5** Update the phase-3 prompt to instruct Claude that `[~]`
       is dropped and must NOT be re-marked as `[x]` during the "mark
       completed tasks" step.
 
 ### Acceptance criteria for Phase 6
 
-- [ ] When the plan has zero `[~]` lines, the phase-3 prompt is
+- [x] When the plan has zero `[~]` lines, the phase-3 prompt is
       unchanged (no spurious "What was dropped" mention).
-- [ ] When the plan has one or more `[~]` lines, the phase-3 prompt
+- [x] When the plan has one or more `[~]` lines, the phase-3 prompt
       contains both the count and the verbatim dropped lines, plus the
       "do not re-mark `[~]` as `[x]`" instruction.
-- [ ] `shellcheck -s bash lib/wiggum.sh` still passes (quoting around
+- [x] `shellcheck -s bash lib/wiggum.sh` still passes (quoting around
       `dropped_lines` interpolation is safe; multi-line strings don't
       break the heredoc/`echo -e` pattern used elsewhere in the file).
 
