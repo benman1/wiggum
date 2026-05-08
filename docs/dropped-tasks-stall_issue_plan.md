@@ -217,7 +217,7 @@ tests on the counters.
 
 Depends on: Phases 1-6.
 
-- [ ] **7.1** Add a Bats test for an all-dropped plan: three `[~]`,
+- [x] **7.1** Add a Bats test for an all-dropped plan: three `[~]`,
       zero `[ ]`, zero `[x]`. Stub `claude` as a no-op as the existing
       tests do. Invoke the relevant slice of `run_execute` (or a
       smaller wrapper if `run_execute` is too coarse to test directly
@@ -225,25 +225,29 @@ Depends on: Phases 1-6.
       `count_unchecked` returning 0). Assert that no phase-2
       implementation iteration runs (e.g. by counting how many times
       the stub was called, or by checking log entries).
-- [ ] **7.2** Add a Bats test for a mixed plan: two `[ ]`, three
+- [x] **7.2** Add a Bats test for a mixed plan: two `[ ]`, three
       `[~]`, one `[x]`. Assert that the phase-2 step header / log line
       reports `2 remaining, 3 dropped`. If asserting on the live
       `run_execute` output is too brittle, assert on the underlying
       counters (`count_unchecked == 2`, `count_dropped == 3`,
       `count_total_tasks == 6`) and the prompt-construction helper
       (if any) -- whichever is the lowest-friction stable surface.
-- [ ] **7.3** Add a Bats test asserting the phase-2 prompt string
+- [~] **7.3** Add a Bats test asserting the phase-2 prompt string
       mentions `[~]` (use the prompt-builder if one exists, or extract
       a small helper as part of Phase 4 if the prompt is currently
       constructed inline -- only extract if doing so is genuinely
       cleaner; otherwise skip this sub-task and rely on visual review).
+      Dropped: phase-2 prompt is constructed inline in `run_execute`;
+      extracting a builder solely for testability would add abstraction
+      with no reuse. Visual review confirmed `lib/wiggum.sh:1377`
+      contains the `Skip any task marked [~]` instruction.
 
 ### Acceptance criteria for Phase 7
 
-- [ ] All-dropped plan regression test passes (would have failed
+- [x] All-dropped plan regression test passes (would have failed
       before this change set).
-- [ ] Mixed-plan counter test passes.
-- [ ] `bats test/wiggum.bats` passes overall.
+- [x] Mixed-plan counter test passes.
+- [x] `bats test/wiggum.bats` passes overall.
 
 ---
 
