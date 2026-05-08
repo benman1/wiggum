@@ -474,6 +474,53 @@ EOF
     [[ "$result" == *"from b2"* ]]
 }
 
+# ── End-to-end regression: dropped tasks ────────────────────────────────────
+#
+# These lock the false-stall fix on the lowest-friction stable surface --
+# the counters that drive `run_execute`'s phase-2 loop. The full
+# `run_execute` is too coarse to test directly, so per the plan we assert
+# on the underlying values that the loop branches on.
+
+@test "regression: all-dropped plan reports zero remaining (no phase-2 iteration)" {
+    cat > plan.md <<'EOF'
+- [~] **2.6** dropped: no perplexity endpoint
+- [~] **3.1** dropped: covered by upstream
+- [~] **4.2** dropped: out of scope
+EOF
+    # `count_unchecked` returning 0 is the trigger for the early-exit
+    # branch in `run_execute` (`if [[ "$remaining" -eq 0 ]]`). If a future
+    # change widens the regex to include `[~]`, this assertion would
+    # become non-zero and false stalls would return.
+    local remaining dropped total
+    remaining="$(count_unchecked plan.md)"
+    dropped="$(count_dropped plan.md)"
+    total="$(count_total_tasks plan.md)"
+    [ "$remaining" -eq 0 ]
+    [ "$dropped" -eq 3 ]
+    [ "$total" -eq 3 ]
+}
+
+@test "regression: mixed plan reports 2 remaining, 3 dropped, 6 total" {
+    cat > plan.md <<'EOF'
+- [ ] todo one
+- [ ] todo two
+- [~] dropped one
+- [~] dropped two
+- [~] dropped three
+- [x] done one
+EOF
+    # These are the values that feed the phase-2 step header
+    # `($remaining remaining, $dropped dropped)`. Asserting on the
+    # counters keeps the test stable against prompt-string churn.
+    local remaining dropped total
+    remaining="$(count_unchecked plan.md)"
+    dropped="$(count_dropped plan.md)"
+    total="$(count_total_tasks plan.md)"
+    [ "$remaining" -eq 2 ]
+    [ "$dropped" -eq 3 ]
+    [ "$total" -eq 6 ]
+}
+
 # ── warn_if_plan_large ───────────────────────────────────────────────────────
 
 @test "warn_if_plan_large: warns when total tasks exceed threshold" {
