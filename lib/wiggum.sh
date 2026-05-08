@@ -1337,16 +1337,17 @@ run_execute() {
 
     # Phase 2: Iterative implementation
     local stall_count=0
-    local prev_remaining
+    local prev_remaining prev_dropped
     prev_remaining="$(count_unchecked "${FILES[@]}")"
+    prev_dropped="$(count_dropped "${FILES[@]}")"
     local stop_reason="incomplete"
     local benchmark_output=""
     local prev_benchmark_nums=""
 
     for ((i = 1; i <= MAX_ITERATIONS; i++)); do
         echo "" >&2
-        echo "--- Phase 2: Implementation step $i of $MAX_ITERATIONS ($prev_remaining tasks remaining) ---" >&2
-        log_entry "phase" "2 - implementation step $i of $MAX_ITERATIONS ($prev_remaining remaining)"
+        echo "--- Phase 2: Implementation step $i of $MAX_ITERATIONS ($prev_remaining remaining, $prev_dropped dropped) ---" >&2
+        log_entry "phase" "2 - implementation step $i of $MAX_ITERATIONS ($prev_remaining remaining, $prev_dropped dropped)"
 
         # Implementation: bypassPermissions so file changes are auto-approved
         local benchmark_context=""
@@ -1381,9 +1382,15 @@ run_execute() {
         fi
 
         # Check progress: tasks completed OR benchmark numbers changed
-        local remaining
+        local remaining dropped
         remaining="$(count_unchecked "${FILES[@]}")"
+        dropped="$(count_dropped "${FILES[@]}")"
 
+        # `count_unchecked` excludes `[~]`, so an all-dropped plan reports
+        # remaining=0 here and short-circuits to `complete` -- no further
+        # implementation iterations run. Do not re-introduce `[~]` into
+        # `count_unchecked`'s regex, or this branch will stop firing and
+        # dropped tasks will trigger false stalls again.
         if [[ "$remaining" -eq 0 ]]; then
             echo "All tasks complete — stopping early." >&2
             log_entry "stop" "all tasks complete after iteration $i"
@@ -1410,8 +1417,8 @@ run_execute() {
             fi
         else
             stall_count=$((stall_count + 1))
-            echo "No progress detected ($remaining tasks remaining, stall $stall_count of $MAX_STALL_COUNT)." >&2
-            log_entry "stall" "no progress on iteration $i ($remaining remaining, stall $stall_count)"
+            echo "No progress detected ($remaining tasks remaining, $dropped dropped, stall $stall_count of $MAX_STALL_COUNT)." >&2
+            log_entry "stall" "no progress on iteration $i ($remaining remaining, $dropped dropped, stall $stall_count)"
             if [[ "$stall_count" -ge "$MAX_STALL_COUNT" ]]; then
                 echo "Stalled for $MAX_STALL_COUNT consecutive iterations — stopping." >&2
                 log_entry "stop" "stalled after iteration $i"
@@ -1423,6 +1430,7 @@ run_execute() {
         prev_benchmark_nums="$curr_benchmark_nums"
 
         prev_remaining="$remaining"
+        prev_dropped="$dropped"
     done
 
     # Phase 3: Summary & alignment
