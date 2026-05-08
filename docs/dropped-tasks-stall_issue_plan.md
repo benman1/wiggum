@@ -127,22 +127,22 @@ implementation step.
 Depends on: Phase 3 (so the loop is already passing `dropped` count
 and we know the full prompt context).
 
-- [ ] **4.1** Update the phase-2 implementation prompt (around
+- [x] **4.1** Update the phase-2 implementation prompt (around
       `lib/wiggum.sh:1340`) to say, in addition to "Execute the next
       discrete implementation step from the plan": "Skip any task
       marked `[~]` -- that is the dropped state, an in-plan decision
       not to do the work. Treat `[~]` as terminal, like `[x]`. Do not
       revisit, reconcile, or re-evaluate `[~]` lines."
-- [ ] **4.2** Keep the existing `[ ]` / "next unchecked" wording so
+- [x] **4.2** Keep the existing `[ ]` / "next unchecked" wording so
       the prompt remains backward-compatible with plans that have no
       `[~]` lines.
 
 ### Acceptance criteria for Phase 4
 
-- [ ] The phase-2 prompt string contains the `[~]` skip instruction.
-- [ ] `shellcheck -s bash lib/wiggum.sh` still passes (heredoc/quoting
+- [x] The phase-2 prompt string contains the `[~]` skip instruction.
+- [x] `shellcheck -s bash lib/wiggum.sh` still passes (heredoc/quoting
       stays clean).
-- [ ] An eyeball review confirms the prompt still reads naturally and
+- [x] An eyeball review confirms the prompt still reads naturally and
       doesn't contradict the rest of the implementation instruction.
 
 ---
