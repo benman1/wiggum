@@ -495,6 +495,10 @@ parse_args() {
 
 # ── Plan progress ────────────────────────────────────────────────────────────
 
+# Counts only `[ ]` -- pending tasks the agent should pick up.
+# `[~]` is the dropped/abandoned state and is intentionally excluded;
+# do not widen this regex to include it. Dropped tasks are terminal,
+# like `[x]`, and counting them as remaining causes false stalls.
 count_unchecked() {
     local count=0
     local f
@@ -506,13 +510,27 @@ count_unchecked() {
     echo "$count"
 }
 
-# Count both checked and unchecked tasks across one or more plan files.
+# Count all task states across one or more plan files: `[ ]`, `[x]`/`[X]`,
+# and `[~]` (dropped). Includes `[~]` so that
+# total - unchecked - dropped == done holds.
 count_total_tasks() {
     local count=0
     local f
     for f in "$@"; do
         if [[ -f "$f" ]]; then
-            count=$((count + $(grep -cE '^\s*-\s*\[[ xX]\]' "$f" || true)))
+            count=$((count + $(grep -cE '^\s*-\s*\[[ xX~]\]' "$f" || true)))
+        fi
+    done
+    echo "$count"
+}
+
+# Count only `[~]` -- tasks intentionally dropped/abandoned mid-plan.
+count_dropped() {
+    local count=0
+    local f
+    for f in "$@"; do
+        if [[ -f "$f" ]]; then
+            count=$((count + $(grep -cE '^\s*-\s*\[~\]' "$f" || true)))
         fi
     done
     echo "$count"
