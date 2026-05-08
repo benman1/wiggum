@@ -21,28 +21,28 @@ tests, before any caller starts depending on the new behavior.
 
 Depends on: nothing.
 
-- [ ] **1.1** Add a comment above `count_unchecked` explaining that
+- [x] **1.1** Add a comment above `count_unchecked` explaining that
       `[~]` is intentionally excluded (so future readers don't "fix" it
       by widening the regex).
-- [ ] **1.2** Widen `count_total_tasks` regex from `\[[ xX]\]` to
+- [x] **1.2** Widen `count_total_tasks` regex from `\[[ xX]\]` to
       `\[[ xX~]\]` so dropped tasks are part of the denominator and
       `total - unchecked - dropped == done` holds.
-- [ ] **1.3** Add a new `count_dropped` helper alongside the existing
+- [x] **1.3** Add a new `count_dropped` helper alongside the existing
       counters. Same shape as `count_unchecked` but greps for
       `^\s*-\s*\[~\]`. Echoes the count.
-- [ ] **1.4** Confirm `count_unchecked` body does NOT need to change:
+- [x] **1.4** Confirm `count_unchecked` body does NOT need to change:
       `^\s*-\s*\[ \]` already excludes `[~]`. Leave the implementation
       alone, only add the explanatory comment from 1.1.
 
 ### Acceptance criteria for Phase 1
 
-- [ ] `count_unchecked` returns N for a file with N `[ ]` lines and M
+- [x] `count_unchecked` returns N for a file with N `[ ]` lines and M
       `[~]` lines (i.e. ignores `[~]`).
-- [ ] `count_total_tasks` returns N + M + done.
-- [ ] `count_dropped` returns M for the same file.
-- [ ] All three helpers handle: empty file, missing file, indented
+- [x] `count_total_tasks` returns N + M + done.
+- [x] `count_dropped` returns M for the same file.
+- [x] All three helpers handle: empty file, missing file, indented
       checkboxes, multiple files passed as args.
-- [ ] `shellcheck -s bash lib/wiggum.sh` passes with zero warnings.
+- [x] `shellcheck -s bash lib/wiggum.sh` passes with zero warnings.
 
 ---
 
@@ -53,25 +53,25 @@ Goal: lock the new behavior with tests slotted next to the existing
 
 Depends on: Phase 1.
 
-- [ ] **2.1** Add `count_unchecked: ignores [~] dropped lines` test:
+- [x] **2.1** Add `count_unchecked: ignores [~] dropped lines` test:
       file with two `[ ]`, three `[~]`, one `[x]` -> expect 2.
-- [ ] **2.2** Add `count_total_tasks: counts [~] as a task` test: same
+- [x] **2.2** Add `count_total_tasks: counts [~] as a task` test: same
       mixed file -> expect 6 (2 + 3 + 1).
-- [ ] **2.3** Add `count_dropped: counts only [~] lines` test: same
+- [x] **2.3** Add `count_dropped: counts only [~] lines` test: same
       mixed file -> expect 3.
-- [ ] **2.4** Add `count_dropped: returns zero when no [~] lines`
+- [x] **2.4** Add `count_dropped: returns zero when no [~] lines`
       test: file with only `[ ]` and `[x]` -> expect 0.
-- [ ] **2.5** Add `count_dropped: returns zero for missing file`
+- [x] **2.5** Add `count_dropped: returns zero for missing file`
       test (mirrors the existing `count_unchecked` missing-file test).
-- [ ] **2.6** Add `count_dropped: handles indented [~] lines` test
+- [x] **2.6** Add `count_dropped: handles indented [~] lines` test
       (mirrors the existing `count_unchecked` indented-checkbox test).
-- [ ] **2.7** Add `count_dropped: counts across multiple files` test
+- [x] **2.7** Add `count_dropped: counts across multiple files` test
       (mirrors the existing multi-file test).
 
 ### Acceptance criteria for Phase 2
 
-- [ ] `bats test/wiggum.bats` passes with all new tests green.
-- [ ] Existing counter tests still pass unchanged (no regression in
+- [x] `bats test/wiggum.bats` passes with all new tests green.
+- [x] Existing counter tests still pass unchanged (no regression in
       `count_unchecked` or `count_total_tasks` behavior for plans that
       contain no `[~]`).
 
