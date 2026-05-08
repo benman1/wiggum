@@ -85,20 +85,20 @@ plans without further code changes.
 
 Depends on: Phase 1.
 
-- [ ] **3.1** In `run_execute` (around `lib/wiggum.sh:1320` onward),
+- [x] **3.1** In `run_execute` (around `lib/wiggum.sh:1320` onward),
       compute `dropped` once per iteration alongside `prev_remaining`
       via `count_dropped "${FILES[@]}"`. Recompute after each step
       where `remaining` is recomputed (Claude may convert `[ ]` to
       `[~]` mid-run).
-- [ ] **3.2** Update the phase-2 step-header echo (line ~1330) to read
+- [x] **3.2** Update the phase-2 step-header echo (line ~1330) to read
       `Phase 2: Implementation step $i of $MAX_ITERATIONS ($remaining
       remaining, $dropped dropped)`. Match the wording in the
       `log_entry "phase"` call on the next line.
-- [ ] **3.3** Update the stall log line at ~1396 to also include
+- [x] **3.3** Update the stall log line at ~1396 to also include
       dropped count for forensics:
       `no progress on iteration $i ($remaining remaining, $dropped
       dropped, stall $stall_count)`.
-- [ ] **3.4** Confirm by inspection that the existing zero-remaining
+- [x] **3.4** Confirm by inspection that the existing zero-remaining
       branch at ~1369 (`if [[ "$remaining" -eq 0 ]]`) already short-
       circuits a fully-dropped plan to `complete`, since
       `count_unchecked` excludes `[~]`. Add a brief inline comment
@@ -106,16 +106,16 @@ Depends on: Phase 1.
 
 ### Acceptance criteria for Phase 3
 
-- [ ] A plan with three `[~]` and zero `[ ]` enters `run_execute`,
+- [x] A plan with three `[~]` and zero `[ ]` enters `run_execute`,
       runs phase 1, and on the very first iteration of the phase-2 loop
       reports `remaining=0` and breaks with `stop_reason=complete`
       (proceeding to phase 3 without ever invoking the implementation
       Claude call).
-- [ ] A plan with two `[ ]` and three `[~]` reports
+- [x] A plan with two `[ ]` and three `[~]` reports
       `2 remaining, 3 dropped` in the phase-2 header and the log entry.
-- [ ] Stall guard fires only on `[ ]` count failing to decrease, not
+- [x] Stall guard fires only on `[ ]` count failing to decrease, not
       on `[~]` count.
-- [ ] `shellcheck -s bash lib/wiggum.sh` still passes.
+- [x] `shellcheck -s bash lib/wiggum.sh` still passes.
 
 ---
 
