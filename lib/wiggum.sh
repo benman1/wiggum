@@ -1356,7 +1356,7 @@ run_execute() {
         fi
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
         run_claude -p -c --permission-mode bypassPermissions \
-            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. Write tests for new logic. Fix any existing issues found. Do your own legwork -- if a question can be answered by running a command, reading a file, or grepping the repo, do it yourself rather than stopping to ask. Only ask the user when you genuinely lack access or the action is destructive.${benchmark_context} $PROMPT_SUFFIX" \
+            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. The next step is the next \`[ ]\` task. Skip any task marked \`[~]\` -- that is the dropped state, an in-plan decision not to do the work. Treat \`[~]\` as terminal, like \`[x]\`. Do not revisit, reconcile, or re-evaluate \`[~]\` lines. Write tests for new logic. Fix any existing issues found. Do your own legwork -- if a question can be answered by running a command, reading a file, or grepping the repo, do it yourself rather than stopping to ask. Only ask the user when you genuinely lack access or the action is destructive.${benchmark_context} $PROMPT_SUFFIX" \
             "${FILES[@]}"
 
         # Validation: uses -c to keep implementation context for fixes
