@@ -536,6 +536,24 @@ count_dropped() {
     echo "$count"
 }
 
+# Build the phase-3 "dropped tasks" paragraph that gets appended to the
+# summary prompt. Empty when no `[~]` lines exist, so plans that don't use
+# the dropped marker get an unchanged phase-3 prompt. The leading `\n\n` is
+# literal -- matches the conditional-context pattern used by
+# `final_benchmark_context` in `run_execute`.
+build_dropped_context() {
+    local count
+    count="$(count_dropped "$@")"
+    if [[ "$count" -eq 0 ]]; then
+        return 0
+    fi
+    local dropped_lines
+    dropped_lines="$(grep -hE '^\s*-\s*\[~\]' "$@" 2>/dev/null || true)"
+    # `%s` keeps the literal `\n` backslashes intact -- matches the
+    # conditional-context pattern in `run_execute`.
+    printf '%s' "\\n\\nThere are $count dropped tasks (\`[~]\`). Render them in the summary under a \"What was dropped\" subsection, preserving the rationale recorded on each line. Do not re-mark \`[~]\` as \`[x]\` -- it is the terminal dropped state, not pending. The dropped lines are:\\n$dropped_lines"
+}
+
 # Threshold for the large-plan warning. Plans above this tend to stall and
 # lose focus; the warning nudges the user to split them.
 WIGGUM_LARGE_PLAN_THRESHOLD=40
@@ -1443,9 +1461,12 @@ run_execute() {
         final_benchmark_context="\n\nFinal benchmark results:\n$benchmark_output\n\nInclude these benchmark results in the summary."
     fi
 
+    local dropped_context
+    dropped_context="$(build_dropped_context "${FILES[@]}")"
+
     WIGGUM_CURRENT_LABEL="phase3-summary"
     run_claude -p -c --permission-mode bypassPermissions \
-        "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, and why execution stopped ($stop_reason).${final_benchmark_context} $PROMPT_SUFFIX" \
+        "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, and why execution stopped ($stop_reason).${final_benchmark_context}${dropped_context} $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
     commit_or_skip "phase3-commit" "$SUMMARY_FILE and $file_list"
