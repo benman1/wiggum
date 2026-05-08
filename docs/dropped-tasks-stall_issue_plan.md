@@ -287,13 +287,13 @@ Goal: full lint + test sweep before declaring done.
 
 Depends on: all earlier phases.
 
-- [ ] **9.1** Run `shellcheck -s bash wiggum.sh lib/wiggum.sh
+- [x] **9.1** Run `shellcheck -s bash wiggum.sh lib/wiggum.sh
       install.sh`. Zero warnings.
-- [ ] **9.2** Run `bats test/wiggum.bats`. All green, including the
+- [x] **9.2** Run `bats test/wiggum.bats`. All green, including the
       new tests from Phases 2 and 7.
-- [ ] **9.3** Run `./test/run.sh` (lint + tests via the project's
+- [x] **9.3** Run `./test/run.sh` (lint + tests via the project's
       conventional entry point). Green.
-- [ ] **9.4** Manual smoke test: copy `docs/dropped-tasks-stall_issue.md`
+- [x] **9.4** Manual smoke test: copy `docs/dropped-tasks-stall_issue.md`
       (or any small plan) into a scratch dir, edit a couple of `[ ]`
       lines to `[~]`, and run `wiggum execute` against it with the
       `claude` CLI stubbed (or `--dry-run` if available). Verify the
@@ -302,9 +302,9 @@ Depends on: all earlier phases.
 
 ### Acceptance criteria for Phase 9
 
-- [ ] Lint clean.
-- [ ] Bats clean.
-- [ ] Smoke test confirms the fix end-to-end.
+- [x] Lint clean.
+- [x] Bats clean.
+- [x] Smoke test confirms the fix end-to-end.
 
 ---
 
