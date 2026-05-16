@@ -1033,6 +1033,7 @@ log_init() {
     name="$(basename "$base_file" .md)"
     WIGGUM_LOG_FILE="${dir}/${name}.log"
 
+    mkdir -p "$dir"
     echo "--- wiggum run $(date '+%Y-%m-%d %H:%M:%S') ---" >> "$WIGGUM_LOG_FILE"
     log_entry "command" "wiggum $MODE ${FILES[*]+${FILES[*]}}"
 }

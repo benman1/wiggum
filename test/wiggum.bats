@@ -1752,6 +1752,14 @@ S
     [ "$WIGGUM_LOG_FILE" = "docs/plan.log" ]
 }
 
+@test "log_init: creates missing parent directory" {
+    MODE="plan"
+    FILES=("docs/stdin.md")
+    log_init "docs/stdin_plan.md"
+    [ -f "docs/stdin_plan.log" ]
+    [ "$WIGGUM_LOG_FILE" = "docs/stdin_plan.log" ]
+}
+
 @test "log_init: appends header with timestamp" {
     make_file issue.md
     MODE="execute"
