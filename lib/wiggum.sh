@@ -45,9 +45,36 @@ wiggum_reset() {
     NO_COMMIT=false
     CLI_NO_VERIFY=""
     CLI_NO_COMMIT=""
+    EFFORT="xhigh"
+    CLI_EFFORT=""
+    PERMISSION_MODE="bypassPermissions"
+    CLI_PERMISSION_MODE=""
+    RUN_PROMPTS=()
+    RUN_PROMPTS_FILE=""
+    RUN_SESSION_FILE=""
+    RUN_NEW_SESSION=false
+    RUN_DELIMITER="---"
 }
 
 wiggum_reset
+
+# ── Value validation ─────────────────────────────────────────────────────────
+
+# Valid effort levels accepted by `claude --effort`.
+validate_effort() {
+    case "${1:-}" in
+        low|medium|high|xhigh|max) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Valid permission modes accepted by `claude --permission-mode`.
+validate_permission_mode() {
+    case "${1:-}" in
+        acceptEdits|auto|bypassPermissions|default|dontAsk|plan) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 # ── Config loading ───────────────────────────────────────────────────────────
 
@@ -72,7 +99,7 @@ load_config_from() {
         value="$(echo "$value" | xargs)"
 
         case "$key" in
-            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|skip_verify|skip_commit)
+            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|skip_verify|skip_commit|effort|permission_mode)
                 echo "$key=$value"
                 ;;
             *)
@@ -129,6 +156,24 @@ apply_config() {
                             NO_COMMIT=false
                             ;;
                     esac
+                fi
+                ;;
+            effort)
+                if [[ -z "$CLI_EFFORT" ]]; then
+                    if validate_effort "$value"; then
+                        EFFORT="$value"
+                    else
+                        echo "Warning: invalid value for effort: '$value' (expected low/medium/high/xhigh/max). Keeping '$EFFORT'." >&2
+                    fi
+                fi
+                ;;
+            permission_mode)
+                if [[ -z "$CLI_PERMISSION_MODE" ]]; then
+                    if validate_permission_mode "$value"; then
+                        PERMISSION_MODE="$value"
+                    else
+                        echo "Warning: invalid value for permission_mode: '$value' (expected acceptEdits/auto/bypassPermissions/default/dontAsk/plan). Keeping '$PERMISSION_MODE'." >&2
+                    fi
                 fi
                 ;;
         esac
@@ -294,6 +339,47 @@ Examples:
   wiggum check --max-validation-retries 3
 EOF
             ;;
+        run)
+            cat <<EOF
+wiggum run - Feed a series of prompts to Claude in one continuous session
+
+Usage:
+  wiggum run <prompt...> [options]
+  wiggum run -f <prompts-file> [options]
+  command | wiggum run [options]
+
+Options:
+  -f, --prompts-file <path>   Read prompts from a file (split on delimiter lines)
+  --session-file <path>       Persist/resume the session id across invocations
+  --new-session               Ignore an existing --session-file and start fresh
+  --delimiter <str>           Prompt separator line for -f/stdin (default: ---)
+  --effort <level>            Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
+  --permission-mode <mode>    acceptEdits|auto|bypassPermissions|default|dontAsk|plan
+  --verbose                   Pass --verbose to Claude Code
+
+Runs each prompt in order. The first prompt starts a fresh session (or resumes
+the one in --session-file); every later prompt continues the same session, so
+Claude keeps full context between prompts. Claude's responses go to stdout;
+wiggum status and session ids go to stderr.
+
+Prompts can come from positional arguments (each argument is one prompt), a
+file via -f, or stdin. In a file or on stdin, prompts are separated by a line
+containing only the delimiter (default '---'), so prompts may span multiple
+lines.
+
+With --session-file, the session id is saved to that file and resumed on the
+next run -- so a cron job can run a step now and follow up later in the same
+session. Use --new-session to start over.
+
+Examples:
+  wiggum run "Summarize today's git log" "Draft release notes from it"
+  wiggum run -f steps.txt --session-file .wiggum-session
+  echo "What changed in the last commit?" | wiggum run
+  # Cron: day 1 starts the session, day 2 follows up in it
+  wiggum run --session-file .wiggum-session "Scaffold the API skeleton"
+  wiggum run --session-file .wiggum-session "Now add auth to that API"
+EOF
+            ;;
         *)
             cat <<EOF
 wiggum $VERSION - Self-driving agent loop
@@ -309,12 +395,15 @@ Commands:
   execute   Implement a workplan with iterative validation
   check     Run verification waterfall and fix issues
   docs      Update documentation from input files
+  run       Feed a series of prompts to Claude in one continuous session
 
 Run 'wiggum help <command>' for details on a specific command.
 
 Options:
-  --verbose   Show Claude output (suppressed by default)
-  -h, --help  Show this help
+  --effort <level>          Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
+  --permission-mode <mode>  Claude permission mode (default: bypassPermissions)
+  --verbose                 Show Claude output (suppressed by default)
+  -h, --help                Show this help
 
 Configuration:
   Place a .wiggumrc file in the current directory or \$HOME.
@@ -343,8 +432,8 @@ parse_args() {
         return 0
     fi
 
-    if [[ "$MODE" != "plan" && "$MODE" != "execute" && "$MODE" != "init" && "$MODE" != "docs" && "$MODE" != "check" ]]; then
-        echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'check', 'docs', or 'init'." >&2
+    if [[ "$MODE" != "plan" && "$MODE" != "execute" && "$MODE" != "init" && "$MODE" != "docs" && "$MODE" != "check" && "$MODE" != "run" ]]; then
+        echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'check', 'docs', 'run', or 'init'." >&2
         return "$EXIT_BAD_ARGS"
     fi
 
@@ -381,6 +470,42 @@ parse_args() {
                 export VERBOSE=true
                 CLAUDE_EXTRA_ARGS+=("--verbose")
                 shift
+                ;;
+            --effort)
+                if validate_effort "${2:-}"; then
+                    EFFORT="$2"
+                    CLI_EFFORT="$2"
+                    shift 2
+                else
+                    echo "Error: invalid --effort '${2:-}' (expected low/medium/high/xhigh/max)." >&2
+                    return "$EXIT_BAD_ARGS"
+                fi
+                ;;
+            --permission-mode)
+                if validate_permission_mode "${2:-}"; then
+                    PERMISSION_MODE="$2"
+                    CLI_PERMISSION_MODE="$2"
+                    shift 2
+                else
+                    echo "Error: invalid --permission-mode '${2:-}' (expected acceptEdits/auto/bypassPermissions/default/dontAsk/plan)." >&2
+                    return "$EXIT_BAD_ARGS"
+                fi
+                ;;
+            -f|--prompts-file)
+                RUN_PROMPTS_FILE="$2"
+                shift 2
+                ;;
+            --session-file)
+                RUN_SESSION_FILE="$2"
+                shift 2
+                ;;
+            --new-session)
+                RUN_NEW_SESSION=true
+                shift
+                ;;
+            --delimiter)
+                RUN_DELIMITER="$2"
+                shift 2
                 ;;
             --no-verify)
                 NO_VERIFY=true
@@ -427,17 +552,49 @@ parse_args() {
                 return "$EXIT_BAD_ARGS"
                 ;;
             *)
-                FILES+=("$1")
+                if [[ "$MODE" == "run" ]]; then
+                    RUN_PROMPTS+=("$1")
+                else
+                    FILES+=("$1")
+                fi
                 shift
                 ;;
         esac
     done
 
-    # remaining args after -- are all files
+    # remaining args after -- are all files (or prompts, in run mode)
     while [[ $# -gt 0 ]]; do
-        FILES+=("$1")
+        if [[ "$MODE" == "run" ]]; then
+            RUN_PROMPTS+=("$1")
+        else
+            FILES+=("$1")
+        fi
         shift
     done
+
+    # run mode collects prompts (positional, -f, or stdin), not plan files
+    if [[ "$MODE" == "run" ]]; then
+        if [[ -n "$RUN_PROMPTS_FILE" ]]; then
+            if [[ ! -r "$RUN_PROMPTS_FILE" ]]; then
+                echo "Error: prompts file not found or unreadable: $RUN_PROMPTS_FILE" >&2
+                return "$EXIT_BAD_ARGS"
+            fi
+            split_prompts "$RUN_PROMPTS_FILE"
+        fi
+        # No positional or -f prompts: read them from stdin if piped.
+        if [[ ${#RUN_PROMPTS[@]} -eq 0 && ! -t 0 ]]; then
+            local stdin_prompts
+            stdin_prompts="$(mktemp "${TMPDIR:-/tmp}/wiggum_run.XXXXXX")"
+            cat > "$stdin_prompts"
+            split_prompts "$stdin_prompts"
+            rm -f "$stdin_prompts"
+        fi
+        if [[ ${#RUN_PROMPTS[@]} -eq 0 ]]; then
+            echo "Error: no prompts given. Pass prompts as arguments, with -f <file>, or via stdin." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+        return 0
+    fi
 
     # check mode needs no input files
     if [[ "$MODE" == "check" ]]; then
@@ -577,6 +734,35 @@ persist_stdin() {
     local dest="${dir}/stdin.md"
     cp "$STDIN_FILE" "$dest"
     echo "$dest"
+}
+
+# Trim surrounding whitespace (including newlines) from a chunk and, if it is
+# non-empty, append it as one prompt to RUN_PROMPTS.
+append_prompt_chunk() {
+    local chunk="$1"
+    chunk="${chunk#"${chunk%%[![:space:]]*}"}"   # strip leading whitespace
+    chunk="${chunk%"${chunk##*[![:space:]]}"}"    # strip trailing whitespace
+    if [[ -n "$chunk" ]]; then
+        RUN_PROMPTS+=("$chunk")
+    fi
+}
+
+# Split a file into prompts on lines equal to the delimiter ($RUN_DELIMITER,
+# default "---"), appending each non-empty chunk to RUN_PROMPTS. Multi-line
+# prompts are preserved; blank or whitespace-only chunks are skipped. Used by
+# `wiggum run` for both -f files and piped stdin.
+split_prompts() {
+    local file="$1"
+    local chunk="" line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == "$RUN_DELIMITER" ]]; then
+            append_prompt_chunk "$chunk"
+            chunk=""
+        else
+            chunk+="$line"$'\n'
+        fi
+    done < "$file"
+    append_prompt_chunk "$chunk"
 }
 
 # Returns 0 if the file looks like a wiggum plan (has at least one markdown
@@ -1065,8 +1251,11 @@ run_claude() {
     session_id="$(generate_uuid)"
     local session_args=("--session-id" "$session_id")
 
-    # Replace -c/--continue with --resume <previous-session-id>
+    # Replace -c/--continue with --resume <previous-session-id>.
+    # Track whether the caller passed its own --permission-mode so we don't
+    # also inject the configured one (an explicit per-call override wins).
     local filtered_args=()
+    local has_perm_mode=false
     for arg in "$@"; do
         if [[ "$arg" == "-c" || "$arg" == "--continue" ]]; then
             if [[ -n "$WIGGUM_LAST_SESSION_ID" ]]; then
@@ -1075,9 +1264,19 @@ run_claude() {
                 echo "  session: $session_id (resumed from $WIGGUM_LAST_SESSION_ID)" >&2
             fi
         else
+            [[ "$arg" == "--permission-mode" ]] && has_perm_mode=true
             filtered_args+=("$arg")
         fi
     done
+
+    # Inject the configured effort and permission mode (unless overridden).
+    local injected_args=()
+    if [[ -n "$EFFORT" ]]; then
+        injected_args+=("--effort" "$EFFORT")
+    fi
+    if [[ "$has_perm_mode" != true ]]; then
+        injected_args+=("--permission-mode" "$PERMISSION_MODE")
+    fi
 
     if [[ "${session_args[*]}" != *"--resume"* ]]; then
         log_entry "$label" "session $session_id"
@@ -1088,9 +1287,11 @@ run_claude() {
 
     if [[ "$VERBOSE" == true || "$WIGGUM_SHOW_OUTPUT" == true ]]; then
         claude "${session_args[@]}" \
+            ${injected_args[@]+"${injected_args[@]}"} \
             ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}"
     else
         claude "${session_args[@]}" \
+            ${injected_args[@]+"${injected_args[@]}"} \
             ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}" >/dev/null
     fi
 
@@ -1130,7 +1331,7 @@ run_plan() {
     if [[ "$piped" != true ]]; then
         WIGGUM_SHOW_OUTPUT=true
     fi
-    run_claude -p --permission-mode bypassPermissions \
+    run_claude -p \
         "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), and dependencies. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
@@ -1180,7 +1381,7 @@ commit_or_skip() {
     local label="$1"
     shift
     WIGGUM_CURRENT_LABEL="$label"
-    run_claude -p --permission-mode bypassPermissions "$(prompt_commit "$@")"
+    run_claude -p "$(prompt_commit "$@")"
 }
 
 # ── Validation ───────────────────────────────────────────────────────────────
@@ -1269,7 +1470,7 @@ run_validation() {
             fi
             echo "Requesting fix from Claude..."
             WIGGUM_CURRENT_LABEL="${WIGGUM_CURRENT_LABEL}-fix-$retries"
-            run_claude -p -c --permission-mode bypassPermissions "$(echo -e "$prompt")"
+            run_claude -p -c "$(echo -e "$prompt")"
             continue
         fi
 
@@ -1342,7 +1543,7 @@ run_execute() {
     echo "--- Phase 1: Diagnostic & Status Sync ---" >&2
     log_entry "phase" "1 - diagnostic & status sync"
     WIGGUM_CURRENT_LABEL="phase1-diagnostic"
-    run_claude -p --permission-mode bypassPermissions \
+    run_claude -p \
         "$(prompt_workplan "$file_list") Analyze the repository against the workplan. Verify before claiming -- when checking whether a task is done, read the actual file or run the actual command. Do not infer status from filenames, comments, or commit messages. If a task touches state shared with other modules (a status column, a config flag, a lifecycle field), grep every site that writes it and enumerate the values it can leave behind, including transient ones from interrupted runs. If implementation status is inaccurate, update the plan using [x] for done, [ ] for not done. Leave \`[~]\` lines untouched. \`[~]\` is the terminal dropped state -- the work was intentionally abandoned and is not pending. Do not convert \`[~]\` to \`[ ]\` or \`[x]\`. Do not change the plan structure. List the next steps to implement. $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
@@ -1350,7 +1551,7 @@ run_execute() {
         echo "(commit skipped via --no-commit)" >&2
     else
         WIGGUM_CURRENT_LABEL="phase1-commit"
-        run_claude -p --permission-mode bypassPermissions \
+        run_claude -p \
             "Check if $file_list has any changes (modified or untracked). If so, execute 'git add $file_list' and 'git commit -m \"reconcile plan status\"'. $PROMPT_SUFFIX If there are no changes, do nothing."
     fi
 
@@ -1374,7 +1575,7 @@ run_execute() {
             benchmark_context="\n\nBenchmark results from the previous iteration:\n$benchmark_output\n\nUse these results to guide your implementation — focus on improving the metrics."
         fi
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
-        run_claude -p -c --permission-mode bypassPermissions \
+        run_claude -p -c \
             "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. The next step is the next \`[ ]\` task. Skip any task marked \`[~]\` -- that is the dropped state, an in-plan decision not to do the work. Treat \`[~]\` as terminal, like \`[x]\`. Do not revisit, reconcile, or re-evaluate \`[~]\` lines. Write tests for new logic. Fix any existing issues found. Do your own legwork -- if a question can be answered by running a command, reading a file, or grepping the repo, do it yourself rather than stopping to ask. Only ask the user when you genuinely lack access or the action is destructive.${benchmark_context} $PROMPT_SUFFIX" \
             "${FILES[@]}"
 
@@ -1466,7 +1667,7 @@ run_execute() {
     dropped_context="$(build_dropped_context "${FILES[@]}")"
 
     WIGGUM_CURRENT_LABEL="phase3-summary"
-    run_claude -p -c --permission-mode bypassPermissions \
+    run_claude -p -c \
         "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, and why execution stopped ($stop_reason).${final_benchmark_context}${dropped_context} $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
@@ -1539,7 +1740,7 @@ run_update_docs() {
 
     local prev_label="${WIGGUM_CURRENT_LABEL:-docs}"
     WIGGUM_CURRENT_LABEL="${prev_label}-update"
-    run_claude -p --permission-mode bypassPermissions \
+    run_claude -p \
         "Update the following documentation files: $output_list. Use the input files as context for what has changed: $input_list. For each output file: read its current content, then update it to reflect the changes described in the input files. Preserve the existing structure and style of each document. Only update sections that are affected by the changes. Do not rewrite sections that are already accurate. $PROMPT_SUFFIX" \
         "${inputs[@]}" "${outputs[@]}"
 
@@ -1595,4 +1796,67 @@ run_docs() {
     log_entry "complete" "wiggum docs finished"
     echo "Log: $WIGGUM_LOG_FILE"
     echo "=== WIGGUM DOCS COMPLETE ==="
+}
+
+# ── Run (prompt chaining) ─────────────────────────────────────────────────────
+
+# Feed a series of prompts to Claude in one continuous session. The first
+# prompt starts a fresh session (or resumes one from --session-file); every
+# subsequent prompt continues it via run_claude's -c handling. With
+# --session-file the session id is persisted so a later invocation (e.g. a
+# cron job) can follow up in the same session.
+run_prompts() {
+    echo "=== WIGGUM RUN MODE ===" >&2
+    echo "Prompts: ${#RUN_PROMPTS[@]}" >&2
+    echo "Effort: $EFFORT" >&2
+    echo "Permission mode: $PERMISSION_MODE" >&2
+
+    # Resume a saved session unless told to start fresh with --new-session.
+    if [[ -n "$RUN_SESSION_FILE" && "$RUN_NEW_SESSION" != true && -s "$RUN_SESSION_FILE" ]]; then
+        WIGGUM_LAST_SESSION_ID="$(tr -d '[:space:]' < "$RUN_SESSION_FILE")"
+        echo "Resuming session: $WIGGUM_LAST_SESSION_ID" >&2
+    fi
+    echo "" >&2
+
+    # Log next to the session file when given, otherwise under docs/.
+    if [[ -n "$RUN_SESSION_FILE" ]]; then
+        log_init "$RUN_SESSION_FILE"
+    else
+        log_init "docs/run.md"
+    fi
+
+    # Show Claude's responses on stdout (session ids and chatter stay on
+    # stderr) so `wiggum run ... > out.txt` captures the answers -- useful
+    # for cron jobs that pipe the output somewhere.
+    WIGGUM_SHOW_OUTPUT=true
+
+    local idx=0 prompt
+    for prompt in "${RUN_PROMPTS[@]}"; do
+        idx=$((idx + 1))
+        echo "--- Prompt $idx of ${#RUN_PROMPTS[@]} ---" >&2
+        log_entry "run" "prompt $idx of ${#RUN_PROMPTS[@]}"
+        WIGGUM_CURRENT_LABEL="run-$idx"
+        if [[ $idx -eq 1 && -z "$WIGGUM_LAST_SESSION_ID" ]]; then
+            run_claude -p "$prompt"
+        else
+            run_claude -p -c "$prompt"
+        fi
+        # Persist after each prompt so a follow-up can resume even if a later
+        # prompt fails mid-chain.
+        if [[ -n "$RUN_SESSION_FILE" ]]; then
+            echo "$WIGGUM_LAST_SESSION_ID" > "$RUN_SESSION_FILE"
+        fi
+    done
+
+    WIGGUM_SHOW_OUTPUT=false
+
+    if [[ -n "$RUN_SESSION_FILE" ]]; then
+        echo "Session saved to: $RUN_SESSION_FILE" >&2
+    fi
+
+    log_entry "complete" "wiggum run finished"
+    echo "" >&2
+    echo "Session: $WIGGUM_LAST_SESSION_ID" >&2
+    echo "Log: $WIGGUM_LOG_FILE" >&2
+    echo "=== WIGGUM RUN COMPLETE ===" >&2
 }

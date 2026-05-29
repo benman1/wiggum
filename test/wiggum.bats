@@ -2321,3 +2321,290 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"All verification steps passed"* ]]
 }
+
+# ── Effort & permission mode ──────────────────────────────────────────────────
+
+@test "wiggum_reset: EFFORT defaults to xhigh, PERMISSION_MODE to bypassPermissions" {
+    wiggum_reset
+    [ "$EFFORT" = "xhigh" ]
+    [ "$PERMISSION_MODE" = "bypassPermissions" ]
+}
+
+@test "validate_effort: accepts all valid levels" {
+    validate_effort low && validate_effort medium && validate_effort high \
+        && validate_effort xhigh && validate_effort max
+}
+
+@test "validate_effort: rejects an invalid level" {
+    run validate_effort ultra
+    [ "$status" -ne 0 ]
+}
+
+@test "validate_permission_mode: accepts all valid modes" {
+    validate_permission_mode acceptEdits && validate_permission_mode auto \
+        && validate_permission_mode bypassPermissions \
+        && validate_permission_mode default && validate_permission_mode dontAsk \
+        && validate_permission_mode plan
+}
+
+@test "validate_permission_mode: rejects an invalid mode" {
+    run validate_permission_mode yolo
+    [ "$status" -ne 0 ]
+}
+
+@test "parse_args: --effort sets EFFORT and CLI_EFFORT" {
+    make_file plan.md
+    parse_args plan plan.md --effort max
+    [ "$EFFORT" = "max" ]
+    [ "$CLI_EFFORT" = "max" ]
+}
+
+@test "parse_args: invalid --effort exits EXIT_BAD_ARGS" {
+    make_file plan.md
+    run parse_args plan plan.md --effort turbo
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"invalid --effort"* ]]
+}
+
+@test "parse_args: --permission-mode sets PERMISSION_MODE and CLI_PERMISSION_MODE" {
+    make_file plan.md
+    parse_args plan plan.md --permission-mode auto
+    [ "$PERMISSION_MODE" = "auto" ]
+    [ "$CLI_PERMISSION_MODE" = "auto" ]
+}
+
+@test "parse_args: invalid --permission-mode exits EXIT_BAD_ARGS" {
+    make_file plan.md
+    run parse_args plan plan.md --permission-mode godmode
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"invalid --permission-mode"* ]]
+}
+
+@test "load_config_from: effort is recognized and forwarded" {
+    cat > test.rc <<'EOF'
+effort = high
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = "effort=high" ]
+}
+
+@test "load_config_from: permission_mode is recognized and forwarded" {
+    cat > test.rc <<'EOF'
+permission_mode = auto
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = "permission_mode=auto" ]
+}
+
+@test "apply_config: effort sets EFFORT" {
+    apply_config <<< "effort=medium"
+    [ "$EFFORT" = "medium" ]
+}
+
+@test "apply_config: permission_mode sets PERMISSION_MODE" {
+    apply_config <<< "permission_mode=acceptEdits"
+    [ "$PERMISSION_MODE" = "acceptEdits" ]
+}
+
+@test "apply_config: CLI_EFFORT takes precedence over config effort" {
+    EFFORT="max"
+    CLI_EFFORT="max"
+    apply_config <<< "effort=low"
+    [ "$EFFORT" = "max" ]
+}
+
+@test "apply_config: CLI_PERMISSION_MODE takes precedence over config permission_mode" {
+    PERMISSION_MODE="auto"
+    CLI_PERMISSION_MODE="auto"
+    apply_config <<< "permission_mode=plan"
+    [ "$PERMISSION_MODE" = "auto" ]
+}
+
+@test "apply_config: invalid effort warns and keeps default" {
+    run apply_config <<< "effort=turbo"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"invalid value for effort"* ]]
+}
+
+@test "apply_config: invalid permission_mode warns and keeps default" {
+    run apply_config <<< "permission_mode=godmode"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"invalid value for permission_mode"* ]]
+}
+
+@test "run_claude: injects default --effort and --permission-mode" {
+    local captured=""
+    claude() { captured="$*"; }
+    log_init "plan.md"
+    WIGGUM_CURRENT_LABEL="t"
+    run_claude -p "hi"
+    [[ "$captured" == *"--effort xhigh"* ]]
+    [[ "$captured" == *"--permission-mode bypassPermissions"* ]]
+}
+
+@test "run_claude: honors EFFORT and PERMISSION_MODE overrides" {
+    local captured=""
+    claude() { captured="$*"; }
+    log_init "plan.md"
+    EFFORT="low"
+    PERMISSION_MODE="auto"
+    WIGGUM_CURRENT_LABEL="t"
+    run_claude -p "hi"
+    [[ "$captured" == *"--effort low"* ]]
+    [[ "$captured" == *"--permission-mode auto"* ]]
+}
+
+@test "run_claude: omits --effort when EFFORT is empty" {
+    local captured=""
+    claude() { captured="$*"; }
+    log_init "plan.md"
+    EFFORT=""
+    WIGGUM_CURRENT_LABEL="t"
+    run_claude -p "hi"
+    [[ "$captured" != *"--effort"* ]]
+}
+
+@test "run_claude: does not duplicate a caller-provided --permission-mode" {
+    local captured=""
+    claude() { captured="$*"; }
+    log_init "plan.md"
+    WIGGUM_CURRENT_LABEL="t"
+    run_claude -p --permission-mode plan "hi"
+    [[ "$captured" == *"--permission-mode plan"* ]]
+    # Default (bypassPermissions) must NOT also be injected.
+    [[ "$captured" != *"bypassPermissions"* ]]
+}
+
+# ── split_prompts ─────────────────────────────────────────────────────────────
+
+@test "split_prompts: splits on delimiter lines" {
+    printf 'one\n---\ntwo\n---\nthree\n' > p.txt
+    split_prompts p.txt
+    [ "${#RUN_PROMPTS[@]}" -eq 3 ]
+    [ "${RUN_PROMPTS[0]}" = "one" ]
+    [ "${RUN_PROMPTS[1]}" = "two" ]
+    [ "${RUN_PROMPTS[2]}" = "three" ]
+}
+
+@test "split_prompts: preserves multi-line prompts" {
+    printf 'line a\nline b\n---\nsecond\n' > p.txt
+    split_prompts p.txt
+    [ "${#RUN_PROMPTS[@]}" -eq 2 ]
+    [ "${RUN_PROMPTS[0]}" = $'line a\nline b' ]
+    [ "${RUN_PROMPTS[1]}" = "second" ]
+}
+
+@test "split_prompts: skips empty and whitespace-only chunks" {
+    printf '\n---\n   \n---\nreal\n---\n\n' > p.txt
+    split_prompts p.txt
+    [ "${#RUN_PROMPTS[@]}" -eq 1 ]
+    [ "${RUN_PROMPTS[0]}" = "real" ]
+}
+
+@test "split_prompts: honors a custom RUN_DELIMITER" {
+    RUN_DELIMITER="###"
+    printf 'a\n###\nb\n' > p.txt
+    split_prompts p.txt
+    [ "${#RUN_PROMPTS[@]}" -eq 2 ]
+    [ "${RUN_PROMPTS[0]}" = "a" ]
+    [ "${RUN_PROMPTS[1]}" = "b" ]
+}
+
+# ── parse_args (run mode) ─────────────────────────────────────────────────────
+
+@test "parse_args: run mode collects positional prompts" {
+    parse_args run "first" "second" "third"
+    [ "$MODE" = "run" ]
+    [ "${#RUN_PROMPTS[@]}" -eq 3 ]
+    [ "${RUN_PROMPTS[0]}" = "first" ]
+    [ "${RUN_PROMPTS[2]}" = "third" ]
+}
+
+@test "parse_args: run mode reads prompts from -f file" {
+    printf 'aaa\n---\nbbb\n' > steps.txt
+    parse_args run -f steps.txt
+    [ "$RUN_PROMPTS_FILE" = "steps.txt" ]
+    [ "${#RUN_PROMPTS[@]}" -eq 2 ]
+}
+
+@test "parse_args: run mode reads prompts from stdin" {
+    parse_args run <<< $'xxx\n---\nyyy'
+    [ "${#RUN_PROMPTS[@]}" -eq 2 ]
+}
+
+@test "parse_args: run mode with no prompts exits EXIT_BAD_ARGS" {
+    run parse_args run < /dev/null
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"no prompts"* ]]
+}
+
+@test "parse_args: run mode -f with missing file exits EXIT_BAD_ARGS" {
+    run parse_args run -f nope.txt
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"prompts file not found"* ]]
+}
+
+@test "parse_args: run mode sets --session-file, --new-session, --delimiter" {
+    parse_args run --session-file s.id --new-session --delimiter "###" "p"
+    [ "$RUN_SESSION_FILE" = "s.id" ]
+    [ "$RUN_NEW_SESSION" = "true" ]
+    [ "$RUN_DELIMITER" = "###" ]
+    [ "${#RUN_PROMPTS[@]}" -eq 1 ]
+}
+
+@test "parse_args: help run shows run details" {
+    run parse_args help run
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum run"* ]]
+    [[ "$output" == *"--session-file"* ]]
+}
+
+# ── run_prompts ───────────────────────────────────────────────────────────────
+
+@test "run_prompts: chains prompts — first fresh, later prompts resume" {
+    wiggum_reset
+    claude() { printf '%s\n' "$*" >> calls.log; }
+    RUN_PROMPTS=("p1" "p2" "p3")
+    run_prompts >/dev/null 2>&1
+    [ "$(grep -c . calls.log)" -eq 3 ]
+    local l1 l2 l3
+    l1="$(sed -n 1p calls.log)"
+    l2="$(sed -n 2p calls.log)"
+    l3="$(sed -n 3p calls.log)"
+    [[ "$l1" != *"--resume"* ]]
+    [[ "$l2" == *"--resume"* ]]
+    [[ "$l3" == *"--resume"* ]]
+}
+
+@test "run_prompts: writes the session id to --session-file" {
+    wiggum_reset
+    claude() { :; }
+    RUN_PROMPTS=("only")
+    RUN_SESSION_FILE="sess.id"
+    run_prompts >/dev/null 2>&1
+    [ -s sess.id ]
+    [ "$(cat sess.id)" = "$WIGGUM_LAST_SESSION_ID" ]
+}
+
+@test "run_prompts: resumes the session id from an existing --session-file" {
+    wiggum_reset
+    claude() { printf '%s\n' "$*" >> calls.log; }
+    echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > sess.id
+    RUN_PROMPTS=("only")
+    RUN_SESSION_FILE="sess.id"
+    run_prompts >/dev/null 2>&1
+    [[ "$(cat calls.log)" == *"--resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"* ]]
+}
+
+@test "run_prompts: --new-session ignores an existing --session-file" {
+    wiggum_reset
+    claude() { printf '%s\n' "$*" >> calls.log; }
+    echo "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" > sess.id
+    RUN_PROMPTS=("only")
+    RUN_SESSION_FILE="sess.id"
+    RUN_NEW_SESSION=true
+    run_prompts >/dev/null 2>&1
+    [[ "$(cat calls.log)" != *"--resume"* ]]
+}
