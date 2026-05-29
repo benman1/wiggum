@@ -62,6 +62,9 @@ main() {
         docs)
             run_docs
             ;;
+        run)
+            run_prompts
+            ;;
     esac
 }
 

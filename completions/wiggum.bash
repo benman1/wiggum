@@ -5,8 +5,10 @@ _wiggum() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init plan execute docs help"
+    local commands="init plan execute check docs run help"
     local presets="node next python astro bash"
+    local efforts="low medium high xhigh max"
+    local perms="acceptEdits auto bypassPermissions default dontAsk plan"
 
     # First argument: command
     if [[ $cword -eq 1 ]]; then
@@ -15,6 +17,18 @@ _wiggum() {
     fi
 
     local cmd="${words[1]}"
+
+    # Options that take a value, common to several commands.
+    case "$prev" in
+        --effort)
+            mapfile -t COMPREPLY < <(compgen -W "$efforts" -- "$cur")
+            return
+            ;;
+        --permission-mode)
+            mapfile -t COMPREPLY < <(compgen -W "$perms" -- "$cur")
+            return
+            ;;
+    esac
 
     case "$cmd" in
         help)
@@ -37,7 +51,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--plan-file --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--plan-file --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi
@@ -59,9 +73,15 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--max-iterations --summary-file --update-docs --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--max-iterations --summary-file --update-docs --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
+            fi
+            return
+            ;;
+        check)
+            if [[ "$cur" == -* ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "--max-validation-retries --no-commit --effort --permission-mode --verbose --help" -- "$cur")
             fi
             return
             ;;
@@ -73,9 +93,21 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "-i -o --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "-i -o --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir
+            fi
+            return
+            ;;
+        run)
+            case "$prev" in
+                -f|--prompts-file|--session-file)
+                    _filedir
+                    return
+                    ;;
+            esac
+            if [[ "$cur" == -* ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "-f --prompts-file --session-file --new-session --delimiter --effort --permission-mode --verbose --help" -- "$cur")
             fi
             return
             ;;

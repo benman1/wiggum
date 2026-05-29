@@ -26,3 +26,11 @@ max_iterations = 3
 
 # Max retries per validation cycle (default: 5)
 max_validation_retries = 5
+
+# Reasoning effort passed to Claude Code: low | medium | high | xhigh | max (default: xhigh)
+# effort = xhigh
+
+# Claude Code permission mode for every wiggum-issued call (default: bypassPermissions):
+#   acceptEdits | auto | bypassPermissions | default | dontAsk | plan
+# Use "auto" to let Claude's auto-mode classifier decide per action.
+# permission_mode = bypassPermissions
