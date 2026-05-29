@@ -746,35 +746,26 @@ This file is per-machine (not committed to git). See the [Claude Code permission
 
 ### Recommended setup: a wrapper script
 
-Cron one-liners and prompt quoting fight each other. Put the job in a small script so the environment lives in one place:
+Cron one-liners and prompt quoting fight each other. Put the job in a small script so the environment lives in one place. A ready-to-edit wrapper ships with wiggum at [`examples/wiggum-cron.sh`](examples/wiggum-cron.sh) — copy it out and edit the three marked lines (PATH, auth, and your project path + prompt):
 
 ```bash
-#!/usr/bin/env bash
-# ~/bin/wiggum-cron.sh
-set -euo pipefail
-
-# (1) PATH — add wiggum, claude, and node (Homebrew shown for node).
-export PATH="/usr/local/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin"
-
-# (2) Auth — cron cannot read the Keychain. Pick ONE:
-export ANTHROPIC_API_KEY="sk-ant-..."            # API billing
-# …or run `claude setup-token` once, then export the token it prints here.
-
-# (3) Work in the project so wiggum finds .wiggumrc, git, and the session file.
-cd "$HOME/path/to/your/project"
-
-# (4) The task. Same --session-file every run => one evolving session.
-#     Use an absolute path so it persists between runs.
-wiggum run \
-  --session-file "$HOME/.wiggum-cron-session" \
-  --effort high --permission-mode auto \
-  "Summarize commits since the last run and append a bullet to STANDUP.md"
-```
-
-```bash
+cp examples/wiggum-cron.sh ~/bin/wiggum-cron.sh
 chmod +x ~/bin/wiggum-cron.sh
+$EDITOR ~/bin/wiggum-cron.sh   # set PATH, auth, project dir, and the prompt
+
 # Test in a clean environment FIRST — this is where PATH/auth bugs surface:
 env -i HOME="$HOME" ~/bin/wiggum-cron.sh
+```
+
+The wrapper's core is just the environment fixes plus the call:
+
+```bash
+export PATH="/usr/local/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+export ANTHROPIC_API_KEY="sk-ant-..."   # or a `claude setup-token` token
+cd "$HOME/path/to/your/project"
+wiggum run --session-file "$HOME/.wiggum-cron-session" \
+  --effort high --permission-mode auto \
+  "Summarize commits since the last run and append a bullet to STANDUP.md"
 ```
 
 Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs both Claude's responses (stdout) and wiggum's status (stderr):
@@ -825,6 +816,9 @@ wiggum/
   wiggum.sh              CLI entry point (thin wrapper)
   lib/wiggum.sh          Core library (all logic, sourceable by tests)
   install.sh             macOS installer
+  completions/           Bash and zsh shell completions
+  examples/
+    wiggum-cron.sh       Wrapper template for running `wiggum run` from cron
   test/
     wiggum.bats          Bats test suite
     run.sh               Test runner (shellcheck lint + bats)
