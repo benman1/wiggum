@@ -200,6 +200,43 @@ wiggum check --verbose    # show Claude output
 
 If all steps pass, exits 0. If any step fails after `max_validation_retries` fix attempts, exits non-zero.
 
+### Run mode
+
+```
+wiggum run "first prompt" "second prompt" ...
+```
+
+Feeds a series of prompts to Claude Code in **one continuous session**. The first prompt starts a fresh session; every later prompt continues it (`claude --resume … --fork-session` under the hood), so Claude keeps full context from one prompt to the next. Claude's responses go to stdout; wiggum's status lines and session ids go to stderr — so `wiggum run … > answers.txt` captures just the answers.
+
+Prompts come from three sources, which can be combined:
+
+- **Positional arguments** — each argument is one prompt: `wiggum run "do X" "now do Y"`.
+- **A file** (`-f`/`--prompts-file`) — prompts separated by a line containing only the delimiter (default `---`), so each prompt can span multiple lines.
+- **Stdin** — `cat steps.txt | wiggum run`, split the same way.
+
+```bash
+wiggum run "Summarize today's git log" "Draft release notes from it"
+wiggum run -f steps.txt
+echo "What changed in the last commit?" | wiggum run
+wiggum run --effort max "Audit this module for race conditions"
+```
+
+#### Cron jobs and follow-ups
+
+With `--session-file <path>`, the session id is saved to that file and resumed on the next invocation. This lets a cron job run a step now and follow up later **in the same session**:
+
+```bash
+# Monday — starts a session and saves its id to .wiggum-session
+wiggum run --session-file .wiggum-session "Scaffold the API skeleton"
+
+# Tuesday — resumes Monday's session and builds on it
+wiggum run --session-file .wiggum-session "Now add auth to the API you built"
+```
+
+The id is rewritten after every prompt, so a follow-up resumes from the latest completed step even if a later prompt failed mid-chain. Pass `--new-session` to ignore an existing session file and start over. Pair it with `permission_mode = auto` (or `--permission-mode auto`) so unattended runs let Claude's auto-mode classifier decide each action.
+
+For a complete, copy-pasteable cron setup — wrapper script, environment, and the gotchas that bite unattended jobs — see [Scheduling with cron](#scheduling-with-cron).
+
 ### Claude Code skill
 
 Wiggum can also run as a slash command inside Claude Code itself. The `/wiggum` skill gives Claude the same plan-implement-verify-commit workflow without leaving the conversation.
@@ -385,6 +422,7 @@ Modes:
   execute     Implement a workplan with iterative validation
   check       Run verification waterfall and fix issues
   docs        Update documentation from input files
+  run         Feed a series of prompts to Claude in one continuous session
 
 Options:
   --plan-file <path>       Output path for the plan (plan mode)
@@ -394,6 +432,12 @@ Options:
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
   --no-verify              Skip wiggum's verification waterfall (execute mode; rejected by check)
   --no-commit              Skip every wiggum-issued git commit (execute, check, docs)
+  -f, --prompts-file <p>   Read prompts from a file, split on delimiter lines (run mode)
+  --session-file <path>    Persist/resume the session id across invocations (run mode)
+  --new-session            Ignore an existing --session-file and start fresh (run mode)
+  --delimiter <str>        Prompt separator for -f/stdin (run mode, default: ---)
+  --effort <level>         Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
+  --permission-mode <m>    Claude permission mode (default: bypassPermissions)
   --verbose                Show Claude output (suppressed by default)
   -i <files...>            Input files (docs mode)
   -o <files...>            Output doc files to update (docs mode)
@@ -431,6 +475,8 @@ Wiggum looks for a `.wiggumrc` file, first in the current directory, then in `$H
 | `max_validation_retries` | Max times the validation cycle retries before giving up. | `5` |
 | `skip_verify` | If `true`, skip wiggum's verification waterfall entirely (same as `--no-verify`). | `false` |
 | `skip_commit` | If `true`, skip every wiggum-issued git commit (same as `--no-commit`). | `false` |
+| `effort` | Reasoning effort passed to Claude Code on every call: `low`, `medium`, `high`, `xhigh`, or `max` (same as `--effort`). | `xhigh` |
+| `permission_mode` | Claude Code permission mode for every wiggum-issued call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, or `plan` (same as `--permission-mode`). | `bypassPermissions` |
 
 ### Skipping verification or commits
 
@@ -445,6 +491,25 @@ wiggum execute docs/plan.md --no-verify              # skip the verify waterfall
 wiggum execute docs/plan.md --no-commit              # leave changes uncommitted
 wiggum execute docs/plan.md --no-verify --no-commit  # both
 wiggum check --no-commit                             # verify but don't commit fixes
+```
+
+### Effort and permission mode
+
+Two settings control how every wiggum-issued `claude` call behaves. Both can be set in `.wiggumrc` or per-run on the CLI; the CLI wins on conflict, and both apply to all modes (`plan`, `execute`, `check`, `docs`, `run`).
+
+**`effort` / `--effort`** — the reasoning effort Claude Code uses: `low`, `medium`, `high`, `xhigh`, or `max`. Wiggum defaults to `xhigh` (deep reasoning suits planning and self-healing). Drop to `low`/`medium` for cheaper, faster runs on simple tasks.
+
+**`permission_mode` / `--permission-mode`** — the Claude Code permission mode for the call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, or `plan`. Wiggum defaults to `bypassPermissions` so its prompts run unattended (the historical behavior). Set it to `auto` to hand each action to Claude's auto-mode classifier instead — a good middle ground for unattended runs where you don't want blanket bypass.
+
+```bash
+wiggum execute docs/plan.md --effort max               # maximum reasoning
+wiggum run --permission-mode auto "tidy up the imports" # let auto-mode decide
+```
+
+```ini
+# .wiggumrc
+effort = xhigh
+permission_mode = bypassPermissions
 ```
 
 ### Verify vs autofix
@@ -668,6 +733,64 @@ If you prefer to set permissions manually or already have a `.claude/settings.lo
 ```
 
 This file is per-machine (not committed to git). See the [Claude Code permissions docs](https://docs.anthropic.com/en/docs/claude-code/permissions) for the full rule syntax.
+
+## Scheduling with cron
+
+`wiggum run` is built for unattended use: feed it prompts, point `--session-file` at a stable path, and a scheduled job can pick up the same Claude session each time. The catch is the environment — cron runs your job with a **minimal, non-login shell**, so the three things below trip up almost every first attempt.
+
+### The three gotchas
+
+1. **`PATH` is bare.** Cron's `PATH` is typically just `/usr/bin:/bin`. Neither `wiggum` (`/usr/local/bin`) nor `claude` (`~/.local/bin`) is on it, and `node` (used by Claude Code plugin hooks) usually isn't either. Set `PATH` explicitly in the job.
+2. **Authentication does not carry over.** An interactive `claude` login is stored in the macOS **Keychain**, which a cron process generally cannot read — `claude` will print `Not logged in · Please run /login` and exit. Provide credentials through the environment instead: either `ANTHROPIC_API_KEY` (API billing), or a long-lived token from `claude setup-token` (Claude subscription) exported in the job.
+3. **macOS needs Full Disk Access for cron.** If the job silently does nothing, grant Full Disk Access to `/usr/sbin/cron` under *System Settings → Privacy & Security → Full Disk Access*.
+
+### Recommended setup: a wrapper script
+
+Cron one-liners and prompt quoting fight each other. Put the job in a small script so the environment lives in one place:
+
+```bash
+#!/usr/bin/env bash
+# ~/bin/wiggum-cron.sh
+set -euo pipefail
+
+# (1) PATH — add wiggum, claude, and node (Homebrew shown for node).
+export PATH="/usr/local/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin"
+
+# (2) Auth — cron cannot read the Keychain. Pick ONE:
+export ANTHROPIC_API_KEY="sk-ant-..."            # API billing
+# …or run `claude setup-token` once, then export the token it prints here.
+
+# (3) Work in the project so wiggum finds .wiggumrc, git, and the session file.
+cd "$HOME/path/to/your/project"
+
+# (4) The task. Same --session-file every run => one evolving session.
+#     Use an absolute path so it persists between runs.
+wiggum run \
+  --session-file "$HOME/.wiggum-cron-session" \
+  --effort high --permission-mode auto \
+  "Summarize commits since the last run and append a bullet to STANDUP.md"
+```
+
+```bash
+chmod +x ~/bin/wiggum-cron.sh
+# Test in a clean environment FIRST — this is where PATH/auth bugs surface:
+env -i HOME="$HOME" ~/bin/wiggum-cron.sh
+```
+
+Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs both Claude's responses (stdout) and wiggum's status (stderr):
+
+```cron
+0 9 * * * /Users/you/bin/wiggum-cron.sh >> /Users/you/wiggum-cron.log 2>&1
+```
+
+### Session patterns
+
+- **Continue one session over time** (the follow-up workflow): reuse the same `--session-file` on every run so each job builds on the last. Reset occasionally with `--new-session` so the conversation doesn't grow without bound.
+- **Independent runs**: omit `--session-file` (or always pass `--new-session`) so each run starts fresh.
+
+### macOS: launchd alternative
+
+On macOS, `launchd` is more reliable than cron for user agents — it survives reboots, handles logging, and doesn't need the Full Disk Access workaround. Create `~/Library/LaunchAgents/com.you.wiggum.plist` pointing `ProgramArguments` at the same wrapper script, set `StartCalendarInterval`, then `launchctl load` it. The wrapper script and its environment notes above apply unchanged.
 
 ## Output files
 
