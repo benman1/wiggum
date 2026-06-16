@@ -1397,6 +1397,47 @@ EOF
     [ "$count" -eq 1 ]
 }
 
+# ── prompt verification helpers ──────────────────────────────────────────────
+
+@test "prompt_plan_verification: requires a Files line per task" {
+    run prompt_plan_verification
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"'Files:' line"* ]]
+    [[ "$output" == *"create or modify"* ]]
+}
+
+@test "prompt_plan_verification: requires confirming dependencies exist" {
+    run prompt_plan_verification
+    [[ "$output" == *"confirm the libraries, APIs, and commands"* ]]
+    [[ "$output" == *"actually exist"* ]]
+}
+
+@test "prompt_implement_verification: demands assumption checks before coding" {
+    run prompt_implement_verification
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"verify your assumptions"* ]]
+    [[ "$output" == *"do not assume"* ]]
+}
+
+@test "prompt_implement_verification: requires a failing test first when none exists" {
+    run prompt_implement_verification
+    [[ "$output" == *"write a minimal failing test first"* ]]
+}
+
+@test "prompt_implement_verification: requires happy, edge, and failure spot checks" {
+    run prompt_implement_verification
+    [[ "$output" == *"three spot checks"* ]]
+    [[ "$output" == *"happy path"* ]]
+    [[ "$output" == *"edge case"* ]]
+    [[ "$output" == *"failure case"* ]]
+}
+
+@test "prompt_implement_verification: gates task completion on acceptance and spot checks" {
+    run prompt_implement_verification
+    [[ "$output" == *"Do not mark a task"* ]]
+    [[ "$output" == *"acceptance criterion is met and all three spot checks pass"* ]]
+}
+
 # ── setup_wiggum_skill ───────────────────────────────────────────────────────
 
 @test "setup_wiggum_skill: creates skill file when approved" {
@@ -1427,6 +1468,13 @@ EOF
     grep -q "wiggumrc" .claude/skills/wiggum/SKILL.md
     grep -q "autofix" .claude/skills/wiggum/SKILL.md
     grep -q "5 times" .claude/skills/wiggum/SKILL.md
+}
+
+@test "setup_wiggum_skill: skill contains verification discipline" {
+    echo "y" | setup_wiggum_skill
+    grep -q "Files:" .claude/skills/wiggum/SKILL.md
+    grep -q "failing test first" .claude/skills/wiggum/SKILL.md
+    grep -q "three spot checks" .claude/skills/wiggum/SKILL.md
 }
 
 @test "run_init: creates skill when approved" {
