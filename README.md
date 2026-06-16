@@ -46,7 +46,8 @@ Reads issue descriptions, specs, or requirements documents and produces a struct
 
 - Phases grouping related work
 - Discrete tasks, each with a `[ ]` checkbox
-- Acceptance criteria
+- An observable acceptance criterion per task
+- The files each task is expected to create or modify
 - Dependencies between tasks
 
 Output destination depends on how `plan` is invoked:
@@ -61,7 +62,7 @@ Output destination depends on how `plan` is invoked:
 
 In short: if stdout is not a terminal, the plan streams through stdout; otherwise it's written to `<basename>_plan.md`. Pass `--plan-file` to force a specific on-disk path.
 
-This is a read-only analysis step. It does not modify your codebase.
+This is a read-only analysis step. It does not modify your codebase. Before finalizing, Wiggum confirms the libraries and APIs the plan depends on actually exist, so execution doesn't start from a hallucinated assumption.
 
 #### Dropped tasks
 
@@ -104,7 +105,7 @@ Before writing any code, Wiggum compares the plan against the actual state of th
 
 For each iteration (up to `--max-iterations` or the config file value, stopping early if all tasks are done or progress stalls):
 
-1. **Implement** -- Claude reads the plan, picks the next discrete task, writes the code, and creates tests for new logic.
+1. **Implement** -- Claude reads the plan and picks the next discrete task. Before coding it verifies its assumptions (the APIs and imports it will call exist, config values are defined), writes a failing test first when nothing covers the change, implements, then runs three spot checks -- happy path, edge case, and failure case -- before marking the task done.
 2. **Verify** -- The verification waterfall runs each configured step in order. On failure:
    - *Autofix steps* run the command once to let it self-correct (e.g., `ruff --fix`), then re-check. Only if the fix didn't resolve it does Claude get involved.
    - *Verify steps* capture the error output and ask Claude to fix the code directly.
