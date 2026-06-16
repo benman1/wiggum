@@ -1134,9 +1134,11 @@ Before starting, derive a short kebab-case slug from the issue (e.g., "improve-c
 4. Produce a detailed workplan as a markdown checklist with:
    - Phases and discrete tasks (each with `[ ]` status)
    - An `Acceptance:` line on every task stating an observable outcome (a passing test, a specific log line, a file that exists, a command that exits 0). Not a feeling. A task without observable acceptance is a wish, not a step.
+   - A `Files:` line on every task naming the files it will create or modify (best-effort paths)
    - Dependencies between tasks
-5. Write the plan to `docs/<slug>_plan.md`.
-6. Commit the plan: `git add docs/<slug>_plan.md && git commit -m "add workplan for <slug>"`
+5. Before finalizing, confirm the libraries, APIs, and commands the plan depends on actually exist (grep the repo or read the dependency). Do not plan around an assumed or hallucinated API.
+6. Write the plan to `docs/<slug>_plan.md`.
+7. Commit the plan: `git add docs/<slug>_plan.md && git commit -m "add workplan for <slug>"`
 
 ## Step 2: Implement (iterative)
 
@@ -1145,8 +1147,10 @@ Repeat the following cycle up to **3 iterations** (or until all tasks are checke
 ### 2a. Implement the next step
 
 - Pick the next unchecked `[ ]` task from `docs/<slug>_plan.md`.
-- Implement it. Write tests for new logic.
-- Mark the task `[x]` in `docs/<slug>_plan.md`.
+- Before writing code, verify your assumptions: confirm the APIs and imports you will call exist and the config values you rely on are defined (grep or read the source — do not assume).
+- If no test covers the change, write a minimal failing test first, then implement until it passes.
+- After implementing, run three spot checks and show input → expected → actual: the happy path, an edge case (empty, boundary, or large input), and a failure case (invalid input must fail safely with a clear error).
+- Mark the task `[x]` only once its acceptance criterion is met and all three spot checks pass — never round an unverified result up to done.
 
 ### 2b. Verify
 
@@ -1332,7 +1336,7 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p \
-        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), and dependencies. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), and dependencies. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
@@ -1359,6 +1363,16 @@ PROMPT_SUFFIX="Do not ask for confirmation -- just do it."
 # Build workplan context preamble.  Usage: $(prompt_workplan "$file_list")
 prompt_workplan() {
     echo "The workplan is defined ONLY in: $1. You may read README.md and other project documentation for context, but they are not the plan."
+}
+
+# Verification discipline appended to the planner prompt.  Usage: $(prompt_plan_verification)
+prompt_plan_verification() {
+    echo "Every task MUST also have a 'Files:' line naming the files it will create or modify (best-effort paths). Before finalizing the plan, confirm the libraries, APIs, and commands the approach depends on actually exist -- grep the repo or read the dependency. Do not build the plan around an assumed or hallucinated API."
+}
+
+# Verification discipline appended to the implementation prompt.  Usage: $(prompt_implement_verification)
+prompt_implement_verification() {
+    echo "Before writing code, verify your assumptions: confirm the functions, APIs, and imports you will call actually exist and the config values you depend on are defined -- grep the repo or read the source, do not assume. If no test covers the change, write a minimal failing test first, then implement until it passes. After implementing, run three spot checks and show your work as input -> expected -> actual: the happy path, an edge case (empty, boundary, or large input), and a failure case (invalid input must fail safely with a clear error). Do not mark a task \`[x]\` until its acceptance criterion is met and all three spot checks pass; never round an unverified result up to done."
 }
 
 # Build a commit prompt.  Optional arg: extra files to mention.
@@ -1576,7 +1590,7 @@ run_execute() {
         fi
         WIGGUM_CURRENT_LABEL="phase2-implement-$i"
         run_claude -p -c \
-            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. The next step is the next \`[ ]\` task. Skip any task marked \`[~]\` -- that is the dropped state, an in-plan decision not to do the work. Treat \`[~]\` as terminal, like \`[x]\`. Do not revisit, reconcile, or re-evaluate \`[~]\` lines. Write tests for new logic. Fix any existing issues found. Do your own legwork -- if a question can be answered by running a command, reading a file, or grepping the repo, do it yourself rather than stopping to ask. Only ask the user when you genuinely lack access or the action is destructive.${benchmark_context} $PROMPT_SUFFIX" \
+            "$(prompt_workplan "$file_list") Execute the next discrete implementation step from the plan. The next step is the next \`[ ]\` task. Skip any task marked \`[~]\` -- that is the dropped state, an in-plan decision not to do the work. Treat \`[~]\` as terminal, like \`[x]\`. Do not revisit, reconcile, or re-evaluate \`[~]\` lines. $(prompt_implement_verification) Fix any existing issues found. Do your own legwork -- if a question can be answered by running a command, reading a file, or grepping the repo, do it yourself rather than stopping to ask. Only ask the user when you genuinely lack access or the action is destructive.${benchmark_context} $PROMPT_SUFFIX" \
             "${FILES[@]}"
 
         # Validation: uses -c to keep implementation context for fixes

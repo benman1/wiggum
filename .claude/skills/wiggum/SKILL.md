@@ -29,10 +29,12 @@ Before starting, derive a short kebab-case slug from the issue (e.g., "improve-c
 3. Analyze the repository to understand the relevant code, tests, and architecture.
 4. Produce a detailed workplan as a markdown checklist with:
    - Phases and discrete tasks (each with `[ ]` status)
-   - Acceptance criteria for each task
+   - An `Acceptance:` line on every task stating an observable outcome (a passing test, a specific log line, a file that exists, a command that exits 0). Not a feeling. A task without observable acceptance is a wish, not a step.
+   - A `Files:` line on every task naming the files it will create or modify (best-effort paths)
    - Dependencies between tasks
-5. Write the plan to `docs/<slug>_plan.md`.
-6. Commit the plan: `git add docs/<slug>_plan.md && git commit -m "add workplan for <slug>"`
+5. Before finalizing, confirm the libraries, APIs, and commands the plan depends on actually exist (grep the repo or read the dependency). Do not plan around an assumed or hallucinated API.
+6. Write the plan to `docs/<slug>_plan.md`.
+7. Commit the plan: `git add docs/<slug>_plan.md && git commit -m "add workplan for <slug>"`
 
 ## Step 2: Implement (iterative)
 
@@ -41,8 +43,10 @@ Repeat the following cycle up to **3 iterations** (or until all tasks are checke
 ### 2a. Implement the next step
 
 - Pick the next unchecked `[ ]` task from `docs/<slug>_plan.md`.
-- Implement it. Write tests for new logic.
-- Mark the task `[x]` in `docs/<slug>_plan.md`.
+- Before writing code, verify your assumptions: confirm the APIs and imports you will call exist and the config values you rely on are defined (grep or read the source — do not assume).
+- If no test covers the change, write a minimal failing test first, then implement until it passes.
+- After implementing, run three spot checks and show input → expected → actual: the happy path, an edge case (empty, boundary, or large input), and a failure case (invalid input must fail safely with a clear error).
+- Mark the task `[x]` only once its acceptance criterion is met and all three spot checks pass — never round an unverified result up to done.
 
 ### 2b. Verify
 
