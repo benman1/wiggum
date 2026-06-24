@@ -17,7 +17,7 @@ require auth. Grounded against `wiggum.sh:20-83` (dispatch), `lib/wiggum.sh`
 
 ## Phase 1 — Smoke harness
 
-### [ ] 1.1 Create the smoke script skeleton
+### [x] 1.1 Create the smoke script skeleton
 Create an executable `smoke.sh` at the repo root running under
 `set -euo pipefail`. It resolves the repo root, creates a fresh temp working
 directory and a temp `HOME` (so `init` cannot touch the real `~/.claude`),
