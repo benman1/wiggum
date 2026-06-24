@@ -30,7 +30,10 @@ max_validation_retries = 5
 # Reasoning effort passed to Claude Code: low | medium | high | xhigh | max (default: xhigh)
 # effort = xhigh
 
-# Claude Code permission mode for every wiggum-issued call (default: bypassPermissions):
+# Claude Code permission mode for every wiggum-issued call:
 #   acceptEdits | auto | bypassPermissions | default | dontAsk | plan
-# Use "auto" to let Claude's auto-mode classifier decide per action.
-# permission_mode = bypassPermissions
+# `wiggum init` asks for this and defaults to "auto" -- Claude's auto-mode
+# classifier decides each action (guardrailed, still unattended). Use
+# "bypassPermissions" to run every action with no checks. When this line is
+# absent, the built-in default is bypassPermissions (back-compat).
+permission_mode = auto

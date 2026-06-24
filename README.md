@@ -32,6 +32,8 @@ wiggum init [preset]
 
 Generates a `.wiggumrc` configuration file for the current project. If no preset is specified, wiggum inspects the directory for known project files (`package.json`, `next.config.ts`, `pyproject.toml`, etc.) and picks the matching preset automatically. If a `.wiggumrc` already exists, it asks before overwriting.
 
+It also asks which Claude permission mode to bake into the config — `auto` (the default: Claude's auto-mode classifier gates each action, so unattended runs keep a guardrail) or `bypassPermissions` (run everything with no checks). The choice is written as a `permission_mode` line in the generated `.wiggumrc`.
+
 This is the recommended first step when adopting wiggum in a new project. The generated config provides sensible defaults for verification commands that you can then tune to your specific setup.
 
 ### Plan mode
@@ -560,7 +562,7 @@ Two settings control how every wiggum-issued `claude` call behaves. Both can be 
 
 **`effort` / `--effort`** — the reasoning effort Claude Code uses: `low`, `medium`, `high`, `xhigh`, or `max`. Wiggum defaults to `xhigh` (deep reasoning suits planning and self-healing). Drop to `low`/`medium` for cheaper, faster runs on simple tasks.
 
-**`permission_mode` / `--permission-mode`** — the Claude Code permission mode for the call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, or `plan`. Wiggum defaults to `bypassPermissions` so its prompts run unattended (the historical behavior). Set it to `auto` to hand each action to Claude's auto-mode classifier instead — a good middle ground for unattended runs where you don't want blanket bypass.
+**`permission_mode` / `--permission-mode`** — the Claude Code permission mode for the call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, or `plan`. `wiggum init` asks for this and writes `permission_mode = auto` by default — Claude's auto-mode classifier gates each action, a guardrailed middle ground for unattended runs. `bypassPermissions` runs everything with no checks (fastest, no guardrails). When the line is absent from `.wiggumrc` entirely, the built-in default is `bypassPermissions` (back-compat for configs written before `init` set this).
 
 ```bash
 wiggum execute docs/plan.md --effort max               # maximum reasoning
