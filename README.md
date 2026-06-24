@@ -16,12 +16,13 @@ Wiggum automates the full cycle. It acts as a project driver that:
 - **Self-heals.** When a verification step fails, Wiggum feeds the error output back to Claude and asks it to fix the problem. For tools that can auto-correct (like `ruff --fix` or `eslint --fix`), it runs the autofix first and only escalates to Claude if the issue persists.
 - **Knows when to stop.** Validation retries are capped to prevent runaway token consumption.
 - **Commits as it goes.** Each iteration produces isolated, single-purpose git commits with clean imperative messages.
+- **Runs unattended, supervised.** Kick off a run in the background, then check progress, wait for it, spot when it's blocked, and stop it if it overruns — or chain several workplans so they run back to back.
 
 The result: you kick off a run, walk away, and come back to a branch with a series of clean commits, a reconciled plan, and a summary of what happened.
 
 ## How it works
 
-Wiggum has four commands that map to the natural workflow of software development.
+Wiggum's commands map to the natural workflow of software development — `init`, `plan`, `execute`, `check`, `docs`, and `run` — with `status`, `watch`, `kill`, and `chain` layered on top to supervise long or batched runs.
 
 ### Init mode
 
@@ -45,7 +46,7 @@ wiggum plan <issue-files...> | wiggum execute
 Reads issue descriptions, specs, or requirements documents and produces a structured workplan. The plan is a markdown document with:
 
 - Phases grouping related work
-- Discrete tasks, each with a `[ ]` checkbox
+- Discrete tasks, each with a `[ ]` checkbox (GitHub-flavored `-`, `*`, or `+` bullets all count)
 - An observable acceptance criterion per task
 - The files each task is expected to create or modify
 - Dependencies between tasks
@@ -93,9 +94,12 @@ GitHub-rendering caveat: `[~]` renders as plain text in GitHub's task-list view 
 wiggum execute <plan-files...>
 wiggum execute < plan.md
 wiggum plan issue.md | wiggum execute
+wiggum execute docs/plan.md --background   # run detached; supervise with status/watch/kill
 ```
 
 Takes a workplan (typically one produced by `plan` mode, but any structured markdown will do) and implements it through three phases. When no files are given, reads the plan from stdin. At the end, the completed plan and summary are saved with descriptive filenames derived from the plan content (e.g., `docs/improve-chunking_plan.md` and `docs/improve-chunking_summary.md`).
+
+By default `execute` runs in the foreground and blocks until it finishes. Add `--background` (`-b`) to run detached and supervise the run with `status`, `watch`, and `kill` — see [Background runs & supervision](#background-runs--supervision).
 
 **Phase 1 -- Diagnostic & Status Sync**
 
@@ -238,16 +242,59 @@ The id is rewritten after every prompt, so a follow-up resumes from the latest c
 
 For a complete, copy-pasteable cron setup — wrapper script, environment, and the gotchas that bite unattended jobs — see [Scheduling with cron](#scheduling-with-cron).
 
+### Background runs & supervision
+
+`wiggum execute` normally runs in the foreground and blocks until it finishes. For long plans — or when you want to supervise a run, bound it, or fire off several — run it detached and drive it with the supervision commands.
+
+```
+wiggum execute docs/plan.md --background   # or -b
+```
+
+`--background` launches the loop in a detached process, records its pid, and captures all output to sidecar files next to the plan:
+
+- `docs/plan.pid` — the wiggum process id for this run
+- `docs/plan.out` — the full run output (phase headers, progress, status)
+- `docs/plan.log` — the structured run log
+
+Every supervision command refers to a run **by its plan file** and derives those sidecars from it:
+
+| Command | Purpose |
+|---|---|
+| `wiggum status docs/plan.md` | Print task counts and run state: `not started`, `running`, `running but appears blocked`, or `finished: <reason>`. Read-only. |
+| `wiggum watch docs/plan.md` | Stream the run's output and **block until it finishes** — wiggum's "wait". Exits 0 only when the run finished `complete`. |
+| `wiggum kill docs/plan.md` | Stop the run — and only this run's process tree (the wiggum process and the `claude` it spawned). Never a blanket kill. |
+
+`watch` can bound a run so a wedged loop can't hang forever:
+
+```
+wiggum watch docs/plan.md --timeout 1800 --kill-on-timeout   # give up after 30 min and kill it
+wiggum watch docs/plan.md --poll-interval 2                   # poll for new output every 2s (default 5)
+```
+
+**Detecting a blocked run.** `status` reports `running but appears blocked` (or a finished run as `stalled`) when the output shows wiggum spinning without progress — repeated `No progress detected`, `Stalled for ...`, or a verification waterfall that gave up (`Validation failed N times`). When that happens, read the tail of `docs/plan.out` / `docs/plan.log` to find the cause: usually a failing verify command or a task whose acceptance can't be met. Fix the plan or the source (not `.wiggumrc`) and re-run.
+
+### Chaining workplans
+
+Run several plans back to back, each in a fresh session, stopping at the first failure:
+
+```
+wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
+wiggum chain docs/*.plan.md --max-iterations 5
+```
+
+`chain` runs `wiggum execute` on each plan in order. If a plan fails (stalls or errors), the chain stops there rather than wasting effort on plans that likely depend on it. This is the preferred way to tackle work too large for one plan: split it into focused plans and chain them, instead of writing one 40-task plan that tends to stall.
+
 ### Claude Code skill
 
-Wiggum can also run as a slash command inside Claude Code itself. The `/wiggum` skill gives Claude the same plan-implement-verify-commit workflow without leaving the conversation.
+Wiggum ships a `/wiggum` slash command for Claude Code that acts as an **orchestrator** for the CLI. Instead of re-running the loop in-conversation, the skill drives the `wiggum` binary: it creates a workplan, launches `wiggum execute` (in the background), monitors progress, waits for completion, analyzes whether a run is blocked, kills a run that overruns (only that run's process), and chains workplans together.
 
 ```
 /wiggum docs/login-bug.md
 /wiggum "add rate limiting to the /api/upload endpoint"
+/wiggum chain: docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
 ```
 
-The skill accepts either a file path (which it reads) or a plain-text description. It follows the same workflow as the CLI -- plan, implement iteratively, verify against `.wiggumrc`, self-heal, commit -- but runs natively inside Claude Code using its own tools rather than shelling out to the `claude` CLI.
+The skill accepts an issue file, a plain-text description (which it turns into a plan), an existing plan file, or several plans to chain. Because it drives the CLI, the `wiggum` binary must be installed and on `PATH` (see [Background runs & supervision](#background-runs--supervision) for the commands it uses).
 
 The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKILL.md`) so it works in every project. Running `wiggum init` in a specific project installs a project-local copy at `.claude/skills/wiggum/SKILL.md`.
 
@@ -353,6 +400,11 @@ wiggum plan issues/bug.md | wiggum execute
 
 # One-liner: describe, plan, and execute
 echo "Add rate limiting to /api/upload" | wiggum plan | wiggum execute
+
+# Run detached, then supervise it (status / wait / stop if it overruns)
+wiggum execute docs/plan.md --background
+wiggum status docs/plan.md
+wiggum watch  docs/plan.md --timeout 1800 --kill-on-timeout
 ```
 
 Two equivalent patterns for plan → execute:
@@ -424,13 +476,21 @@ Modes:
   check       Run verification waterfall and fix issues
   docs        Update documentation from input files
   run         Feed a series of prompts to Claude in one continuous session
+  status      Show task progress and run state for a plan
+  watch       Follow a background run until it finishes (wait)
+  kill        Stop a background run (only that run's process)
+  chain       Execute several workplans back to back
 
 Options:
   --plan-file <path>       Output path for the plan (plan mode)
   --summary-file <path>    Output path for the summary (execute mode)
-  --max-iterations <n>    Maximum implementation iterations (execute mode, default: 3)
+  --max-iterations <n>    Maximum implementation iterations (execute/chain, default: 3)
   --benchmark <script>    Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
+  -b, --background         Run execute detached; supervise with status/watch/kill
+  --timeout <seconds>      Stop watching after N seconds, 0 = forever (watch mode)
+  --kill-on-timeout        On watch timeout, kill the run (watch mode)
+  --poll-interval <secs>   How often watch polls for new output (default: 5)
   --no-verify              Skip wiggum's verification waterfall (execute mode; rejected by check)
   --no-commit              Skip every wiggum-issued git commit (execute, check, docs)
   -f, --prompts-file <p>   Read prompts from a file, split on delimiter lines (run mode)
@@ -793,8 +853,9 @@ On macOS, `launchd` is more reliable than cron for user agents — it survives r
 | `execute` | `<dir>/<basename>_summary.md` | `--summary-file` |
 | `execute` (stdin) | `docs/stdin_summary.md` | `--summary-file` |
 | `execute`/`plan`/`docs` | `<dir>/<basename>.log` | *(always created)* |
+| `execute --background` | `<dir>/<basename>.pid`, `<dir>/<basename>.out` | *(always created)* |
 
-The directory and basename are derived from the first input file. When reading from stdin, files default to `docs/`. For example:
+The directory and basename are derived from the first input file. When reading from stdin, files default to `docs/`. The background sidecars (`.pid`, `.out`) sit next to the plan and are how `status`/`watch`/`kill` find a detached run; `watch` removes the `.pid` once the run finishes. For example:
 
 ```
 wiggum plan docs/auth-issue.md
