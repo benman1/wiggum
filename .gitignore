@@ -1,2 +1,4 @@
 # wiggum run logs (generated per run)
 docs/*.log
+docs/*.out
+docs/*.pid
