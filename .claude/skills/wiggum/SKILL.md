@@ -95,14 +95,12 @@ Then supervise in a loop until it finishes:
    `wiggum watch docs/<name>_plan.md --timeout 1800 --kill-on-timeout`
    `watch` blocks until the run ends (your "wait"); `--timeout`/`--kill-on-timeout`
    bound a stuck run. Tune the timeout to the plan's size.
-3. **Analyze if blocked.** Treat the run as blocked when `status` reports
-   `running but appears blocked` or `finished: stalled`, or `watch` returned
-   non-zero. Under the hood that means the `.out`/`.log` shows `No progress
-   detected`, `Stalled for ...`, or `Validation failed N times`. When blocked:
-   - Read the tail of `docs/<name>.out` (and `docs/<name>.log`) to find the cause —
-     usually a failing verify command or a task whose acceptance can't be met.
-   - If it's a bad verify command in `.wiggumrc`, tell the user (don't edit their
-     config). If the plan is wrong or too coarse, revise the plan file and re-run.
+3. **Spot a wedged run early.** Treat the run as spinning (not working) when
+   `status` reports `running but appears blocked`, or `watch` returns non-zero —
+   under the hood the `.out`/`.log` shows `No progress detected`, `Stalled for ...`,
+   or `Validation failed N times`. Read the tail of `docs/<name>.out` to see why,
+   let it reach its natural stop (or let `--kill-on-timeout` bound it), then
+   remediate in step 4. Don't keep a wedged run alive.
 4. **Kill only when needed.** If a run overruns or is wedged and you must stop it,
    use `wiggum kill docs/<name>_plan.md`. This kills only that run's process tree
    (the wiggum process and the `claude` it spawned) — never a blanket kill of other
@@ -112,13 +110,63 @@ Then supervise in a loop until it finishes:
 For a quick, small run you may skip backgrounding and just `wiggum execute <plan>`
 in the foreground.
 
-### 4. Report
+### 4. If the run didn't finish `complete` — remediate and re-run
 
-When the run finishes, run `wiggum status <plan>` once more and report:
-- the stop reason (complete / stalled / incomplete),
+A finished run is not necessarily a done one. Read its stop reason from
+`wiggum status <plan>` (`finished: <reason>`) and `docs/<name>_summary.md`. Wiggum
+stops for three reasons; handle each differently:
+
+- **`complete`** — 0 tasks remain. Go to Report.
+- **`incomplete`** — it hit `--max-iterations` while still making progress; it just
+  ran out of budget. The plan is fine. Re-run `wiggum execute <plan>` — phase 1
+  reconciles the repo against the plan, then it continues the remaining `[ ]`
+  tasks — optionally with a higher `--max-iterations`. Between runs, `wiggum status
+  <plan>` must show `remaining` going *down*; if it stops dropping, treat it as a
+  stall.
+- **`stalled`** — no progress for two iterations in a row. Re-running as-is will
+  just stall again. **Diagnose, mitigate, then re-run.**
+
+**Diagnose the stall** (don't trust the checkboxes alone):
+1. Read the evidence — `docs/<name>_summary.md` ("issues encountered" / "deferred"),
+   the tail of `docs/<name>.out` and `.log` (the `No progress detected` /
+   `Validation failed N times` lines), and the still-`[ ]` tasks. Pin down *which*
+   task didn't advance and *why*.
+2. Spot-check reality vs. the plan:
+   - Run the project's own checks: `wiggum check` (runs the `.wiggumrc` verify/autofix
+     steps and shows the real failure).
+   - `grep` the repo for the files/symbols/APIs the stuck task assumed exist.
+   - Confirm whether partial work actually landed — sometimes the work is done and
+     only the box is unticked (phase-1 reconcile usually fixes that, but verify).
+
+**Mitigate — match the fix to the cause:**
+- *Task too big or vague* → split it into smaller `[ ]` steps, each with a concrete,
+  observable `Acceptance:` line.
+- *Acceptance can't be met / is ambiguous* → rewrite it to something reachable and
+  checkable.
+- *Built on a wrong or hallucinated API / assumption* → fix the task after reading
+  the real source; correct dependencies or ordering.
+- *A `.wiggumrc` verify command is itself wrong* → surface it to the user; **don't**
+  edit `.wiggumrc` (it's their config).
+- *Genuinely impossible, out of scope, or superseded* → mark the task `[~]` with a
+  one-line rationale so wiggum stops re-picking it (its designed escape hatch).
+- *Needs access, credentials, an external dependency, or a real product decision* →
+  stop and ask the user; you can't resolve it.
+
+Then re-execute. **Bound the loop:** at most ~2–3 remediation cycles. If it stalls
+again on the *same* task after a mitigation, stop and hand the user the diagnosis
+plus options instead of burning more runs — mirror wiggum's own discipline (it caps
+stall and validation retries precisely to avoid runaway).
+
+### 5. Report
+
+When the work is done (or you've stopped to escalate), run `wiggum status <plan>`
+once more and report:
+- the final stop reason (complete / stalled / incomplete) and how many remediation
+  re-runs it took,
 - task counts (done / remaining / dropped),
 - what the summary file (`docs/<name>_summary.md`) says was done and deferred,
-- if blocked or killed: the cause you found and the suggested next step.
+- if you stopped on a stall: the cause you found, the mitigation you tried, and the
+  decision you need from the user.
 
 ## Chaining workplans
 
@@ -145,5 +193,11 @@ can inspect and fix between stages.
   a blanket process kill.
 - **Don't edit `.wiggumrc`** to make verification pass — it's the user's config. If
   a verify command itself is wrong, surface it.
+- **A finished run isn't a done one.** Always check the stop reason: `incomplete`
+  → re-run; `stalled` → diagnose and mitigate before re-running (step 4). Never
+  re-run a stalled plan unchanged.
+- **Remediate, don't loop forever.** Cap re-runs (~2–3) and confirm `remaining` is
+  dropping between them; if a task stays stuck after a mitigation, escalate with the
+  diagnosis instead of burning more runs.
 - **Report honestly:** if it stalled or was killed, say so with the cause from the
   log — don't round an incomplete run up to "done".
