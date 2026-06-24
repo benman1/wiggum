@@ -1,105 +1,149 @@
 ---
 name: wiggum
-description: Self-driving agent loop — plans, implements, verifies, self-heals, and commits from an issue description
+description: Orchestrate the wiggum CLI — create a workplan, run it, monitor it, wait for it, detect when it's blocked, kill it if it runs too long, and chain workplans together
 disable-model-invocation: true
-argument-hint: <issue-file-or-description>
+argument-hint: <issue, plan file, or "chain: plan-a.md plan-b.md">
 ---
 
-# Wiggum: Self-Driving Agent Loop
+# Wiggum: Orchestrator
 
-You are now operating as **wiggum** — a self-driving agent that turns issue descriptions into working, verified, committed code. Execute the full workflow below without asking for confirmation at any step.
+You **drive the `wiggum` CLI** — you do not re-implement its loop yourself. Wiggum
+is a self-driving agent loop (plan → implement → verify → commit). Your job is to
+turn the request into a workplan, launch wiggum on it, supervise the run, and
+report the outcome. Execute without asking for confirmation.
 
-## Input
+The request: **$ARGUMENTS**
 
-The issue or spec to implement: **$ARGUMENTS**
+## Prerequisites
 
-If that refers to a file path, read it. If it's a description, use it directly.
+`wiggum` must be on `PATH`. Check once with `command -v wiggum`.
 
-## File naming
+- If it's missing, tell the user to install it (`./install.sh` in the wiggum repo)
+  and stop — do not hand-simulate the loop.
+- Run from the target project root. A `.wiggumrc` there defines the verify/autofix
+  steps; if there is none, wiggum skips verification (still fine).
 
-Before starting, derive a short kebab-case slug from the issue (e.g., "improve-chunking"). All output files use this slug:
+## The CLI you drive
 
-- **Plan**: `docs/<slug>_plan.md`
-- **Summary**: `docs/<slug>_summary.md`
+| Command | What it does |
+|---|---|
+| `wiggum plan <issue-or-file> [--plan-file docs/<slug>_plan.md]` | Write a workplan. Does not touch code. |
+| `wiggum execute <plan> [--max-iterations N]` | Run the loop in the foreground (blocks). |
+| `wiggum execute <plan> --background` | Run detached; writes `docs/<name>.pid` + `docs/<name>.out`. Returns immediately. |
+| `wiggum status <plan>` | Task counts + run state (not started / running / running but appears blocked / finished: \<reason\>). Read-only. |
+| `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
+| `wiggum kill <plan>` | Stop the run (only that run's process tree). |
+| `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 
-## Step 1: Plan
+Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
+`docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
+so always refer to a run by its **plan file**.
 
-1. Read and understand the issue/spec thoroughly.
-2. Read README.md and other project documentation for context.
-3. Analyze the repository to understand the relevant code, tests, and architecture.
-4. Produce a detailed workplan as a markdown checklist with:
-   - Phases and discrete tasks (each with `[ ]` status)
-   - An `Acceptance:` line on every task stating an observable outcome (a passing test, a specific log line, a file that exists, a command that exits 0). Not a feeling. A task without observable acceptance is a wish, not a step.
-   - A `Files:` line on every task naming the files it will create or modify (best-effort paths)
-   - Dependencies between tasks
-5. Before finalizing, confirm the libraries, APIs, and commands the plan depends on actually exist (grep the repo or read the dependency). Do not plan around an assumed or hallucinated API.
-6. Write the plan to `docs/<slug>_plan.md`.
-7. Commit the plan: `git add docs/<slug>_plan.md && git commit -m "add workplan for <slug>"`
+## Workflow
 
-## Step 2: Implement (iterative)
+### 1. Classify the request
 
-Repeat the following cycle up to **3 iterations** (or until all tasks are checked off):
+- **An existing plan file** (path ending in `_plan.md`, or a markdown file full of
+  `- [ ]` tasks): skip to step 3.
+- **"chain: a.md b.md c.md"** or several plan paths: this is a chain — go to
+  "Chaining" below.
+- **An issue file or a free-text description**: create a plan first (step 2).
 
-### 2a. Implement the next step
+### 2. Create a wiggum-compatible workplan
 
-- Pick the next unchecked `[ ]` task from `docs/<slug>_plan.md`.
-- Before writing code, verify your assumptions: confirm the APIs and imports you will call exist and the config values you rely on are defined (grep or read the source — do not assume).
-- If no test covers the change, write a minimal failing test first, then implement until it passes.
-- After implementing, run three spot checks and show input → expected → actual: the happy path, an edge case (empty, boundary, or large input), and a failure case (invalid input must fail safely with a clear error).
-- Mark the task `[x]` only once its acceptance criterion is met and all three spot checks pass — never round an unverified result up to done.
+Either run `wiggum plan "<issue or file>"` (it writes `docs/<slug>_plan.md`), or
+write the plan yourself in the format below. A wiggum plan is a markdown checklist:
 
-### 2b. Verify
+```markdown
+# <Title>
 
-Read `.wiggumrc` from the project root (if it exists) and run every `verify:` and `autofix:` line as a shell command. For example, if `.wiggumrc` contains:
+## Phase 1: <name>
+- [ ] <discrete task>
+  Acceptance: <observable outcome — a passing test, a specific log line, a file
+  that exists, a command that exits 0>. Never a feeling ("works", "looks right").
+  Files: <best-effort paths this task creates or modifies>
+- [ ] <next task>
+  Acceptance: ...
+  Files: ...
+```
+
+Rules for a good plan:
+- Every task is one `- [ ]` line (GFM `*`/`+` bullets also count) with its own
+  **Acceptance:** and **Files:** lines. A task without observable acceptance is a
+  wish, not a step.
+- `[x]` = done, `[ ]` = pending, `[~]` = dropped (terminal — wiggum won't re-pick
+  it). Record why on the `[~]` line.
+- Before finalizing, confirm the APIs/commands the plan assumes actually exist
+  (grep the repo). Don't plan around a hallucinated API.
+- Keep plans focused. Very large plans (40+ tasks) tend to stall — split them and
+  `chain` instead.
+
+Confirm the plan looks right, then continue.
+
+### 3. Execute and supervise
+
+Launch detached so you can monitor and bound it:
 
 ```
-verify: npm test
-verify: npm run lint
-autofix: npm run lint -- --fix
+wiggum execute docs/<name>_plan.md --background
 ```
 
-Then run each command. For `autofix:` lines, run the command first (to attempt the fix), then run it again (to verify it passed).
+Then supervise in a loop until it finishes:
 
-**If any verify step fails:**
+1. `wiggum status docs/<name>_plan.md` — read **State** and the task counts.
+2. While **State** is `running`, keep watching:
+   `wiggum watch docs/<name>_plan.md --timeout 1800 --kill-on-timeout`
+   `watch` blocks until the run ends (your "wait"); `--timeout`/`--kill-on-timeout`
+   bound a stuck run. Tune the timeout to the plan's size.
+3. **Analyze if blocked.** Treat the run as blocked when `status` reports
+   `running but appears blocked` or `finished: stalled`, or `watch` returned
+   non-zero. Under the hood that means the `.out`/`.log` shows `No progress
+   detected`, `Stalled for ...`, or `Validation failed N times`. When blocked:
+   - Read the tail of `docs/<name>.out` (and `docs/<name>.log`) to find the cause —
+     usually a failing verify command or a task whose acceptance can't be met.
+   - If it's a bad verify command in `.wiggumrc`, tell the user (don't edit their
+     config). If the plan is wrong or too coarse, revise the plan file and re-run.
+4. **Kill only when needed.** If a run overruns or is wedged and you must stop it,
+   use `wiggum kill docs/<name>_plan.md`. This kills only that run's process tree
+   (the wiggum process and the `claude` it spawned) — never a blanket kill of other
+   wiggum/claude processes. Prefer `--kill-on-timeout` on `watch` so you don't have
+   to babysit it.
 
-- Read the error output carefully.
-- Fix the **source code** (not `.wiggumrc` — that's the user's config).
-- Re-run ALL verify steps from the beginning.
-- You may retry up to **5 times**. If still failing after 5 attempts, stop and report what's broken.
+For a quick, small run you may skip backgrounding and just `wiggum execute <plan>`
+in the foreground.
 
-If no `.wiggumrc` exists, skip verification.
+### 4. Report
 
-### 2c. Commit
+When the run finishes, run `wiggum status <plan>` once more and report:
+- the stop reason (complete / stalled / incomplete),
+- task counts (done / remaining / dropped),
+- what the summary file (`docs/<name>_summary.md`) says was done and deferred,
+- if blocked or killed: the cause you found and the suggested next step.
 
-- Review all uncommitted changes (modified and untracked files).
-- For each logical change, `git add` the relevant files and `git commit -m "<message>"`.
-- Commit messages: single line, imperative mood, no prefixes, no trailers.
+## Chaining workplans
 
-### 2d. Progress check
+When the work spans several independent plans, run them in sequence:
 
-Count the remaining unchecked `[ ]` tasks in `docs/<slug>_plan.md`.
+```
+wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
+```
 
-- **All done** (0 remaining): stop reason is **complete**. Go to Step 3.
-- **No progress** (same or more remaining as last iteration): if this has happened **2 iterations in a row**, stop reason is **stalled**. Go to Step 3.
-- **Max iterations reached**: stop reason is **incomplete**. Go to Step 3.
-- **Otherwise**: continue to the next iteration.
-
-## Step 3: Summarize
-
-1. Update `docs/<slug>_plan.md` — mark all completed tasks with `[x]`.
-2. Write a summary to `docs/<slug>_summary.md` covering:
-   - **Stop reason**: complete, stalled, or incomplete
-   - What was implemented
-   - What was deferred (if anything)
-   - Issues encountered
-   - Verification results
-3. Commit the summary and updated plan.
-4. Report the stop reason to the user.
+`chain` runs `wiggum execute` on each plan in order, each in a fresh session, and
+stops at the first plan that fails — so a broken early step doesn't waste effort on
+the rest. To supervise a long chain, background it and watch the active plan's
+sidecars, or run the plans one at a time with the supervise loop in step 3 so you
+can inspect and fix between stages.
 
 ## Rules
 
+- **Drive the CLI; don't reimplement it.** Plan/implement/verify/commit are
+  wiggum's job. You orchestrate: plan, launch, monitor, wait, unblock, kill, chain.
 - **Never ask for confirmation** — just execute.
-- **Commit messages**: single line, imperative, no `feat:`/`fix:` prefixes, no `Co-Authored-By` trailers.
-- **Verification failures**: fix source code, not `.wiggumrc`. If the command itself is wrong (e.g., wrong script name), tell the user to update `.wiggumrc`.
-- **Stay focused**: implement what the issue asks for. Don't refactor surrounding code, add docstrings, or make "improvements" beyond scope.
-- **Plan file is the source of truth**: always reference and update `docs/<slug>_plan.md` as you work.
+- **Refer to runs by their plan file** — that's how status/watch/kill find the
+  sidecars.
+- **Kill scope:** only ever stop the run you started (`wiggum kill <plan>`), never
+  a blanket process kill.
+- **Don't edit `.wiggumrc`** to make verification pass — it's the user's config. If
+  a verify command itself is wrong, surface it.
+- **Report honestly:** if it stalled or was killed, say so with the cause from the
+  log — don't round an incomplete run up to "done".
