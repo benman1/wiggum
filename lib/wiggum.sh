@@ -221,8 +221,10 @@ Presets:
   bash      Bash project (shellcheck, bats)
   (none)    Auto-detect from project files
 
-Also offers to set up Claude Code permissions in .claude/settings.local.json
-and reminds you to create a CLAUDE.md if one is missing.
+Asks which Claude permission mode to write into .wiggumrc (auto, the
+guardrailed default, or bypassPermissions). Also offers to set up Claude Code
+permissions in .claude/settings.local.json and reminds you to create a
+CLAUDE.md if one is missing.
 EOF
             ;;
         plan)
@@ -1033,6 +1035,24 @@ RCEOF
     esac
 }
 
+# Ask which Claude permission mode wiggum should bake into .wiggumrc. Prints the
+# chosen mode to stdout; all prompts go to stderr so the value can be captured
+# with $(...). Defaults to `auto` (the recommended guardrailed mode) -- only an
+# explicit `2`/`bypass`/`bypassPermissions` selects bypassPermissions.
+prompt_permission_mode() {
+    echo "" >&2
+    echo "Which permission mode should wiggum use for its Claude runs?" >&2
+    echo "  1) auto              Claude's auto-mode classifier decides each action (recommended)" >&2
+    echo "  2) bypassPermissions runs every action with no checks (fastest, no guardrails)" >&2
+    echo "Choose [1]: " >&2
+    local answer
+    read -r answer
+    case "$answer" in
+        2|bypass|bypassPermissions) echo "bypassPermissions" ;;
+        *)                          echo "auto" ;;
+    esac
+}
+
 run_init() {
     local preset="$INIT_PRESET"
 
@@ -1055,8 +1075,12 @@ run_init() {
         fi
     fi
 
+    local perm_mode
+    perm_mode="$(prompt_permission_mode)"
+
     generate_rc "$preset" > .wiggumrc
-    echo "Created .wiggumrc ($preset preset)"
+    printf '\npermission_mode = %s\n' "$perm_mode" >> .wiggumrc
+    echo "Created .wiggumrc ($preset preset, permission_mode = $perm_mode)"
 
     # Offer to set up Claude Code permissions for verification commands
     setup_claude_permissions "$preset"

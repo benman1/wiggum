@@ -1442,7 +1442,8 @@ EOF
 
 @test "run_init: creates .wiggumrc from explicit preset" {
     INIT_PRESET="python"
-    printf "n\nn\n" | run_init
+    # stdin order: permission-mode, permissions, skill
+    printf "\nn\nn\n" | run_init
     [ -f ".wiggumrc" ]
     grep -q "pytest" .wiggumrc
 }
@@ -1450,14 +1451,39 @@ EOF
 @test "run_init: auto-detects preset" {
     INIT_PRESET=""
     touch package.json
-    printf "n\nn\n" | run_init
+    printf "\nn\nn\n" | run_init
     [ -f ".wiggumrc" ]
     grep -q "npm test" .wiggumrc
 }
 
+@test "run_init: defaults permission_mode to auto" {
+    INIT_PRESET="node"
+    # Empty answer to the permission-mode prompt selects the default (auto).
+    printf "\nn\nn\n" | run_init
+    grep -q "permission_mode = auto" .wiggumrc
+}
+
+@test "run_init: writes bypassPermissions when chosen" {
+    INIT_PRESET="node"
+    # "2" at the permission-mode prompt selects bypassPermissions.
+    printf "2\nn\nn\n" | run_init
+    grep -q "permission_mode = bypassPermissions" .wiggumrc
+    ! grep -q "permission_mode = auto" .wiggumrc
+}
+
+@test "run_init: chosen permission_mode is loadable config" {
+    INIT_PRESET="node"
+    printf "\nn\nn\n" | run_init
+    # The generated line must round-trip through the config loader.
+    wiggum_reset
+    apply_config < <(load_config_from .wiggumrc)
+    [ "$PERMISSION_MODE" = "auto" ]
+}
+
 @test "run_init: creates .claude/settings.local.json when approved" {
     INIT_PRESET="node"
-    printf "y\nn\nn\n" | run_init
+    # stdin order: permission-mode, permissions, pkg-manager, skill
+    printf "\ny\nn\nn\n" | run_init
     [ -f ".claude/settings.local.json" ]
     grep -q "git add" .claude/settings.local.json
     grep -q "npm run" .claude/settings.local.json
@@ -1465,7 +1491,7 @@ EOF
 
 @test "run_init: skips permissions when declined" {
     INIT_PRESET="node"
-    printf "n\nn\n" | run_init
+    printf "\nn\nn\n" | run_init
     [ ! -f ".claude/settings.local.json" ]
 }
 
@@ -1677,8 +1703,8 @@ EOF
 
 @test "run_init: creates skill when approved" {
     INIT_PRESET="node"
-    # y=permissions, n=pkg-manager, y=skill
-    printf "y\nn\ny\n" | run_init
+    # permission-mode(default), y=permissions, n=pkg-manager, y=skill
+    printf "\ny\nn\ny\n" | run_init
     [ -f ".claude/skills/wiggum/SKILL.md" ]
 }
 
@@ -1687,6 +1713,23 @@ EOF
     INIT_PRESET="node"
     run bash -c "source '$WIGGUM_LIB'; INIT_PRESET=node; echo n | run_init"
     grep -q "old" .wiggumrc
+}
+
+# ── prompt_permission_mode ───────────────────────────────────────────────────
+
+@test "prompt_permission_mode: empty input defaults to auto" {
+    [ "$(echo "" | prompt_permission_mode 2>/dev/null)" = "auto" ]
+    [ "$(echo "1" | prompt_permission_mode 2>/dev/null)" = "auto" ]
+}
+
+@test "prompt_permission_mode: 2 or bypass selects bypassPermissions" {
+    [ "$(echo "2" | prompt_permission_mode 2>/dev/null)" = "bypassPermissions" ]
+    [ "$(echo "bypass" | prompt_permission_mode 2>/dev/null)" = "bypassPermissions" ]
+    [ "$(echo "bypassPermissions" | prompt_permission_mode 2>/dev/null)" = "bypassPermissions" ]
+}
+
+@test "prompt_permission_mode: unrecognized input falls back to auto" {
+    [ "$(echo "garbage" | prompt_permission_mode 2>/dev/null)" = "auto" ]
 }
 
 # ── run_validation ───────────────────────────────────────────────────────────
