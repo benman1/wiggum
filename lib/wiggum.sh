@@ -54,6 +54,10 @@ wiggum_reset() {
     RUN_SESSION_FILE=""
     RUN_NEW_SESSION=false
     RUN_DELIMITER="---"
+    BACKGROUND=false
+    WATCH_TIMEOUT=0
+    WATCH_POLL=5
+    KILL_ON_TIMEOUT=false
 }
 
 wiggum_reset
@@ -262,6 +266,8 @@ Options:
   --summary-file <path>         Output path for the summary (default: <base>_summary.md)
   --benchmark <script>          Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>         Comma-separated doc files to update after execution
+  -b, --background              Run detached; write a pidfile and capture output
+                                so 'wiggum status/watch/kill <plan>' can supervise it
   --no-verify                   Skip wiggum's verification waterfall (Claude may
                                 still run tests during implementation)
   --no-commit                   Skip every wiggum-issued git commit
@@ -285,8 +291,77 @@ When no files are given, reads from stdin.
 Examples:
   wiggum execute docs/plan.md
   wiggum execute docs/plan.md --max-iterations 5 --update-docs README.md
+  wiggum execute docs/plan.md --background    # then: wiggum watch docs/plan.md
   wiggum plan issue.md | wiggum execute
   echo "Add dark mode" | wiggum plan | wiggum execute
+EOF
+            ;;
+        status)
+            cat <<EOF
+wiggum status - Show task progress and run state for a plan
+
+Usage:
+  wiggum status <plan-file>
+
+Reports how many tasks are done / remaining / dropped, and whether a run
+started with 'wiggum execute --background' is currently running, appears
+blocked (stalled or stuck in the validation waterfall), or has finished.
+Read-only -- never starts or stops anything.
+
+Examples:
+  wiggum status docs/plan.md
+EOF
+            ;;
+        watch)
+            cat <<EOF
+wiggum watch - Follow a background run until it finishes
+
+Usage:
+  wiggum watch <plan-file> [options]
+
+Options:
+  --timeout <seconds>     Stop watching after this long (0 = wait forever)
+  --kill-on-timeout       On timeout, kill the run (only that run's process)
+  --poll-interval <secs>  How often to poll for new output (default: 5)
+
+Streams the run's output and blocks until it completes -- wiggum's "wait".
+Exits 0 only if the run finished 'complete'; non-zero for stalled, incomplete,
+or killed. Pair with 'wiggum execute --background' to launch then wait.
+
+Examples:
+  wiggum watch docs/plan.md
+  wiggum watch docs/plan.md --timeout 1800 --kill-on-timeout
+EOF
+            ;;
+        kill)
+            cat <<EOF
+wiggum kill - Stop a background run
+
+Usage:
+  wiggum kill <plan-file>
+
+Kills the wiggum process recorded for this plan (and the claude subprocess it
+spawned), then removes the pidfile. Targets only this run's process tree --
+never a blanket kill of every wiggum/claude on the system.
+
+Examples:
+  wiggum kill docs/plan.md
+EOF
+            ;;
+        chain)
+            cat <<EOF
+wiggum chain - Execute several workplans back to back
+
+Usage:
+  wiggum chain <plan-file...> [options]
+
+Runs 'wiggum execute' on each plan in order, each in a fresh session. Stops at
+the first plan that fails so a broken step doesn't drag the rest down. Accepts
+the same execution options as 'wiggum execute' (e.g. --max-iterations).
+
+Examples:
+  wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
+  wiggum chain docs/*.plan.md --max-iterations 5
 EOF
             ;;
         docs)
@@ -396,6 +471,10 @@ Commands:
   check     Run verification waterfall and fix issues
   docs      Update documentation from input files
   run       Feed a series of prompts to Claude in one continuous session
+  status    Show task progress and run state for a plan
+  watch     Follow a background run until it finishes (wait)
+  kill      Stop a background run (only that run's process)
+  chain     Execute several workplans back to back
 
 Run 'wiggum help <command>' for details on a specific command.
 
@@ -432,10 +511,13 @@ parse_args() {
         return 0
     fi
 
-    if [[ "$MODE" != "plan" && "$MODE" != "execute" && "$MODE" != "init" && "$MODE" != "docs" && "$MODE" != "check" && "$MODE" != "run" ]]; then
-        echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'check', 'docs', 'run', or 'init'." >&2
-        return "$EXIT_BAD_ARGS"
-    fi
+    case "$MODE" in
+        plan|execute|init|docs|check|run|status|watch|kill|chain) ;;
+        *)
+            echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'check', 'docs', 'run', 'status', 'watch', 'kill', 'chain', or 'init'." >&2
+            return "$EXIT_BAD_ARGS"
+            ;;
+    esac
 
     if [[ "$MODE" == "init" ]]; then
         if [[ $# -gt 0 && ! "$1" == -* ]]; then
@@ -506,6 +588,22 @@ parse_args() {
             --delimiter)
                 RUN_DELIMITER="$2"
                 shift 2
+                ;;
+            -b|--background)
+                BACKGROUND=true
+                shift
+                ;;
+            --timeout)
+                WATCH_TIMEOUT="$2"
+                shift 2
+                ;;
+            --poll-interval)
+                WATCH_POLL="$2"
+                shift 2
+                ;;
+            --kill-on-timeout)
+                KILL_ON_TIMEOUT=true
+                shift
                 ;;
             --no-verify)
                 NO_VERIFY=true
@@ -615,6 +713,16 @@ parse_args() {
     fi
 
     if [[ ${#FILES[@]} -eq 0 ]]; then
+        case "$MODE" in
+            status|watch|kill)
+                echo "Error: $MODE requires a plan file (e.g. wiggum $MODE docs/foo_plan.md)." >&2
+                return "$EXIT_BAD_ARGS"
+                ;;
+            chain)
+                echo "Error: chain requires one or more plan files." >&2
+                return "$EXIT_BAD_ARGS"
+                ;;
+        esac
         if [[ -t 0 ]]; then
             echo "Error: no input files specified (or pipe text via stdin)." >&2
             return "$EXIT_BAD_ARGS"
@@ -652,6 +760,13 @@ parse_args() {
 
 # ── Plan progress ────────────────────────────────────────────────────────────
 
+# Markdown bullet markers that can introduce a task line. GitHub-flavored
+# markdown accepts `-`, `*`, and `+` as list bullets, so a plan written with
+# any of them must count -- matching only `-` silently undercounts `*`/`+`
+# plans and can report a false "0 remaining" / "complete". Used by every
+# task-counting regex below so they stay consistent.
+WIGGUM_TASK_BULLET='[-*+]'
+
 # Counts only `[ ]` -- pending tasks the agent should pick up.
 # `[~]` is the dropped/abandoned state and is intentionally excluded;
 # do not widen this regex to include it. Dropped tasks are terminal,
@@ -661,7 +776,7 @@ count_unchecked() {
     local f
     for f in "$@"; do
         if [[ -f "$f" ]]; then
-            count=$((count + $(grep -cE '^\s*-\s*\[ \]' "$f" || true)))
+            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[ \]" "$f" || true)))
         fi
     done
     echo "$count"
@@ -675,7 +790,7 @@ count_total_tasks() {
     local f
     for f in "$@"; do
         if [[ -f "$f" ]]; then
-            count=$((count + $(grep -cE '^\s*-\s*\[[ xX~]\]' "$f" || true)))
+            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[[ xX~]\]" "$f" || true)))
         fi
     done
     echo "$count"
@@ -687,7 +802,7 @@ count_dropped() {
     local f
     for f in "$@"; do
         if [[ -f "$f" ]]; then
-            count=$((count + $(grep -cE '^\s*-\s*\[~\]' "$f" || true)))
+            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[~\]" "$f" || true)))
         fi
     done
     echo "$count"
@@ -705,7 +820,7 @@ build_dropped_context() {
         return 0
     fi
     local dropped_lines
-    dropped_lines="$(grep -hE '^\s*-\s*\[~\]' "$@" 2>/dev/null || true)"
+    dropped_lines="$(grep -hE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[~\]" "$@" 2>/dev/null || true)"
     # `%s` keeps the literal `\n` backslashes intact -- matches the
     # conditional-context pattern in `run_execute`.
     printf '%s' "\\n\\nThere are $count dropped tasks (\`[~]\`). Render them in the summary under a \"What was dropped\" subsection, preserving the rationale recorded on each line. Do not re-mark \`[~]\` as \`[x]\` -- it is the terminal dropped state, not pending. The dropped lines are:\\n$dropped_lines"
@@ -776,7 +891,7 @@ split_prompts() {
 looks_like_plan() {
     local f="$1"
     [[ -f "$f" ]] || return 1
-    grep -qE '^\s*-\s*\[[ xX]\]|^#' "$f"
+    grep -qE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[[ xX]\]|^#" "$f"
 }
 
 # Derive a filename-safe slug from a file's first heading or first line.
@@ -1104,109 +1219,153 @@ setup_wiggum_skill() {
     cat > "$skill_file" <<'SKILL_EOF'
 ---
 name: wiggum
-description: Self-driving agent loop — plans, implements, verifies, self-heals, and commits from an issue description
+description: Orchestrate the wiggum CLI — create a workplan, run it, monitor it, wait for it, detect when it's blocked, kill it if it runs too long, and chain workplans together
 disable-model-invocation: true
-argument-hint: <issue-file-or-description>
+argument-hint: <issue, plan file, or "chain: plan-a.md plan-b.md">
 ---
 
-# Wiggum: Self-Driving Agent Loop
+# Wiggum: Orchestrator
 
-You are now operating as **wiggum** — a self-driving agent that turns issue descriptions into working, verified, committed code. Execute the full workflow below without asking for confirmation at any step.
+You **drive the `wiggum` CLI** — you do not re-implement its loop yourself. Wiggum
+is a self-driving agent loop (plan → implement → verify → commit). Your job is to
+turn the request into a workplan, launch wiggum on it, supervise the run, and
+report the outcome. Execute without asking for confirmation.
 
-## Input
+The request: **$ARGUMENTS**
 
-The issue or spec to implement: **$ARGUMENTS**
+## Prerequisites
 
-If that refers to a file path, read it. If it's a description, use it directly.
+`wiggum` must be on `PATH`. Check once with `command -v wiggum`.
 
-## File naming
+- If it's missing, tell the user to install it (`./install.sh` in the wiggum repo)
+  and stop — do not hand-simulate the loop.
+- Run from the target project root. A `.wiggumrc` there defines the verify/autofix
+  steps; if there is none, wiggum skips verification (still fine).
 
-Before starting, derive a short kebab-case slug from the issue (e.g., "improve-chunking"). All output files use this slug:
+## The CLI you drive
 
-- **Plan**: `docs/<slug>_plan.md`
-- **Summary**: `docs/<slug>_summary.md`
+| Command | What it does |
+|---|---|
+| `wiggum plan <issue-or-file> [--plan-file docs/<slug>_plan.md]` | Write a workplan. Does not touch code. |
+| `wiggum execute <plan> [--max-iterations N]` | Run the loop in the foreground (blocks). |
+| `wiggum execute <plan> --background` | Run detached; writes `docs/<name>.pid` + `docs/<name>.out`. Returns immediately. |
+| `wiggum status <plan>` | Task counts + run state (not started / running / running but appears blocked / finished: \<reason\>). Read-only. |
+| `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
+| `wiggum kill <plan>` | Stop the run (only that run's process tree). |
+| `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 
-## Step 1: Plan
+Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
+`docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
+so always refer to a run by its **plan file**.
 
-1. Read and understand the issue/spec thoroughly.
-2. Read README.md and other project documentation for context.
-3. Analyze the repository to understand the relevant code, tests, and architecture.
-4. Produce a detailed workplan as a markdown checklist with:
-   - Phases and discrete tasks (each with `[ ]` status)
-   - An `Acceptance:` line on every task stating an observable outcome (a passing test, a specific log line, a file that exists, a command that exits 0). Not a feeling. A task without observable acceptance is a wish, not a step.
-   - A `Files:` line on every task naming the files it will create or modify (best-effort paths)
-   - Dependencies between tasks
-5. Before finalizing, confirm the libraries, APIs, and commands the plan depends on actually exist (grep the repo or read the dependency). Do not plan around an assumed or hallucinated API.
-6. Write the plan to `docs/<slug>_plan.md`.
-7. Commit the plan: `git add docs/<slug>_plan.md && git commit -m "add workplan for <slug>"`
+## Workflow
 
-## Step 2: Implement (iterative)
+### 1. Classify the request
 
-Repeat the following cycle up to **3 iterations** (or until all tasks are checked off):
+- **An existing plan file** (path ending in `_plan.md`, or a markdown file full of
+  `- [ ]` tasks): skip to step 3.
+- **"chain: a.md b.md c.md"** or several plan paths: this is a chain — go to
+  "Chaining" below.
+- **An issue file or a free-text description**: create a plan first (step 2).
 
-### 2a. Implement the next step
+### 2. Create a wiggum-compatible workplan
 
-- Pick the next unchecked `[ ]` task from `docs/<slug>_plan.md`.
-- Before writing code, verify your assumptions: confirm the APIs and imports you will call exist and the config values you rely on are defined (grep or read the source — do not assume).
-- If no test covers the change, write a minimal failing test first, then implement until it passes.
-- After implementing, run three spot checks and show input → expected → actual: the happy path, an edge case (empty, boundary, or large input), and a failure case (invalid input must fail safely with a clear error).
-- Mark the task `[x]` only once its acceptance criterion is met and all three spot checks pass — never round an unverified result up to done.
+Either run `wiggum plan "<issue or file>"` (it writes `docs/<slug>_plan.md`), or
+write the plan yourself in the format below. A wiggum plan is a markdown checklist:
 
-### 2b. Verify
+```markdown
+# <Title>
 
-Read `.wiggumrc` from the project root (if it exists) and run every `verify:` and `autofix:` line as a shell command. For example, if `.wiggumrc` contains:
+## Phase 1: <name>
+- [ ] <discrete task>
+  Acceptance: <observable outcome — a passing test, a specific log line, a file
+  that exists, a command that exits 0>. Never a feeling ("works", "looks right").
+  Files: <best-effort paths this task creates or modifies>
+- [ ] <next task>
+  Acceptance: ...
+  Files: ...
+```
+
+Rules for a good plan:
+- Every task is one `- [ ]` line (GFM `*`/`+` bullets also count) with its own
+  **Acceptance:** and **Files:** lines. A task without observable acceptance is a
+  wish, not a step.
+- `[x]` = done, `[ ]` = pending, `[~]` = dropped (terminal — wiggum won't re-pick
+  it). Record why on the `[~]` line.
+- Before finalizing, confirm the APIs/commands the plan assumes actually exist
+  (grep the repo). Don't plan around a hallucinated API.
+- Keep plans focused. Very large plans (40+ tasks) tend to stall — split them and
+  `chain` instead.
+
+Confirm the plan looks right, then continue.
+
+### 3. Execute and supervise
+
+Launch detached so you can monitor and bound it:
 
 ```
-verify: npm test
-verify: npm run lint
-autofix: npm run lint -- --fix
+wiggum execute docs/<name>_plan.md --background
 ```
 
-Then run each command. For `autofix:` lines, run the command first (to attempt the fix), then run it again (to verify it passed).
+Then supervise in a loop until it finishes:
 
-**If any verify step fails:**
+1. `wiggum status docs/<name>_plan.md` — read **State** and the task counts.
+2. While **State** is `running`, keep watching:
+   `wiggum watch docs/<name>_plan.md --timeout 1800 --kill-on-timeout`
+   `watch` blocks until the run ends (your "wait"); `--timeout`/`--kill-on-timeout`
+   bound a stuck run. Tune the timeout to the plan's size.
+3. **Analyze if blocked.** Treat the run as blocked when `status` reports
+   `running but appears blocked` or `finished: stalled`, or `watch` returned
+   non-zero. Under the hood that means the `.out`/`.log` shows `No progress
+   detected`, `Stalled for ...`, or `Validation failed N times`. When blocked:
+   - Read the tail of `docs/<name>.out` (and `docs/<name>.log`) to find the cause —
+     usually a failing verify command or a task whose acceptance can't be met.
+   - If it's a bad verify command in `.wiggumrc`, tell the user (don't edit their
+     config). If the plan is wrong or too coarse, revise the plan file and re-run.
+4. **Kill only when needed.** If a run overruns or is wedged and you must stop it,
+   use `wiggum kill docs/<name>_plan.md`. This kills only that run's process tree
+   (the wiggum process and the `claude` it spawned) — never a blanket kill of other
+   wiggum/claude processes. Prefer `--kill-on-timeout` on `watch` so you don't have
+   to babysit it.
 
-- Read the error output carefully.
-- Fix the **source code** (not `.wiggumrc` — that's the user's config).
-- Re-run ALL verify steps from the beginning.
-- You may retry up to **5 times**. If still failing after 5 attempts, stop and report what's broken.
+For a quick, small run you may skip backgrounding and just `wiggum execute <plan>`
+in the foreground.
 
-If no `.wiggumrc` exists, skip verification.
+### 4. Report
 
-### 2c. Commit
+When the run finishes, run `wiggum status <plan>` once more and report:
+- the stop reason (complete / stalled / incomplete),
+- task counts (done / remaining / dropped),
+- what the summary file (`docs/<name>_summary.md`) says was done and deferred,
+- if blocked or killed: the cause you found and the suggested next step.
 
-- Review all uncommitted changes (modified and untracked files).
-- For each logical change, `git add` the relevant files and `git commit -m "<message>"`.
-- Commit messages: single line, imperative mood, no prefixes, no trailers.
+## Chaining workplans
 
-### 2d. Progress check
+When the work spans several independent plans, run them in sequence:
 
-Count the remaining unchecked `[ ]` tasks in `docs/<slug>_plan.md`.
+```
+wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
+```
 
-- **All done** (0 remaining): stop reason is **complete**. Go to Step 3.
-- **No progress** (same or more remaining as last iteration): if this has happened **2 iterations in a row**, stop reason is **stalled**. Go to Step 3.
-- **Max iterations reached**: stop reason is **incomplete**. Go to Step 3.
-- **Otherwise**: continue to the next iteration.
-
-## Step 3: Summarize
-
-1. Update `docs/<slug>_plan.md` — mark all completed tasks with `[x]`.
-2. Write a summary to `docs/<slug>_summary.md` covering:
-   - **Stop reason**: complete, stalled, or incomplete
-   - What was implemented
-   - What was deferred (if anything)
-   - Issues encountered
-   - Verification results
-3. Commit the summary and updated plan.
-4. Report the stop reason to the user.
+`chain` runs `wiggum execute` on each plan in order, each in a fresh session, and
+stops at the first plan that fails — so a broken early step doesn't waste effort on
+the rest. To supervise a long chain, background it and watch the active plan's
+sidecars, or run the plans one at a time with the supervise loop in step 3 so you
+can inspect and fix between stages.
 
 ## Rules
 
+- **Drive the CLI; don't reimplement it.** Plan/implement/verify/commit are
+  wiggum's job. You orchestrate: plan, launch, monitor, wait, unblock, kill, chain.
 - **Never ask for confirmation** — just execute.
-- **Commit messages**: single line, imperative, no `feat:`/`fix:` prefixes, no `Co-Authored-By` trailers.
-- **Verification failures**: fix source code, not `.wiggumrc`. If the command itself is wrong (e.g., wrong script name), tell the user to update `.wiggumrc`.
-- **Stay focused**: implement what the issue asks for. Don't refactor surrounding code, add docstrings, or make "improvements" beyond scope.
-- **Plan file is the source of truth**: always reference and update `docs/<slug>_plan.md` as you work.
+- **Refer to runs by their plan file** — that's how status/watch/kill find the
+  sidecars.
+- **Kill scope:** only ever stop the run you started (`wiggum kill <plan>`), never
+  a blanket process kill.
+- **Don't edit `.wiggumrc`** to make verification pass — it's the user's config. If
+  a verify command itself is wrong, surface it.
+- **Report honestly:** if it stalled or was killed, say so with the cause from the
+  log — don't round an incomplete run up to "done".
 SKILL_EOF
 
     echo "Created $skill_file"
@@ -1215,15 +1374,24 @@ SKILL_EOF
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 
+# Derive a sidecar file path (log/pid/out) for a plan or base file, using the
+# same `<dir>/<name>.<ext>` naming the log file uses. This is the contract that
+# lets `status`/`watch`/`kill` find a run that `execute --background` started:
+# given the plan path, every command derives the same pid/out/log paths.
+#   run_sidecar_file docs/foo_plan.md pid -> docs/foo_plan.pid
+run_sidecar_file() {
+    local base_file="$1" ext="$2"
+    local dir name
+    dir="$(dirname "$base_file")"
+    name="$(basename "$base_file" .md)"
+    echo "${dir}/${name}.${ext}"
+}
+
 log_init() {
     local base_file="$1"
-    local dir
-    dir="$(dirname "$base_file")"
-    local name
-    name="$(basename "$base_file" .md)"
-    WIGGUM_LOG_FILE="${dir}/${name}.log"
+    WIGGUM_LOG_FILE="$(run_sidecar_file "$base_file" log)"
 
-    mkdir -p "$dir"
+    mkdir -p "$(dirname "$WIGGUM_LOG_FILE")"
     echo "--- wiggum run $(date '+%Y-%m-%d %H:%M:%S') ---" >> "$WIGGUM_LOG_FILE"
     log_entry "command" "wiggum $MODE ${FILES[*]+${FILES[*]}}"
 }
@@ -1530,6 +1698,13 @@ run_benchmarks() {
 # ── Execute ──────────────────────────────────────────────────────────────────
 
 run_execute() {
+    # In background mode, hand off to the launcher, which re-enters this
+    # function (with BACKGROUND cleared) inside a detached subshell.
+    if [[ "$BACKGROUND" == true ]]; then
+        launch_execute_background
+        return $?
+    fi
+
     echo "=== WIGGUM EXECUTE MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
     echo "Max iterations: $MAX_ITERATIONS" >&2
@@ -1580,8 +1755,8 @@ run_execute() {
 
     for ((i = 1; i <= MAX_ITERATIONS; i++)); do
         echo "" >&2
-        echo "--- Phase 2: Implementation step $i of $MAX_ITERATIONS ($prev_remaining remaining, $prev_dropped dropped) ---" >&2
-        log_entry "phase" "2 - implementation step $i of $MAX_ITERATIONS ($prev_remaining remaining, $prev_dropped dropped)"
+        echo "--- Phase 2: Iteration $i of $MAX_ITERATIONS ($prev_remaining tasks remaining, $prev_dropped dropped) ---" >&2
+        log_entry "phase" "2 - iteration $i of $MAX_ITERATIONS ($prev_remaining tasks remaining, $prev_dropped dropped)"
 
         # Implementation: bypassPermissions so file changes are auto-approved
         local benchmark_context=""
@@ -1723,6 +1898,246 @@ run_execute() {
     echo "Log: $WIGGUM_LOG_FILE" >&2
     echo "Session: $WIGGUM_LAST_SESSION_ID" >&2
     echo "=== WIGGUM EXECUTION COMPLETE ===" >&2
+}
+
+# ── Orchestration (background / status / watch / kill / chain) ────────────────
+
+# Return 0 if PID names a live process. Thin wrapper so callers read clearly
+# and tests can exercise it against a real backgrounded process.
+process_alive() {
+    local pid="$1"
+    [[ -n "$pid" ]] || return 1
+    kill -0 "$pid" 2>/dev/null
+}
+
+# Echo the last execution status recorded in a run's output file. run_execute
+# prints "Status: complete|stalled|incomplete" at the end; in background mode
+# that line is captured into the .out file. Echoes nothing when the file is
+# missing or no status has been written yet (i.e. the run is still going).
+read_run_status() {
+    local outfile="$1"
+    [[ -f "$outfile" ]] || return 0
+    grep -E '^Status: ' "$outfile" | tail -n1 | sed -E 's/^Status: //'
+}
+
+# Return 0 if a run's output shows it is blocked: a stall was detected, the
+# validation waterfall gave up, or progress repeatedly failed to advance.
+# Used by `status`/`watch` to flag runs that are spinning rather than working.
+detect_blocked() {
+    local outfile="$1"
+    [[ -f "$outfile" ]] || return 1
+    grep -qE 'No progress detected|Stalled for|validation did not fully pass|Validation failed [0-9]+ times' "$outfile"
+}
+
+# One-line task progress summary. Args: total done remaining dropped
+format_progress() {
+    local total="$1" done="$2" remaining="$3" dropped="$4"
+    echo "Tasks: ${done}/${total} done, ${remaining} remaining, ${dropped} dropped"
+}
+
+# Launch `run_execute` detached, recording its pid and capturing all output to
+# a sidecar .out file so `watch`/`status`/`kill` can find and supervise it.
+# The pid written is wiggum's own (a backgrounded subshell running the loop) --
+# never a blanket process name -- so `kill` only ever stops this run.
+launch_execute_background() {
+    local base="${FILES[0]}"
+    local pidfile outfile
+    pidfile="$(run_sidecar_file "$base" pid)"
+    outfile="$(run_sidecar_file "$base" out)"
+    mkdir -p "$(dirname "$pidfile")"
+
+    # Refuse to start a second run over a live one; its pidfile would be
+    # clobbered and `watch`/`kill` would lose track of the original process.
+    if [[ -f "$pidfile" ]]; then
+        local existing
+        existing="$(tr -d '[:space:]' < "$pidfile")"
+        if process_alive "$existing"; then
+            echo "A wiggum run is already active for $base (pid $existing)." >&2
+            echo "Use 'wiggum watch $base' or 'wiggum kill $base' first." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+    fi
+
+    # Clear BACKGROUND so the detached subshell runs the real loop instead of
+    # recursing back into this launcher.
+    BACKGROUND=false
+    ( run_execute ) >"$outfile" 2>&1 &
+    local pid=$!
+    echo "$pid" > "$pidfile"
+
+    echo "Started wiggum execute in the background." >&2
+    echo "  pid:     $pid" >&2
+    echo "  output:  $outfile" >&2
+    echo "  watch:   wiggum watch $base" >&2
+    echo "  status:  wiggum status $base" >&2
+    echo "  kill:    wiggum kill $base" >&2
+}
+
+# Print task progress and run state for a plan. Reads the pid/out sidecars to
+# distinguish: not started, running, running-but-blocked, or finished (with the
+# recorded stop reason). Read-only -- never starts or stops anything.
+run_status() {
+    local base="${FILES[0]}"
+    local pidfile outfile total remaining dropped done_count
+    pidfile="$(run_sidecar_file "$base" pid)"
+    outfile="$(run_sidecar_file "$base" out)"
+
+    total="$(count_total_tasks "$base")"
+    remaining="$(count_unchecked "$base")"
+    dropped="$(count_dropped "$base")"
+    done_count=$((total - remaining - dropped))
+
+    echo "Plan: $base"
+    format_progress "$total" "$done_count" "$remaining" "$dropped"
+
+    local state="not started"
+    if [[ -f "$pidfile" ]]; then
+        local pid
+        pid="$(tr -d '[:space:]' < "$pidfile")"
+        if process_alive "$pid"; then
+            if detect_blocked "$outfile"; then
+                state="running but appears blocked (pid $pid)"
+            else
+                state="running (pid $pid)"
+            fi
+        else
+            local final
+            final="$(read_run_status "$outfile")"
+            if [[ -n "$final" ]]; then
+                state="finished: $final"
+            else
+                state="not running (no status recorded)"
+            fi
+        fi
+    elif [[ -f "$outfile" ]]; then
+        local final
+        final="$(read_run_status "$outfile")"
+        [[ -n "$final" ]] && state="finished: $final"
+    fi
+    echo "State: $state"
+}
+
+# Follow a background run until it finishes, streaming its output. Honors
+# --timeout (and --kill-on-timeout) so a stuck run can be bounded. Exits 0 only
+# when the run finished "complete"; non-zero otherwise (stalled/incomplete/
+# killed). This is wiggum's "wait" primitive.
+run_watch() {
+    local base="${FILES[0]}"
+    local pidfile outfile
+    pidfile="$(run_sidecar_file "$base" pid)"
+    outfile="$(run_sidecar_file "$base" out)"
+
+    if [[ ! -f "$pidfile" ]]; then
+        echo "No background run found for $base (no pidfile)." >&2
+        echo "Start one with: wiggum execute $base --background" >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+    local pid
+    pid="$(tr -d '[:space:]' < "$pidfile")"
+
+    echo "Watching wiggum run for $base (pid $pid)..." >&2
+    if [[ "$WATCH_TIMEOUT" -gt 0 ]]; then
+        echo "Timeout: ${WATCH_TIMEOUT}s (kill on timeout: $KILL_ON_TIMEOUT)" >&2
+    fi
+
+    local waited=0 last_lines=0
+    while process_alive "$pid"; do
+        if [[ -f "$outfile" ]]; then
+            local now
+            now="$(wc -l < "$outfile" | tr -d ' ')"
+            if (( now > last_lines )); then
+                tail -n +$((last_lines + 1)) "$outfile"
+                last_lines="$now"
+            fi
+        fi
+        if [[ "$WATCH_TIMEOUT" -gt 0 && "$waited" -ge "$WATCH_TIMEOUT" ]]; then
+            echo "Watch timeout reached after ${waited}s." >&2
+            if [[ "$KILL_ON_TIMEOUT" == true ]]; then
+                kill_run "$pidfile"
+                echo "Status: killed (timeout)" >&2
+                return "$EXIT_CLAUDE_FAILED"
+            fi
+            echo "Run still active; leaving it running (pass --kill-on-timeout to stop it)." >&2
+            return 0
+        fi
+        sleep "$WATCH_POLL"
+        waited=$((waited + WATCH_POLL))
+    done
+
+    # Drain any output written between the last poll and exit.
+    if [[ -f "$outfile" ]]; then
+        tail -n +$((last_lines + 1)) "$outfile" || true
+    fi
+
+    rm -f "$pidfile"
+    local final
+    final="$(read_run_status "$outfile")"
+    echo "Run finished. Status: ${final:-unknown}" >&2
+    [[ "$final" == "complete" ]]
+}
+
+# Kill the wiggum process for a run, identified by its pidfile, plus its direct
+# children (e.g. the claude subprocess it spawned). This deliberately targets
+# only the recorded pid tree -- it never does a blanket pkill of every
+# wiggum/claude on the system, so unrelated runs are untouched.
+kill_run() {
+    local pidfile="$1"
+    if [[ ! -f "$pidfile" ]]; then
+        echo "No run pidfile found: $pidfile" >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+    local pid
+    pid="$(tr -d '[:space:]' < "$pidfile")"
+    if [[ -z "$pid" ]]; then
+        echo "Pidfile is empty: $pidfile" >&2
+        rm -f "$pidfile"
+        return "$EXIT_BAD_ARGS"
+    fi
+    if ! process_alive "$pid"; then
+        echo "Wiggum run (pid $pid) is not running; cleaning up pidfile." >&2
+        rm -f "$pidfile"
+        return 0
+    fi
+    echo "Killing wiggum run (pid $pid) and its children..." >&2
+    pkill -TERM -P "$pid" 2>/dev/null || true
+    kill -TERM "$pid" 2>/dev/null || true
+    rm -f "$pidfile"
+    return 0
+}
+
+# `wiggum kill <plan>` entry point -- derives the pidfile from the plan path.
+run_kill() {
+    local base="${FILES[0]}"
+    kill_run "$(run_sidecar_file "$base" pid)"
+}
+
+# Execute several workplans back to back, each in its own fresh session, in the
+# order given. Stops at the first plan that fails so a broken step doesn't drag
+# the rest of the chain down. This is wiggum's "chain up different workplans".
+run_chain() {
+    local plans=("${FILES[@]}")
+    local total=${#plans[@]}
+    local idx=0 f
+    echo "=== WIGGUM CHAIN MODE ($total plan(s)) ===" >&2
+    for f in "${plans[@]}"; do
+        idx=$((idx + 1))
+        echo "" >&2
+        echo "=== Chain plan $idx of $total: $f ===" >&2
+        # Fresh session per plan so context from one workplan doesn't leak
+        # into the next.
+        WIGGUM_LAST_SESSION_ID=""
+        FILES=("$f")
+        SUMMARY_FILE="$(derive_output_file execute "$f" "")"
+        if run_execute; then
+            echo "=== Chain plan $idx of $total complete: $f ===" >&2
+        else
+            echo "=== Chain plan $idx of $total FAILED: $f -- stopping chain ===" >&2
+            return "$EXIT_PLAN_FAILED"
+        fi
+    done
+    echo "" >&2
+    echo "=== WIGGUM CHAIN COMPLETE: $total plan(s) ===" >&2
+    return 0
 }
 
 # ── Docs ─────────────────────────────────────────────────────────────────────
