@@ -22,6 +22,15 @@ The request: **$ARGUMENTS**
   and stop — do not hand-simulate the loop.
 - Run from the target project root. A `.wiggumrc` there defines the verify/autofix
   steps; if there is none, wiggum skips verification (still fine).
+- **Activate the project's environment first.** wiggum runs Claude's tools and the
+  `.wiggumrc` verify steps in your *current* shell environment. If the repo uses one
+  — conda (`environment.yml`), a virtualenv/`.venv`, Poetry/uv (`poetry.lock`/
+  `uv.lock`), a Node version (`.nvmrc`), Bundler (`Gemfile`), etc. — detect it and
+  activate it in the same shell you launch wiggum from, *before* running, or
+  tests/builds run against the wrong interpreter and fail spuriously. For
+  unattended/background runs, prefer making the `.wiggumrc` verify commands
+  self-activating (e.g. `conda run -n <env> pytest`, `poetry run pytest`) so the run
+  is reproducible no matter which shell starts it.
 
 ## The CLI you drive
 

@@ -1272,6 +1272,15 @@ The request: **$ARGUMENTS**
   and stop — do not hand-simulate the loop.
 - Run from the target project root. A `.wiggumrc` there defines the verify/autofix
   steps; if there is none, wiggum skips verification (still fine).
+- **Activate the project's environment first.** wiggum runs Claude's tools and the
+  `.wiggumrc` verify steps in your *current* shell environment. If the repo uses one
+  — conda (`environment.yml`), a virtualenv/`.venv`, Poetry/uv (`poetry.lock`/
+  `uv.lock`), a Node version (`.nvmrc`), Bundler (`Gemfile`), etc. — detect it and
+  activate it in the same shell you launch wiggum from, *before* running, or
+  tests/builds run against the wrong interpreter and fail spuriously. For
+  unattended/background runs, prefer making the `.wiggumrc` verify commands
+  self-activating (e.g. `conda run -n <env> pytest`, `poetry run pytest`) so the run
+  is reproducible no matter which shell starts it.
 
 ## The CLI you drive
 
@@ -1782,7 +1791,36 @@ run_benchmarks() {
 
 # ── Execute ──────────────────────────────────────────────────────────────────
 
+# Remind the user that wiggum runs Claude's tools and the .wiggumrc verify steps
+# in the *current* shell environment -- so the project's environment (conda, a
+# virtualenv, Poetry/uv, a Node version, Bundler, ...) must be active, or the
+# toolchain resolves to the wrong interpreter and steps fail spuriously. The hint
+# is tailored to whatever environment markers the repo contains.
+env_reminder() {
+    local hint=""
+    if [[ -f environment.yml || -f environment.yaml ]]; then
+        hint="this looks like a conda project -- 'conda activate <env>'"
+    elif [[ -f poetry.lock || -f uv.lock ]]; then
+        hint="this looks like a Poetry/uv project -- 'poetry run' / 'uv run', or activate its venv"
+    elif [[ -d .venv || -f Pipfile || -f requirements.txt ]]; then
+        hint="this looks like a Python venv project -- e.g. 'source .venv/bin/activate'"
+    elif [[ -f .nvmrc || -f package.json ]]; then
+        hint="this looks like a Node project -- select the right version, e.g. 'nvm use'"
+    elif [[ -f Gemfile ]]; then
+        hint="this looks like a Ruby project -- use 'bundle exec'"
+    fi
+    if [[ -n "$hint" ]]; then
+        echo "Reminder: wiggum runs in your current shell environment -- make sure the right one is active ($hint)." >&2
+    else
+        echo "Reminder: wiggum runs verify steps and Claude in your current shell environment -- activate the project's environment (conda/venv/poetry/nvm) first if it needs one." >&2
+    fi
+}
+
 run_execute() {
+    # Surface this before anything else (and before the background hand-off) so
+    # the person launching the run sees it, not just the .out log.
+    env_reminder
+
     # In background mode, hand off to the launcher, which re-enters this
     # function (with BACKGROUND cleared) inside a detached subshell.
     if [[ "$BACKGROUND" == true ]]; then
