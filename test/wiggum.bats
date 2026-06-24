@@ -424,6 +424,35 @@ EOF
     [ "$result" -eq 3 ]
 }
 
+@test "count_unchecked: counts heading-form and numbered checkboxes" {
+    # The planner sometimes emits tasks as '### [ ] N.N Title' headings or as
+    # ordered-list items rather than bullets; those must still count.
+    cat > plan.md <<'EOF'
+# Plan title (not a task)
+## Phase 1 (not a task)
+### [ ] 1.1 heading task
+#### [x] 1.2 heading done
+- [ ] bullet task
+1. [ ] numbered task
+10. [x] numbered done
+### Phase 2 (heading, no checkbox -- not a task)
+EOF
+    local result
+    result="$(count_unchecked plan.md)"
+    [ "$result" -eq 3 ]
+}
+
+@test "count_unchecked: ignores a heading with no checkbox" {
+    cat > plan.md <<'EOF'
+# Title
+## Phase 1 — setup
+### Subsection
+EOF
+    local result
+    result="$(count_unchecked plan.md)"
+    [ "$result" -eq 0 ]
+}
+
 # ── count_total_tasks ────────────────────────────────────────────────────────
 
 @test "count_total_tasks: counts both checked and unchecked" {
@@ -468,6 +497,19 @@ EOF
     local result
     result="$(count_total_tasks plan.md)"
     [ "$result" -eq 3 ]
+}
+
+@test "count_total_tasks: counts heading-form and numbered checkboxes" {
+    cat > plan.md <<'EOF'
+### [ ] 1.1 heading todo
+### [x] 1.2 heading done
+#### [~] 1.3 heading dropped
+1. [ ] numbered todo
+## Phase heading (not a task)
+EOF
+    local result
+    result="$(count_total_tasks plan.md)"
+    [ "$result" -eq 4 ]
 }
 
 # ── count_dropped ────────────────────────────────────────────────────────────
@@ -531,6 +573,17 @@ EOF
 * [~] star dropped
 + [~] plus dropped
 - [ ] dash todo
+EOF
+    local result
+    result="$(count_dropped plan.md)"
+    [ "$result" -eq 2 ]
+}
+
+@test "count_dropped: counts heading-form dropped checkboxes" {
+    cat > plan.md <<'EOF'
+### [~] 1.1 heading dropped
+1. [~] numbered dropped
+### [ ] 1.2 heading todo
 EOF
     local result
     result="$(count_dropped plan.md)"
@@ -787,6 +840,13 @@ EOF
     looks_like_plan star.md
     printf "+ [x] Plus task\n" > plus.md
     looks_like_plan plus.md
+}
+
+@test "looks_like_plan: accepts heading-form and numbered checkboxes" {
+    printf "### [ ] 1.1 Heading task\n" > head.md
+    looks_like_plan head.md
+    printf "1. [ ] Numbered task\n" > num.md
+    looks_like_plan num.md
 }
 
 @test "looks_like_plan: rejects prose-only file" {
@@ -3041,4 +3101,48 @@ EOF
     [ "$status" -eq "$EXIT_PLAN_FAILED" ]
     [ "$(grep -c . chain.log)" -eq 2 ]
     [[ "$(cat chain.log)" != *"c.md"* ]]
+}
+
+# ── run_execute: empty / all-done guard ──────────────────────────────────────
+
+@test "run_execute: skips the implement step when no tasks are pending" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+# Plan
+- [x] already done
+EOF
+    # Record every prompt claude is handed so we can assert which steps ran.
+    claude() { printf '%s\n' "$*" >> claude_calls; return 0; }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    run run_execute
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No pending tasks"* ]]
+    [[ "$output" == *"(complete)"* ]]
+    # Phase 1 still ran, but the phase-2 implement prompt was never issued.
+    grep -q "Analyze the repository against the workplan" claude_calls
+    ! grep -q "Execute the next discrete implementation step" claude_calls
+}
+
+@test "run_execute: warns when the plan has no trackable tasks" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+# Plan
+Just prose, no checkboxes at all.
+EOF
+    claude() { printf '%s\n' "$*" >> claude_calls; return 0; }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    run run_execute
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no trackable tasks"* ]]
+    ! grep -q "Execute the next discrete implementation step" claude_calls
 }

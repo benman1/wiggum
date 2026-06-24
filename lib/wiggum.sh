@@ -760,12 +760,19 @@ parse_args() {
 
 # ── Plan progress ────────────────────────────────────────────────────────────
 
-# Markdown bullet markers that can introduce a task line. GitHub-flavored
-# markdown accepts `-`, `*`, and `+` as list bullets, so a plan written with
-# any of them must count -- matching only `-` silently undercounts `*`/`+`
-# plans and can report a false "0 remaining" / "complete". Used by every
-# task-counting regex below so they stay consistent.
-WIGGUM_TASK_BULLET='[-*+]'
+# Markdown prefixes that can introduce a task checkbox line. A task is counted
+# when one of these starts the line and is immediately followed by a `[ ]`/
+# `[x]`/`[~]` box:
+#   - `*` `+`   unordered list bullets (GitHub-flavored markdown task lists)
+#   #..######   ATX headings -- Claude's planner sometimes emits tasks as
+#               `### [ ] 1.2 Title` rather than bullets; those must still count
+#   1. 2. 10.   ordered list items
+# Matching only `-` silently undercounts the other forms and reports a false
+# "0 remaining" / "complete". The trailing `\[[ xX~]\]` box is the strong
+# disambiguator, so non-task headings (`## Phase 1`) and inline `[ ]` in prose
+# are not matched. Used by every task-counting regex below so they stay
+# consistent.
+WIGGUM_TASK_PREFIX='(#{1,6}|[-*+]|[0-9]+\.)'
 
 # Counts only `[ ]` -- pending tasks the agent should pick up.
 # `[~]` is the dropped/abandoned state and is intentionally excluded;
@@ -776,7 +783,7 @@ count_unchecked() {
     local f
     for f in "$@"; do
         if [[ -f "$f" ]]; then
-            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[ \]" "$f" || true)))
+            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_PREFIX}[[:space:]]*\[ \]" "$f" || true)))
         fi
     done
     echo "$count"
@@ -790,7 +797,7 @@ count_total_tasks() {
     local f
     for f in "$@"; do
         if [[ -f "$f" ]]; then
-            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[[ xX~]\]" "$f" || true)))
+            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_PREFIX}[[:space:]]*\[[ xX~]\]" "$f" || true)))
         fi
     done
     echo "$count"
@@ -802,7 +809,7 @@ count_dropped() {
     local f
     for f in "$@"; do
         if [[ -f "$f" ]]; then
-            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[~\]" "$f" || true)))
+            count=$((count + $(grep -cE "^[[:space:]]*${WIGGUM_TASK_PREFIX}[[:space:]]*\[~\]" "$f" || true)))
         fi
     done
     echo "$count"
@@ -820,7 +827,7 @@ build_dropped_context() {
         return 0
     fi
     local dropped_lines
-    dropped_lines="$(grep -hE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[~\]" "$@" 2>/dev/null || true)"
+    dropped_lines="$(grep -hE "^[[:space:]]*${WIGGUM_TASK_PREFIX}[[:space:]]*\[~\]" "$@" 2>/dev/null || true)"
     # `%s` keeps the literal `\n` backslashes intact -- matches the
     # conditional-context pattern in `run_execute`.
     printf '%s' "\\n\\nThere are $count dropped tasks (\`[~]\`). Render them in the summary under a \"What was dropped\" subsection, preserving the rationale recorded on each line. Do not re-mark \`[~]\` as \`[x]\` -- it is the terminal dropped state, not pending. The dropped lines are:\\n$dropped_lines"
@@ -891,7 +898,7 @@ split_prompts() {
 looks_like_plan() {
     local f="$1"
     [[ -f "$f" ]] || return 1
-    grep -qE "^[[:space:]]*${WIGGUM_TASK_BULLET}[[:space:]]*\[[ xX]\]|^#" "$f"
+    grep -qE "^[[:space:]]*${WIGGUM_TASK_PREFIX}[[:space:]]*\[[ xX]\]|^#" "$f"
 }
 
 # Derive a filename-safe slug from a file's first heading or first line.
@@ -1504,7 +1511,7 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p \
-        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases, discrete tasks (each with [ ] status), and dependencies. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
@@ -1753,7 +1760,24 @@ run_execute() {
     local benchmark_output=""
     local prev_benchmark_nums=""
 
-    for ((i = 1; i <= MAX_ITERATIONS; i++)); do
+    # Nothing to implement: skip the loop instead of burning a full
+    # implement/verify/commit cycle on a plan with no pending tasks. This fires
+    # either when phase 1 found everything already done, or when the plan has no
+    # task checkboxes wiggum can track at all (a formatting problem worth
+    # flagging, not a reason to spin Claude).
+    if [[ "$prev_remaining" -eq 0 ]]; then
+        if [[ "$(count_total_tasks "${FILES[@]}")" -eq 0 ]]; then
+            echo "Warning: the plan has no trackable tasks -- expected checkbox" \
+                 "lines like '- [ ] ...' or '### [ ] ...'. Skipping implementation." >&2
+            log_entry "warn" "plan has no trackable task checkboxes"
+        else
+            echo "No pending tasks in the plan -- skipping implementation." >&2
+            log_entry "phase" "2 - skipped (no pending tasks)"
+        fi
+        stop_reason="complete"
+    fi
+
+    for ((i = 1; i <= MAX_ITERATIONS && prev_remaining > 0; i++)); do
         echo "" >&2
         echo "--- Phase 2: Iteration $i of $MAX_ITERATIONS ($prev_remaining tasks remaining, $prev_dropped dropped) ---" >&2
         log_entry "phase" "2 - iteration $i of $MAX_ITERATIONS ($prev_remaining tasks remaining, $prev_dropped dropped)"
