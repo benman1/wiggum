@@ -1699,6 +1699,9 @@ EOF
     # Plan format it can author.
     grep -q "Acceptance:" .claude/skills/wiggum/SKILL.md
     grep -q "Files:" .claude/skills/wiggum/SKILL.md
+    # Runtime environment guidance (activate conda/venv/etc. before running).
+    grep -qi "environment" .claude/skills/wiggum/SKILL.md
+    grep -qi "conda" .claude/skills/wiggum/SKILL.md
 }
 
 @test "setup_wiggum_skill: skill covers stalled/incomplete remediation" {
@@ -3202,4 +3205,46 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"no trackable tasks"* ]]
     ! grep -q "Execute the next discrete implementation step" claude_calls
+}
+
+# ── env_reminder ─────────────────────────────────────────────────────────────
+
+@test "env_reminder: generic reminder when no environment markers" {
+    run env_reminder
+    [[ "$output" == *"current shell environment"* ]]
+}
+
+@test "env_reminder: tailors the hint to conda projects" {
+    touch environment.yml
+    run env_reminder
+    [[ "$output" == *"conda"* ]]
+}
+
+@test "env_reminder: tailors the hint to Python venv projects" {
+    touch requirements.txt
+    run env_reminder
+    [[ "$output" == *"venv"* ]] || [[ "$output" == *"activate"* ]]
+}
+
+@test "env_reminder: tailors the hint to Node projects" {
+    touch package.json
+    run env_reminder
+    [[ "$output" == *"Node"* ]] || [[ "$output" == *"nvm"* ]]
+}
+
+@test "run_execute: reminds about the shell environment" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [x] done
+EOF
+    claude() { return 0; }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    run run_execute
+    [[ "$output" == *"Reminder:"* ]]
+    [[ "$output" == *"environment"* ]]
 }
