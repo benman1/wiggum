@@ -2,6 +2,18 @@
 
 Wiggum is a **self-driving agent loop** that orchestrates Claude Code to turn issue descriptions into working, verified code. It plans, implements, verifies, self-heals, and commits -- all from a single shell command.
 
+## How we work here (dogfood wiggum)
+
+For any non-trivial change -- a new feature, a multi-file refactor, a bug fix that touches several functions, anything beyond a quick edit -- drive it through wiggum itself instead of hand-coding it ad hoc. We use the tool on its own codebase.
+
+Prefer the `/wiggum` skill (it orchestrates the CLI: plan, run, monitor, wait, detect-blocked, kill, chain). Equivalently, run the commands directly:
+
+1. **Plan:** `wiggum plan "<issue or description>"` (or `wiggum plan <issue-file>`) -> produces `docs/<slug>_plan.md`. Read and adjust the plan before running it.
+2. **Execute:** `wiggum execute docs/<slug>_plan.md`. Add `--background` to supervise with `wiggum status|watch|kill <plan>`; use `wiggum chain <plan...>` for work too large for one plan.
+3. Let the loop plan -> implement -> verify (this repo's `.wiggumrc`: shellcheck + bats) -> commit. Review the resulting commits and `docs/<slug>_summary.md`.
+
+Do directly (no plan needed): trivial one-line fixes, doc/comment tweaks, and the supervision of wiggum runs themselves (status/watch/kill/chain).
+
 ## Tech Stack
 
 - **Language:** Bash (4+)
