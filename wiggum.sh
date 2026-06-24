@@ -65,6 +65,18 @@ main() {
         run)
             run_prompts
             ;;
+        status)
+            run_status
+            ;;
+        watch)
+            run_watch
+            ;;
+        kill)
+            run_kill
+            ;;
+        chain)
+            run_chain
+            ;;
     esac
 }
 

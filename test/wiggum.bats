@@ -69,7 +69,37 @@ make_file() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"wiggum execute"* ]]
     [[ "$output" == *"--max-iterations"* ]]
+    [[ "$output" == *"--background"* ]]
     [[ "$output" == *"Phases"* ]]
+}
+
+@test "parse_args: help status/watch/kill/chain show their details" {
+    run parse_args help status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum status"* ]]
+
+    run parse_args help watch
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum watch"* ]]
+    [[ "$output" == *"--timeout"* ]]
+    [[ "$output" == *"--kill-on-timeout"* ]]
+
+    run parse_args help kill
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum kill"* ]]
+
+    run parse_args help chain
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum chain"* ]]
+}
+
+@test "parse_args: top-level help lists the orchestration commands" {
+    run parse_args help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"status"* ]]
+    [[ "$output" == *"watch"* ]]
+    [[ "$output" == *"kill"* ]]
+    [[ "$output" == *"chain"* ]]
 }
 
 @test "parse_args: help docs shows docs details" {
@@ -210,6 +240,66 @@ EOF
     [ "$SUMMARY_FILE" = "out.md" ]
 }
 
+@test "parse_args: -b/--background sets BACKGROUND" {
+    make_file plan.md
+    parse_args execute plan.md --background
+    [ "$BACKGROUND" = "true" ]
+    wiggum_reset
+    make_file plan.md
+    parse_args execute plan.md -b
+    [ "$BACKGROUND" = "true" ]
+}
+
+@test "parse_args: watch flags set timeout/poll/kill-on-timeout" {
+    make_file plan.md
+    parse_args watch plan.md --timeout 600 --poll-interval 2 --kill-on-timeout
+    [ "$MODE" = "watch" ]
+    [ "$WATCH_TIMEOUT" = "600" ]
+    [ "$WATCH_POLL" = "2" ]
+    [ "$KILL_ON_TIMEOUT" = "true" ]
+}
+
+@test "parse_args: status/watch/kill accept a plan file" {
+    make_file plan.md
+    parse_args status plan.md
+    [ "$MODE" = "status" ]
+    [ "${FILES[0]}" = "plan.md" ]
+    wiggum_reset; make_file plan.md
+    parse_args kill plan.md
+    [ "$MODE" = "kill" ]
+}
+
+@test "parse_args: status/watch/kill require a plan file" {
+    run parse_args status
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"requires a plan file"* ]]
+}
+
+@test "parse_args: chain collects multiple plan files" {
+    make_file a.md
+    make_file b.md
+    parse_args chain a.md b.md
+    [ "$MODE" = "chain" ]
+    [ "${#FILES[@]}" -eq 2 ]
+    [ "${FILES[0]}" = "a.md" ]
+    [ "${FILES[1]}" = "b.md" ]
+}
+
+@test "parse_args: chain requires at least one plan file" {
+    run parse_args chain
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"requires one or more plan files"* ]]
+}
+
+@test "parse_args: status/watch/kill/chain are known modes" {
+    for m in status watch kill chain; do
+        make_file plan.md
+        run parse_args "$m" plan.md
+        [ "$status" -eq 0 ]
+        wiggum_reset
+    done
+}
+
 @test "parse_args: unknown option exits EXIT_BAD_ARGS" {
     make_file plan.md
     run parse_args plan plan.md --bogus
@@ -321,6 +411,19 @@ EOF
     [ "$result" -eq 2 ]
 }
 
+@test "count_unchecked: counts * and + bullets (GFM task lists)" {
+    cat > plan.md <<'EOF'
+- [ ] dash task
+* [ ] star task
++ [ ] plus task
+* [x] star done
++ [~] plus dropped
+EOF
+    local result
+    result="$(count_unchecked plan.md)"
+    [ "$result" -eq 3 ]
+}
+
 # ── count_total_tasks ────────────────────────────────────────────────────────
 
 @test "count_total_tasks: counts both checked and unchecked" {
@@ -354,6 +457,17 @@ EOF
     local result
     result="$(count_total_tasks plan.md)"
     [ "$result" -eq 6 ]
+}
+
+@test "count_total_tasks: counts * and + bullets" {
+    cat > plan.md <<'EOF'
+- [ ] dash todo
+* [x] star done
++ [~] plus dropped
+EOF
+    local result
+    result="$(count_total_tasks plan.md)"
+    [ "$result" -eq 3 ]
 }
 
 # ── count_dropped ────────────────────────────────────────────────────────────
@@ -410,6 +524,17 @@ EOF
     local result
     result="$(count_dropped a.md b.md)"
     [ "$result" -eq 3 ]
+}
+
+@test "count_dropped: counts * and + dropped bullets" {
+    cat > plan.md <<'EOF'
+* [~] star dropped
++ [~] plus dropped
+- [ ] dash todo
+EOF
+    local result
+    result="$(count_dropped plan.md)"
+    [ "$result" -eq 2 ]
 }
 
 # ── build_dropped_context ────────────────────────────────────────────────────
@@ -655,6 +780,13 @@ EOF
 @test "looks_like_plan: accepts indented checkboxes" {
     printf "  - [ ] Nested task\n" > plan.md
     looks_like_plan plan.md
+}
+
+@test "looks_like_plan: accepts * and + bullet checkboxes" {
+    printf "* [ ] Star task\n" > star.md
+    looks_like_plan star.md
+    printf "+ [x] Plus task\n" > plus.md
+    looks_like_plan plus.md
 }
 
 @test "looks_like_plan: rejects prose-only file" {
@@ -1463,18 +1595,24 @@ EOF
     grep -q "existing" .claude/skills/wiggum/SKILL.md
 }
 
-@test "setup_wiggum_skill: skill contains verify loop instructions" {
+@test "setup_wiggum_skill: skill drives the wiggum CLI commands" {
     echo "y" | setup_wiggum_skill
-    grep -q "wiggumrc" .claude/skills/wiggum/SKILL.md
-    grep -q "autofix" .claude/skills/wiggum/SKILL.md
-    grep -q "5 times" .claude/skills/wiggum/SKILL.md
+    grep -q "wiggum execute" .claude/skills/wiggum/SKILL.md
+    grep -q "wiggum status" .claude/skills/wiggum/SKILL.md
+    grep -q "wiggum watch" .claude/skills/wiggum/SKILL.md
+    grep -q "wiggum kill" .claude/skills/wiggum/SKILL.md
+    grep -q "wiggum chain" .claude/skills/wiggum/SKILL.md
 }
 
-@test "setup_wiggum_skill: skill contains verification discipline" {
+@test "setup_wiggum_skill: skill covers supervision and plan format" {
     echo "y" | setup_wiggum_skill
+    # Supervision: monitor, wait, detect-blocked, scoped kill.
+    grep -q -- "--background" .claude/skills/wiggum/SKILL.md
+    grep -q -- "--kill-on-timeout" .claude/skills/wiggum/SKILL.md
+    grep -qi "blocked" .claude/skills/wiggum/SKILL.md
+    # Plan format it can author.
+    grep -q "Acceptance:" .claude/skills/wiggum/SKILL.md
     grep -q "Files:" .claude/skills/wiggum/SKILL.md
-    grep -q "failing test first" .claude/skills/wiggum/SKILL.md
-    grep -q "three spot checks" .claude/skills/wiggum/SKILL.md
 }
 
 @test "run_init: creates skill when approved" {
@@ -2655,4 +2793,252 @@ EOF
     RUN_NEW_SESSION=true
     run_prompts >/dev/null 2>&1
     [[ "$(cat calls.log)" != *"--resume"* ]]
+}
+
+# ── run_sidecar_file ─────────────────────────────────────────────────────────
+
+@test "run_sidecar_file: derives sibling pid/out/log paths" {
+    [ "$(run_sidecar_file docs/foo_plan.md pid)" = "docs/foo_plan.pid" ]
+    [ "$(run_sidecar_file docs/foo_plan.md out)" = "docs/foo_plan.out" ]
+    [ "$(run_sidecar_file docs/foo_plan.md log)" = "docs/foo_plan.log" ]
+}
+
+@test "run_sidecar_file: matches the log path log_init uses" {
+    mkdir -p docs
+    log_init "docs/plan.md"
+    [ "$WIGGUM_LOG_FILE" = "$(run_sidecar_file docs/plan.md log)" ]
+}
+
+# ── process_alive ────────────────────────────────────────────────────────────
+
+@test "process_alive: true for a live pid, false for a dead one" {
+    sleep 5 &
+    local pid=$!
+    process_alive "$pid"
+    kill "$pid" 2>/dev/null
+    wait "$pid" 2>/dev/null || true
+    ! process_alive "$pid"
+}
+
+@test "process_alive: false for empty pid" {
+    ! process_alive ""
+}
+
+# ── read_run_status ──────────────────────────────────────────────────────────
+
+@test "read_run_status: returns the last recorded status" {
+    printf 'Status: incomplete\nmore\nStatus: complete\n' > run.out
+    [ "$(read_run_status run.out)" = "complete" ]
+}
+
+@test "read_run_status: empty for missing file or no status line" {
+    [ -z "$(read_run_status missing.out)" ]
+    printf 'no status here\n' > run.out
+    [ -z "$(read_run_status run.out)" ]
+}
+
+# ── detect_blocked ───────────────────────────────────────────────────────────
+
+@test "detect_blocked: true on stall/validation markers" {
+    printf 'No progress detected (2 tasks remaining, stall 1 of 2).\n' > a.out
+    detect_blocked a.out
+    printf 'Stalled for 2 consecutive iterations.\n' > b.out
+    detect_blocked b.out
+    printf 'Validation failed 5 times. Stopping to prevent runaway.\n' > c.out
+    detect_blocked c.out
+}
+
+@test "detect_blocked: false on a clean run and missing file" {
+    printf 'All verification steps passed.\nStatus: complete\n' > ok.out
+    ! detect_blocked ok.out
+    ! detect_blocked missing.out
+}
+
+# ── format_progress ──────────────────────────────────────────────────────────
+
+@test "format_progress: renders done/total/remaining/dropped" {
+    [ "$(format_progress 6 3 2 1)" = "Tasks: 3/6 done, 2 remaining, 1 dropped" ]
+}
+
+# ── run_status ───────────────────────────────────────────────────────────────
+
+@test "run_status: reports 'not started' with no sidecars" {
+    cat > plan.md <<'EOF'
+- [ ] one
+- [x] two
+EOF
+    FILES=(plan.md)
+    run run_status
+    [[ "$output" == *"Plan: plan.md"* ]]
+    [[ "$output" == *"Tasks: 1/2 done, 1 remaining, 0 dropped"* ]]
+    [[ "$output" == *"State: not started"* ]]
+}
+
+@test "run_status: reports running when pidfile names a live process" {
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 5 &
+    local pid=$!
+    echo "$pid" > plan.pid
+    FILES=(plan.md)
+    run run_status
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [[ "$output" == *"State: running (pid $pid)"* ]]
+}
+
+@test "run_status: reports finished status from the out file" {
+    cat > plan.md <<'EOF'
+- [x] one
+EOF
+    printf 'Status: stalled\n' > plan.out
+    FILES=(plan.md)
+    run run_status
+    [[ "$output" == *"State: finished: stalled"* ]]
+}
+
+# ── kill_run / run_kill ──────────────────────────────────────────────────────
+
+@test "kill_run: terminates a live process and removes the pidfile" {
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > run.pid
+    kill_run run.pid
+    sleep 0.2
+    ! process_alive "$pid"
+    [ ! -f run.pid ]
+}
+
+@test "kill_run: errors when the pidfile is missing" {
+    run kill_run nope.pid
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No run pidfile"* ]]
+}
+
+@test "kill_run: cleans up a stale pidfile for a dead process" {
+    sleep 1 &
+    local pid=$!
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    echo "$pid" > run.pid
+    run kill_run run.pid
+    [ "$status" -eq 0 ]
+    [ ! -f run.pid ]
+    [[ "$output" == *"not running"* ]]
+}
+
+@test "run_kill: derives the pidfile from the plan path" {
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > plan.pid
+    FILES=(plan.md)
+    run_kill
+    sleep 0.2
+    ! process_alive "$pid"
+    [ ! -f plan.pid ]
+}
+
+# ── launch_execute_background ─────────────────────────────────────────────────
+
+@test "launch_execute_background: writes pidfile + out, runs the loop once" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    # Stub the loop so we don't invoke claude; the subshell inherits it.
+    run_execute() { echo "loop ran for ${FILES[0]}"; }
+    FILES=(docs/plan.md)
+    BACKGROUND=true
+    launch_execute_background >/dev/null 2>&1
+    [ -f docs/plan.pid ]
+    # Wait for the detached subshell to finish writing its output.
+    local pid
+    pid="$(cat docs/plan.pid)"
+    wait "$pid" 2>/dev/null || true
+    [ -f docs/plan.out ]
+    grep -q "loop ran for docs/plan.md" docs/plan.out
+}
+
+@test "launch_execute_background: refuses to start over a live run" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > docs/plan.pid
+    FILES=(docs/plan.md)
+    BACKGROUND=true
+    run launch_execute_background
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"already active"* ]]
+}
+
+# ── run_watch ─────────────────────────────────────────────────────────────────
+
+@test "run_watch: errors when no background run exists" {
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(plan.md)
+    run run_watch
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"No background run found"* ]]
+}
+
+@test "run_watch: streams output and returns 0 when run completes" {
+    cat > plan.md <<'EOF'
+- [x] one
+EOF
+    # Background a short-lived process that writes a completing out file.
+    ( printf '=== WIGGUM EXECUTE MODE ===\nStatus: complete\n' > plan.out; sleep 1 ) &
+    local pid=$!
+    echo "$pid" > plan.pid
+    FILES=(plan.md)
+    WATCH_POLL=1
+    run run_watch
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Status: complete"* ]]
+    [ ! -f plan.pid ]
+}
+
+# ── run_chain ─────────────────────────────────────────────────────────────────
+
+@test "run_chain: executes each plan in order with a fresh session" {
+    cat > a.md <<'EOF'
+- [ ] a
+EOF
+    cat > b.md <<'EOF'
+- [ ] b
+EOF
+    run_execute() { echo "${FILES[0]}" >> chain.log; return 0; }
+    FILES=(a.md b.md)
+    run_chain >/dev/null 2>&1
+    [ "$(sed -n 1p chain.log)" = "a.md" ]
+    [ "$(sed -n 2p chain.log)" = "b.md" ]
+}
+
+@test "run_chain: stops at the first failing plan" {
+    cat > a.md <<'EOF'
+- [ ] a
+EOF
+    cat > b.md <<'EOF'
+- [ ] b
+EOF
+    cat > c.md <<'EOF'
+- [ ] c
+EOF
+    run_execute() {
+        echo "${FILES[0]}" >> chain.log
+        [[ "${FILES[0]}" == "b.md" ]] && return 1
+        return 0
+    }
+    FILES=(a.md b.md c.md)
+    run run_chain
+    [ "$status" -eq "$EXIT_PLAN_FAILED" ]
+    [ "$(grep -c . chain.log)" -eq 2 ]
+    [[ "$(cat chain.log)" != *"c.md"* ]]
 }
