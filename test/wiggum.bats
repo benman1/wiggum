@@ -1701,6 +1701,20 @@ EOF
     grep -q "Files:" .claude/skills/wiggum/SKILL.md
 }
 
+@test "setup_wiggum_skill: skill covers stalled/incomplete remediation" {
+    echo "y" | setup_wiggum_skill
+    local skill=".claude/skills/wiggum/SKILL.md"
+    # Distinguishes the stop reasons and drives a remediate-and-re-run loop.
+    grep -qi "incomplete" "$skill"
+    grep -qi "stalled" "$skill"
+    grep -qi "remediate" "$skill"
+    # Stall mitigations: spot-check, split tasks, drop with [~], escalate.
+    grep -q "wiggum check" "$skill"
+    grep -q '\[~\]' "$skill"
+    # Bounded retries, not an infinite loop.
+    grep -qi "cap" "$skill"
+}
+
 @test "run_init: creates skill when approved" {
     INIT_PRESET="node"
     # permission-mode(default), y=permissions, n=pkg-manager, y=skill
