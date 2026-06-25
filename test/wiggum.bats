@@ -1704,6 +1704,15 @@ EOF
     grep -qi "conda" .claude/skills/wiggum/SKILL.md
 }
 
+@test "setup_wiggum_skill: skill is the authoritative interface (no --help spelunking)" {
+    echo "y" | setup_wiggum_skill
+    local skill=".claude/skills/wiggum/SKILL.md"
+    # One batched preflight, and the skill asserts itself as the source of truth.
+    grep -qi "authoritative" "$skill"
+    grep -qi "preflight" "$skill"
+    grep -q -- "--help" "$skill"
+}
+
 @test "setup_wiggum_skill: skill covers stalled/incomplete remediation" {
     echo "y" | setup_wiggum_skill
     local skill=".claude/skills/wiggum/SKILL.md"

@@ -14,23 +14,36 @@ report the outcome. Execute without asking for confirmation.
 
 The request: **$ARGUMENTS**
 
-## Prerequisites
+## Preflight — one step, then act
 
-`wiggum` must be on `PATH`. Check once with `command -v wiggum`.
+This skill is the **authoritative reference for wiggum's interface**: the commands
+and flags in "The CLI you drive" and the steps below are correct and current. Use
+them verbatim — do **not** burn turns running `wiggum --help` / `wiggum help execute`
+to re-derive syntax you already have here.
 
-- If it's missing, tell the user to install it (`./install.sh` in the wiggum repo)
-  and stop — do not hand-simulate the loop.
-- Run from the target project root. A `.wiggumrc` there defines the verify/autofix
-  steps; if there is none, wiggum skips verification (still fine).
-- **Activate the project's environment first.** wiggum runs Claude's tools and the
-  `.wiggumrc` verify steps in your *current* shell environment. If the repo uses one
-  — conda (`environment.yml`), a virtualenv/`.venv`, Poetry/uv (`poetry.lock`/
-  `uv.lock`), a Node version (`.nvmrc`), Bundler (`Gemfile`), etc. — detect it and
-  activate it in the same shell you launch wiggum from, *before* running, or
-  tests/builds run against the wrong interpreter and fail spuriously. For
-  unattended/background runs, prefer making the `.wiggumrc` verify commands
-  self-activating (e.g. `conda run -n <env> pytest`, `poetry run pytest`) so the run
-  is reproducible no matter which shell starts it.
+The only things you genuinely can't know up front are repo-specific, so do this
+discovery **once, in a single command**, then proceed:
+
+```
+command -v wiggum && cat .wiggumrc 2>/dev/null && ls environment.yml .venv .nvmrc Gemfile poetry.lock uv.lock 2>/dev/null
+```
+
+- **wiggum on PATH?** If `command -v wiggum` is empty, tell the user to install it
+  (`./install.sh` in the wiggum repo) and stop — do not hand-simulate the loop. Run
+  from the target project root.
+- **`.wiggumrc`** — wiggum reads it itself; you read it here only to learn the verify
+  steps (and therefore which environment to activate). No config → wiggum just skips
+  verification (still fine).
+- **Activate the project's environment.** wiggum runs Claude's tools and the verify
+  steps in your *current* shell. If the markers above show one — conda
+  (`environment.yml`), a virtualenv/`.venv`, Poetry/uv (`poetry.lock`/`uv.lock`), a
+  Node version (`.nvmrc`), Bundler (`Gemfile`), etc. — activate it in the same shell
+  you launch from, *before* running, or tests/builds hit the wrong interpreter and
+  fail spuriously. For unattended/background runs, prefer self-activating verify
+  commands in `.wiggumrc` (e.g. `conda run -n <env> pytest`, `poetry run pytest`) so
+  the run is reproducible no matter which shell starts it.
+
+That's the whole preflight. Everything else you need is in this skill.
 
 ## The CLI you drive
 
