@@ -1718,6 +1718,14 @@ EOF
     grep -qi "cap" "$skill"
 }
 
+@test "setup_wiggum_skill: skill says to watch a running run and summarize" {
+    echo "y" | setup_wiggum_skill
+    local skill=".claude/skills/wiggum/SKILL.md"
+    grep -q "wiggum watch" "$skill"
+    grep -qi "already in progress" "$skill"
+    grep -qi "report a summary" "$skill"
+}
+
 @test "run_init: creates skill when approved" {
     INIT_PRESET="node"
     # permission-mode(default), y=permissions, n=pkg-manager, y=skill
