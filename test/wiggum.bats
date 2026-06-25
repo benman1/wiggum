@@ -3245,16 +3245,43 @@ EOF
     [[ "$output" == *"current shell environment"* ]]
 }
 
-@test "env_reminder: tailors the hint to conda projects" {
+@test "env_reminder: warns when a conda project has no env active" {
     touch environment.yml
+    export CONDA_DEFAULT_ENV="" VIRTUAL_ENV=""
     run env_reminder
-    [[ "$output" == *"conda"* ]]
+    [[ "$output" == *"Warning:"* ]]
+    [[ "$output" == *"conda activate"* ]]
 }
 
-@test "env_reminder: tailors the hint to Python venv projects" {
-    touch requirements.txt
+@test "env_reminder: treats conda 'base' as no env active" {
+    touch environment.yml
+    export CONDA_DEFAULT_ENV="base" VIRTUAL_ENV=""
     run env_reminder
-    [[ "$output" == *"venv"* ]] || [[ "$output" == *"activate"* ]]
+    [[ "$output" == *"Warning:"* ]]
+}
+
+@test "env_reminder: warns when a Python venv project has no env active" {
+    touch requirements.txt
+    export CONDA_DEFAULT_ENV="" VIRTUAL_ENV=""
+    run env_reminder
+    [[ "$output" == *"Warning:"* ]]
+    [[ "$output" == *"virtualenv"* ]]
+}
+
+@test "env_reminder: stays soft when a virtualenv is active" {
+    touch requirements.txt
+    export CONDA_DEFAULT_ENV="" VIRTUAL_ENV="/tmp/proj/.venv"
+    run env_reminder
+    [[ "$output" != *"Warning:"* ]]
+    [[ "$output" == *"is active"* ]]
+}
+
+@test "env_reminder: stays soft when a non-base conda env is active" {
+    touch environment.yml
+    export CONDA_DEFAULT_ENV="proj-env" VIRTUAL_ENV=""
+    run env_reminder
+    [[ "$output" != *"Warning:"* ]]
+    [[ "$output" == *"proj-env"* ]]
 }
 
 @test "env_reminder: tailors the hint to Node projects" {

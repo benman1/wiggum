@@ -1360,7 +1360,13 @@ Confirm the plan looks right, then continue.
 
 ### 3. Execute and supervise
 
-Launch detached so you can monitor and bound it:
+**First, activate the project environment** (from preflight) — *before* you launch,
+not after. Launching `-b` into the wrong env means the verify steps (pytest/ruff/…)
+run under the wrong interpreter and thrash, and you waste a `kill` + relaunch.
+`wiggum execute` prints an environment line at startup; if it warns that no env is
+active, stop, activate it, and relaunch.
+
+Then launch detached so you can monitor and bound it:
 
 ```
 wiggum execute docs/<name>_plan.md --background
@@ -1813,29 +1819,44 @@ run_benchmarks() {
 
 # ── Execute ──────────────────────────────────────────────────────────────────
 
-# Remind the user that wiggum runs Claude's tools and the .wiggumrc verify steps
-# in the *current* shell environment -- so the project's environment (conda, a
-# virtualenv, Poetry/uv, a Node version, Bundler, ...) must be active, or the
-# toolchain resolves to the wrong interpreter and steps fail spuriously. The hint
-# is tailored to whatever environment markers the repo contains.
+# Warn that wiggum runs Claude's tools and the .wiggumrc verify steps in the
+# *current* shell environment -- so the project's environment must be active, or
+# the toolchain resolves to the wrong interpreter and steps fail spuriously.
+#
+# For Python-flavored projects we can tell whether *an* env is active (via
+# VIRTUAL_ENV / a non-base CONDA_DEFAULT_ENV), so we warn preventively in the case
+# that actually bites -- pytest/ruff silently running under the wrong interpreter.
+# When an env is active, or for non-Python toolchains we can't introspect, we fall
+# back to a softer reminder.
 env_reminder() {
-    local hint=""
+    local kind=""
     if [[ -f environment.yml || -f environment.yaml ]]; then
-        hint="this looks like a conda project -- 'conda activate <env>'"
-    elif [[ -f poetry.lock || -f uv.lock ]]; then
-        hint="this looks like a Poetry/uv project -- 'poetry run' / 'uv run', or activate its venv"
-    elif [[ -d .venv || -f Pipfile || -f requirements.txt ]]; then
-        hint="this looks like a Python venv project -- e.g. 'source .venv/bin/activate'"
+        kind="conda"
+    elif [[ -f poetry.lock || -f uv.lock || -d .venv || -f Pipfile || -f requirements.txt ]]; then
+        kind="python"
     elif [[ -f .nvmrc || -f package.json ]]; then
-        hint="this looks like a Node project -- select the right version, e.g. 'nvm use'"
+        kind="node"
     elif [[ -f Gemfile ]]; then
-        hint="this looks like a Ruby project -- use 'bundle exec'"
+        kind="ruby"
     fi
-    if [[ -n "$hint" ]]; then
-        echo "Reminder: wiggum runs in your current shell environment -- make sure the right one is active ($hint)." >&2
-    else
-        echo "Reminder: wiggum runs verify steps and Claude in your current shell environment -- activate the project's environment (conda/venv/poetry/nvm) first if it needs one." >&2
+
+    if [[ "$kind" == "conda" || "$kind" == "python" ]]; then
+        if [[ -n "${VIRTUAL_ENV:-}" ]] \
+           || { [[ -n "${CONDA_DEFAULT_ENV:-}" ]] && [[ "${CONDA_DEFAULT_ENV:-}" != "base" ]]; }; then
+            echo "Reminder: wiggum runs in your current shell environment ('${VIRTUAL_ENV:-${CONDA_DEFAULT_ENV:-}}' is active) -- make sure it is the right one for this project." >&2
+        else
+            local how="activate the project's virtualenv"
+            [[ "$kind" == "conda" ]] && how="run 'conda activate <env>'"
+            echo "Warning: this looks like a Python project but no virtualenv/conda env is active -- ${how} BEFORE launching, or the verify steps (pytest/ruff) run against the wrong interpreter and thrash." >&2
+        fi
+        return
     fi
+
+    case "$kind" in
+        node) echo "Reminder: wiggum runs in your current shell -- select the project's Node version (e.g. 'nvm use') first if it needs one." >&2 ;;
+        ruby) echo "Reminder: wiggum runs in your current shell -- use the project's Ruby/bundler env (e.g. 'bundle exec') first if it needs one." >&2 ;;
+        *)    echo "Reminder: wiggum runs verify steps and Claude in your current shell environment -- activate the project's environment (conda/venv/poetry/nvm) first if it needs one." >&2 ;;
+    esac
 }
 
 run_execute() {

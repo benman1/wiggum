@@ -110,7 +110,13 @@ Confirm the plan looks right, then continue.
 
 ### 3. Execute and supervise
 
-Launch detached so you can monitor and bound it:
+**First, activate the project environment** (from preflight) — *before* you launch,
+not after. Launching `-b` into the wrong env means the verify steps (pytest/ruff/…)
+run under the wrong interpreter and thrash, and you waste a `kill` + relaunch.
+`wiggum execute` prints an environment line at startup; if it warns that no env is
+active, stop, activate it, and relaunch.
+
+Then launch detached so you can monitor and bound it:
 
 ```
 wiggum execute docs/<name>_plan.md --background
