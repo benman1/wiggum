@@ -2009,6 +2009,20 @@ S
     [[ "$output" == *"No verification steps"* ]]
 }
 
+@test "run_check: reminds about the shell environment when steps run" {
+    VERIFY_STEPS=("true")
+    run run_check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Reminder:"* ]]
+    [[ "$output" == *"environment"* ]]
+}
+
+@test "run_check: no environment reminder when there are no steps" {
+    VERIFY_STEPS=()
+    run run_check
+    [[ "$output" != *"Reminder:"* ]]
+}
+
 @test "run_check: uses same run_validation as execute mode" {
     # Verify it calls the shared function by checking for validation pass output
     VERIFY_STEPS=("true")
