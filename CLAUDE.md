@@ -44,6 +44,7 @@ Do directly (no plan needed): trivial one-line fixes, doc/comment tweaks, and th
 - Use short, single-line, imperative commit messages.
 - No prefixes (`feat:`, `fix:`), no `Co-Authored-By` trailers, no multi-line messages.
 - One commit per logically distinct change.
+- **Commit as soon as a change passes the full suite (`./test/run.sh`) — don't wait to be asked.** When work spans several files (lib + tests + docs + skill), stage and commit them together as the one logical change.
 
 ## 4. Testing
 
