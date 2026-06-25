@@ -100,6 +100,26 @@ make_file() {
     [[ "$output" == *"watch"* ]]
     [[ "$output" == *"kill"* ]]
     [[ "$output" == *"chain"* ]]
+    [[ "$output" == *"top"* ]]
+}
+
+@test "parse_args: help top shows the overview details" {
+    run parse_args help top
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum top"* ]]
+    [[ "$output" == *"at a glance"* ]]
+}
+
+@test "parse_args: top is a known mode and needs no files" {
+    parse_args top
+    [ "$MODE" = "top" ]
+}
+
+@test "parse_args: top collects optional scan dirs into FILES" {
+    parse_args top plans docs
+    [ "$MODE" = "top" ]
+    [ "${#FILES[@]}" -eq 2 ]
+    [ "${FILES[0]}" = "plans" ]
 }
 
 @test "parse_args: help docs shows docs details" {
@@ -1712,6 +1732,7 @@ EOF
     grep -q "wiggum watch" .claude/skills/wiggum/SKILL.md
     grep -q "wiggum kill" .claude/skills/wiggum/SKILL.md
     grep -q "wiggum chain" .claude/skills/wiggum/SKILL.md
+    grep -q "wiggum top" .claude/skills/wiggum/SKILL.md
 }
 
 @test "setup_wiggum_skill: skill covers supervision and plan format" {
@@ -3216,6 +3237,97 @@ EOF
     [ "$status" -eq "$EXIT_PLAN_FAILED" ]
     [ "$(grep -c . chain.log)" -eq 2 ]
     [[ "$(cat chain.log)" != *"c.md"* ]]
+}
+
+# ── find_run_pidfiles / run_top ──────────────────────────────────────────────
+
+@test "find_run_pidfiles: finds pidfiles in docs/ and cwd, sorted/deduped" {
+    mkdir -p docs
+    : > docs/a_plan.pid
+    : > docs/b_plan.pid
+    : > c_plan.pid
+    run find_run_pidfiles
+    [ "$status" -eq 0 ]
+    [[ "${lines[0]}" == "./c_plan.pid" || "${lines[0]}" == "c_plan.pid" ]]
+    [[ "$output" == *"docs/a_plan.pid"* ]]
+    [[ "$output" == *"docs/b_plan.pid"* ]]
+    [ "${#lines[@]}" -eq 3 ]
+}
+
+@test "find_run_pidfiles: empty when there are no runs" {
+    mkdir -p docs
+    run find_run_pidfiles
+    [ -z "$output" ]
+}
+
+@test "find_run_pidfiles: accepts a plan path or a pidfile directly" {
+    mkdir -p docs
+    : > docs/x_plan.pid
+    run find_run_pidfiles docs/x_plan.md
+    [[ "$output" == *"docs/x_plan.pid"* ]]
+    run find_run_pidfiles docs/x_plan.pid
+    [[ "$output" == *"docs/x_plan.pid"* ]]
+}
+
+@test "run_top: friendly message when there are no runs" {
+    FILES=()
+    run run_top
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No wiggum runs found"* ]]
+}
+
+@test "run_top: lists a running run with pid, state and task tally" {
+    mkdir -p docs
+    cat > docs/r_plan.md <<'EOF'
+- [ ] a
+- [ ] b
+- [x] c
+EOF
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > docs/r_plan.pid
+    FILES=()
+    run run_top
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PLAN"* ]]
+    [[ "$output" == *"docs/r_plan.md"* ]]
+    [[ "$output" == *"$pid"* ]]
+    [[ "$output" == *"running"* ]]
+    [[ "$output" == *"1/3 done, 2 left"* ]]
+}
+
+@test "run_top: shows a finished run from its out file" {
+    mkdir -p docs
+    cat > docs/f_plan.md <<'EOF'
+- [x] a
+- [x] b
+EOF
+    sleep 1 &
+    local pid=$!
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    echo "$pid" > docs/f_plan.pid
+    printf 'Status: complete\n' > docs/f_plan.out
+    FILES=()
+    run run_top
+    [[ "$output" == *"docs/f_plan.md"* ]]
+    [[ "$output" == *"finished: complete"* ]]
+    [[ "$output" == *"2/2 done"* ]]
+}
+
+@test "run_top: flags a blocked run" {
+    mkdir -p docs
+    cat > docs/b_plan.md <<'EOF'
+- [ ] a
+EOF
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > docs/b_plan.pid
+    printf 'No progress detected (1 tasks remaining, stall 1 of 2).\n' > docs/b_plan.out
+    FILES=()
+    run run_top
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [[ "$output" == *"running (blocked)"* ]]
 }
 
 # ── run_execute: empty / all-done guard ──────────────────────────────────────

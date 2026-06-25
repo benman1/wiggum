@@ -77,6 +77,9 @@ main() {
         chain)
             run_chain
             ;;
+        top)
+            run_top
+            ;;
     esac
 }
 

@@ -15,6 +15,7 @@ _wiggum() {
         'watch:Follow a background run until it finishes'
         'kill:Stop a background run (only that run process)'
         'chain:Execute several workplans back to back'
+        'top:List every known wiggum run at a glance'
         'help:Show help for a command'
     )
 
@@ -67,6 +68,9 @@ _wiggum() {
             ;;
         kill)
             _arguments '*:plan file:_files -g "*.md"'
+            ;;
+        top)
+            _arguments '*:dir or plan:_files'
             ;;
         watch)
             _arguments \

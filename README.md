@@ -4,6 +4,16 @@ A self-driving agent loop that turns issue descriptions into working, verified c
 
 Wiggum wraps [Claude Code](https://claude.com/claude-code) in a structured orchestration loop. You give it issue files or spec documents; it produces a workplan, implements it step by step, verifies each step against your project's own toolchain, self-heals failures, and commits the results. The human decides *what* to build. Wiggum figures out *how* and keeps going until it's done.
 
+Kick off runs in the background and keep an eye on all of them at once with `wiggum top`:
+
+```console
+$ wiggum top
+PLAN                                     PID      STATE                TASKS
+docs/global-score_plan.md                519      running              4/12 done, 8 left
+docs/api-rate-limit_plan.md              -        finished: complete   9/9 done
+docs/onboarding-ui_plan.md               621      running (blocked)    2/7 done, 5 left
+```
+
 ## Why
 
 AI coding assistants are powerful in single-turn interactions, but real implementation work is multi-step: read the spec, write code, run the linter, fix type errors, run tests, fix regressions, commit, repeat. Each of those handoffs is a place where momentum stalls.
@@ -265,6 +275,19 @@ Every supervision command refers to a run **by its plan file** and derives those
 | `wiggum status docs/plan.md` | Print task counts and run state: `not started`, `running`, `running but appears blocked`, or `finished: <reason>`. Read-only. |
 | `wiggum watch docs/plan.md` | Stream the run's output and **block until it finishes** — wiggum's "wait". Exits 0 only when the run finished `complete`. |
 | `wiggum kill docs/plan.md` | Stop the run — and only this run's process tree (the wiggum process and the `claude` it spawned). Never a blanket kill. |
+| `wiggum top` | An at-a-glance overview of every run at once: one line per known run (anything with a `.pid` sidecar) — plan, pid, state, and task tally. Read-only. |
+
+Unlike `status` (one plan), `wiggum top` surveys **every** run at once — handy when several are running or chained:
+
+```
+$ wiggum top
+PLAN                                     PID      STATE                TASKS
+docs/global-score_plan.md                519      running              4/12 done, 8 left
+docs/api_plan.md                         -        finished: complete   9/9 done
+docs/ui_plan.md                          621      running (blocked)    2/7 done, 5 left
+```
+
+With no arguments it scans `docs/` and the current directory; pass directories, plan files, or pidfiles to widen or narrow the scan. (`watch`/`kill` clear a run's `.pid` when it ends, so a run watched to completion drops off the list; an unwatched background run lingers as `finished: <reason>`.)
 
 `watch` can bound a run so a wedged loop can't hang forever:
 
@@ -482,6 +505,7 @@ Modes:
   watch       Follow a background run until it finishes (wait)
   kill        Stop a background run (only that run's process)
   chain       Execute several workplans back to back
+  top         List every known wiggum run at a glance
 
 Options:
   --plan-file <path>       Output path for the plan (plan mode)
