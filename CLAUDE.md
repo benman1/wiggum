@@ -6,7 +6,7 @@ Wiggum is a **self-driving agent loop** that orchestrates Claude Code to turn is
 
 For any non-trivial change -- a new feature, a multi-file refactor, a bug fix that touches several functions, anything beyond a quick edit -- drive it through wiggum itself instead of hand-coding it ad hoc. We use the tool on its own codebase.
 
-Drive wiggum by running its CLI directly (`wiggum plan`, `wiggum execute`, `wiggum watch`, …) — do **not** try to invoke the `/wiggum` skill yourself; it is marked `disable-model-invocation` and is the human's entry point only (a user types `/wiggum <issue>` to load the same orchestration playbook). The steps below are that playbook:
+Use the `/wiggum` skill — it is model-invocable, so invoke it to load the orchestration playbook (plan, run, monitor, wait, detect-blocked, kill, chain) and drive the run. Equivalently, run the `wiggum` CLI directly:
 
 1. **Plan:** `wiggum plan "<issue or description>"` (or `wiggum plan <issue-file>`) -> produces `docs/<slug>_plan.md`. Read and adjust the plan before running it.
 2. **Execute:** `wiggum execute docs/<slug>_plan.md`. Add `--background` to supervise with `wiggum status|watch|kill <plan>`; use `wiggum chain <plan...>` for work too large for one plan.
