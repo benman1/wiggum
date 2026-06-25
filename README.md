@@ -298,7 +298,7 @@ Wiggum ships a `/wiggum` slash command for Claude Code that acts as an **orchest
 
 The skill accepts an issue file, a plain-text description (which it turns into a plan), an existing plan file, or several plans to chain. Because it drives the CLI, the `wiggum` binary must be installed and on `PATH` (see [Background runs & supervision](#background-runs--supervision) for the commands it uses).
 
-The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKILL.md`) so it works in every project. Running `wiggum init` in a specific project installs a project-local copy at `.claude/skills/wiggum/SKILL.md`.
+The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKILL.md`) so it works in every project. Running `wiggum init` in a specific project installs a project-local copy at `.claude/skills/wiggum/SKILL.md` — and if a copy from an older wiggum version is already there, `init` detects it's outdated and offers to update it (declining keeps yours untouched).
 
 ## Prerequisites
 

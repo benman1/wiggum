@@ -1671,14 +1671,38 @@ EOF
     [ ! -f ".claude/skills/wiggum/SKILL.md" ]
 }
 
-@test "setup_wiggum_skill: skips when skill already exists" {
+@test "wiggum_skill_content: emits the skill markdown" {
+    run wiggum_skill_content
+    [[ "$output" == *"name: wiggum"* ]]
+    [[ "$output" == *"wiggum execute"* ]]
+}
+
+@test "setup_wiggum_skill: leaves an up-to-date skill untouched" {
     mkdir -p .claude/skills/wiggum
-    echo "existing" > .claude/skills/wiggum/SKILL.md
+    wiggum_skill_content > .claude/skills/wiggum/SKILL.md
     run setup_wiggum_skill
     [ "$status" -eq 0 ]
-    [[ "$output" == *"already exists"* ]]
-    # Original content preserved
-    grep -q "existing" .claude/skills/wiggum/SKILL.md
+    [[ "$output" == *"up to date"* ]]
+}
+
+@test "setup_wiggum_skill: offers to update an outdated skill and keeps it on no" {
+    mkdir -p .claude/skills/wiggum
+    echo "old skill v0" > .claude/skills/wiggum/SKILL.md
+    run bash -c "source '$WIGGUM_LIB'; echo n | setup_wiggum_skill"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"older /wiggum skill"* ]]
+    # Declining keeps the user's file intact.
+    grep -q "old skill v0" .claude/skills/wiggum/SKILL.md
+}
+
+@test "setup_wiggum_skill: updates an outdated skill on yes" {
+    mkdir -p .claude/skills/wiggum
+    echo "old skill v0" > .claude/skills/wiggum/SKILL.md
+    echo "y" | setup_wiggum_skill
+    # Now matches the current content; the stale text is gone.
+    ! grep -q "old skill v0" .claude/skills/wiggum/SKILL.md
+    grep -q "name: wiggum" .claude/skills/wiggum/SKILL.md
+    grep -q "Preflight" .claude/skills/wiggum/SKILL.md
 }
 
 @test "setup_wiggum_skill: skill drives the wiggum CLI commands" {
