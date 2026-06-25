@@ -1224,30 +1224,11 @@ EOF
     echo "Created $settings_file"
 }
 
-setup_wiggum_skill() {
-    local skill_dir=".claude/skills/wiggum"
-    local skill_file="$skill_dir/SKILL.md"
-
-    if [[ -f "$skill_file" ]]; then
-        echo ""
-        echo "Claude Code skill already exists at $skill_file — skipping."
-        return 0
-    fi
-
-    echo ""
-    echo "Install the /wiggum slash command for Claude Code?"
-    echo "This lets you run the wiggum workflow from inside Claude Code"
-    echo "with: /wiggum <issue-file-or-description>"
-    echo ""
-    echo "Install /wiggum skill? [y/N]"
-    read -r answer
-    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
-        echo "Skipped."
-        return 0
-    fi
-
-    mkdir -p "$skill_dir"
-    cat > "$skill_file" <<'SKILL_EOF'
+# Emit the current /wiggum skill markdown to stdout. This is the single source of
+# truth for the skill -- setup_wiggum_skill uses it both to install a fresh copy
+# and to detect (and offer to refresh) a stale copy from an older wiggum version.
+wiggum_skill_content() {
+    cat <<'SKILL_EOF'
 ---
 name: wiggum
 description: Orchestrate the wiggum CLI — create a workplan, run it, monitor it, wait for it, detect when it's blocked, kill it if it runs too long, and chain workplans together
@@ -1489,7 +1470,48 @@ can inspect and fix between stages.
 - **Report honestly:** if it stalled or was killed, say so with the cause from the
   log — don't round an incomplete run up to "done".
 SKILL_EOF
+}
 
+setup_wiggum_skill() {
+    local skill_dir=".claude/skills/wiggum"
+    local skill_file="$skill_dir/SKILL.md"
+
+    if [[ -f "$skill_file" ]]; then
+        # Already current: nothing to do.
+        if diff -q <(wiggum_skill_content) "$skill_file" >/dev/null 2>&1; then
+            echo ""
+            echo "Claude Code skill at $skill_file is already up to date — skipping."
+            return 0
+        fi
+        # Stale copy from an older wiggum: offer to refresh it rather than
+        # silently leaving the project on an outdated skill.
+        echo ""
+        echo "An older /wiggum skill exists at $skill_file."
+        echo "Update it to the current version? [y/N]"
+        read -r answer
+        if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+            echo "Kept your existing skill."
+            return 0
+        fi
+        wiggum_skill_content > "$skill_file"
+        echo "Updated $skill_file to the current /wiggum skill."
+        return 0
+    fi
+
+    echo ""
+    echo "Install the /wiggum slash command for Claude Code?"
+    echo "This lets you run the wiggum workflow from inside Claude Code"
+    echo "with: /wiggum <issue-file-or-description>"
+    echo ""
+    echo "Install /wiggum skill? [y/N]"
+    read -r answer
+    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+        echo "Skipped."
+        return 0
+    fi
+
+    mkdir -p "$skill_dir"
+    wiggum_skill_content > "$skill_file"
     echo "Created $skill_file"
     echo "You can now use /wiggum inside Claude Code."
 }
