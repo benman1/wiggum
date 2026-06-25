@@ -2328,6 +2328,7 @@ run_check() {
         echo "No verification steps configured in .wiggumrc. Nothing to check."
         return 0
     fi
+    env_reminder
     print_verify_steps 1
     echo ""
 
