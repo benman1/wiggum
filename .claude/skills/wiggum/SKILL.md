@@ -56,6 +56,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
+| `wiggum top` | Every run at a glance: one line per known run (plan, pid, state, task tally). Read-only — use it to see them all at once. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
 `docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
@@ -69,8 +70,8 @@ so always refer to a run by its **plan file**.
   wait for / report on a run, or `wiggum status <plan>` shows `running`: do **not**
   start a new run. Attach to it with `wiggum watch <plan>` to follow it to
   completion (your "wait"), then report a summary (step 5). If you don't know which
-  plan, look for a `docs/*.pid` sidecar or ask. This is the common "what's my
-  background run doing?" case.
+  plan, run `wiggum top` to list every active run, or look for a `docs/*.pid`
+  sidecar. This is the common "what's my background run doing?" case.
 - **An existing plan file** (path ending in `_plan.md`, or a markdown file full of
   `- [ ]` tasks): skip to step 3.
 - **"chain: a.md b.md c.md"** or several plan paths: this is a chain — go to

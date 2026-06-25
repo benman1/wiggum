@@ -366,6 +366,30 @@ Examples:
   wiggum chain docs/*.plan.md --max-iterations 5
 EOF
             ;;
+        top)
+            cat <<EOF
+wiggum top - List every known wiggum run at a glance
+
+Usage:
+  wiggum top [dirs-or-plans...]
+
+Scans for run sidecars (a '.pid' next to each plan) and prints one line per run:
+the plan, its pid (or '-' if not running), its state (running / running
+(blocked) / finished: <reason> / not running), and a task tally. Read-only --
+never starts or stops anything.
+
+With no arguments it scans 'docs/' and the current directory. Each argument may
+be a directory (scanned for '*.pid'), a plan file (its sidecar), or a pidfile.
+
+Note: 'watch' and 'kill' remove a run's pidfile when it ends, so a run that was
+watched to completion won't appear; an unwatched background run lingers as
+'finished: <reason>' until its next run.
+
+Examples:
+  wiggum top
+  wiggum top plans/
+EOF
+            ;;
         docs)
             cat <<EOF
 wiggum docs - Update documentation from input files
@@ -477,6 +501,7 @@ Commands:
   watch     Follow a background run until it finishes (wait)
   kill      Stop a background run (only that run's process)
   chain     Execute several workplans back to back
+  top       List every known wiggum run at a glance
 
 Run 'wiggum help <command>' for details on a specific command.
 
@@ -514,9 +539,9 @@ parse_args() {
     fi
 
     case "$MODE" in
-        plan|execute|init|docs|check|run|status|watch|kill|chain) ;;
+        plan|execute|init|docs|check|run|status|watch|kill|chain|top) ;;
         *)
-            echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'check', 'docs', 'run', 'status', 'watch', 'kill', 'chain', or 'init'." >&2
+            echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'check', 'docs', 'run', 'status', 'watch', 'kill', 'chain', 'top', or 'init'." >&2
             return "$EXIT_BAD_ARGS"
             ;;
     esac
@@ -698,6 +723,12 @@ parse_args() {
 
     # check mode needs no input files
     if [[ "$MODE" == "check" ]]; then
+        return 0
+    fi
+
+    # top mode takes optional scan targets (dirs/plans/pidfiles) in FILES; they
+    # need no file-existence validation (a directory would fail it).
+    if [[ "$MODE" == "top" ]]; then
         return 0
     fi
 
@@ -1287,6 +1318,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
+| `wiggum top` | Every run at a glance: one line per known run (plan, pid, state, task tally). Read-only — use it to see them all at once. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
 `docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
@@ -1300,8 +1332,8 @@ so always refer to a run by its **plan file**.
   wait for / report on a run, or `wiggum status <plan>` shows `running`: do **not**
   start a new run. Attach to it with `wiggum watch <plan>` to follow it to
   completion (your "wait"), then report a summary (step 5). If you don't know which
-  plan, look for a `docs/*.pid` sidecar or ask. This is the common "what's my
-  background run doing?" case.
+  plan, run `wiggum top` to list every active run, or look for a `docs/*.pid`
+  sidecar. This is the common "what's my background run doing?" case.
 - **An existing plan file** (path ending in `_plan.md`, or a markdown file full of
   `- [ ]` tasks): skip to step 3.
 - **"chain: a.md b.md c.md"** or several plan paths: this is a chain — go to
@@ -2314,6 +2346,91 @@ kill_run() {
 run_kill() {
     local base="${FILES[0]}"
     kill_run "$(run_sidecar_file "$base" pid)"
+}
+
+# Collect the pidfiles of known wiggum runs. With no args, scans `docs/` and the
+# current directory; each arg may be a directory (scanned for `*.pid`), a plan
+# file (its sidecar pidfile), or a pidfile itself. Output is sorted/deduped so
+# `top` renders deterministically. A non-matching glob yields nothing (the
+# `[[ -f ]]` guard absorbs the literal pattern under `set -u`).
+find_run_pidfiles() {
+    local args=("$@")
+    [[ ${#args[@]} -eq 0 ]] && args=(docs .)
+    local a f
+    for a in "${args[@]}"; do
+        if [[ -d "$a" ]]; then
+            for f in "$a"/*.pid; do
+                [[ -f "$f" ]] && echo "$f"
+            done
+        elif [[ "$a" == *.pid && -f "$a" ]]; then
+            echo "$a"
+        elif [[ "$a" == *.md ]]; then
+            f="${a%.md}.pid"
+            [[ -f "$f" ]] && echo "$f"
+        fi
+    done | sort -u
+}
+
+# Render one `top` row for a run identified by its pidfile: the plan, the pid (or
+# `-` if not running), the state, and a task tally. Derives the plan/out sidecars
+# from the pidfile name and reuses the same state logic as `status`.
+top_row() {
+    local pidfile="$1"
+    local base="${pidfile%.pid}"
+    local plan="${base}.md"
+    local out="${base}.out"
+
+    local total remaining dropped done_count
+    total="$(count_total_tasks "$plan")"
+    remaining="$(count_unchecked "$plan")"
+    dropped="$(count_dropped "$plan")"
+    done_count=$((total - remaining - dropped))
+
+    local pid pid_display state
+    pid="$(tr -d '[:space:]' < "$pidfile" 2>/dev/null)"
+    if process_alive "$pid"; then
+        pid_display="$pid"
+        if detect_blocked "$out"; then
+            state="running (blocked)"
+        else
+            state="running"
+        fi
+    else
+        pid_display="-"
+        local final
+        final="$(read_run_status "$out")"
+        if [[ -n "$final" ]]; then
+            state="finished: $final"
+        else
+            state="not running"
+        fi
+    fi
+
+    local tasks="${done_count}/${total} done"
+    [[ "$remaining" -gt 0 ]] && tasks="${tasks}, ${remaining} left"
+    [[ "$dropped" -gt 0 ]] && tasks="${tasks}, ${dropped} dropped"
+
+    printf '%-40s %-8s %-20s %s\n' "$plan" "$pid_display" "$state" "$tasks"
+}
+
+# `wiggum top` -- a one-shot, at-a-glance overview of every known wiggum run
+# (anything with a `.pid` sidecar). Optional args narrow or widen the scan (directories, plan
+# files, or pidfiles). Read-only; never starts or stops anything.
+run_top() {
+    # Portable collect (no mapfile -- wiggum targets bash 3.2+ on stock macOS).
+    local pidfiles=() f
+    while IFS= read -r f; do
+        [[ -n "$f" ]] && pidfiles+=("$f")
+    done < <(find_run_pidfiles "${FILES[@]+"${FILES[@]}"}")
+    if [[ ${#pidfiles[@]} -eq 0 ]]; then
+        echo "No wiggum runs found (no .pid sidecars in docs/ or the current directory)."
+        echo "Start one with: wiggum execute <plan> --background"
+        return 0
+    fi
+    printf '%-40s %-8s %-20s %s\n' "PLAN" "PID" "STATE" "TASKS"
+    for f in "${pidfiles[@]}"; do
+        top_row "$f"
+    done
 }
 
 # Execute several workplans back to back, each in its own fresh session, in the

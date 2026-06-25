@@ -5,7 +5,7 @@ _wiggum() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init plan execute check docs run status watch kill chain help"
+    local commands="init plan execute check docs run status watch kill chain top help"
     local presets="node next python astro bash"
     local efforts="low medium high xhigh max"
     local perms="acceptEdits auto bypassPermissions default dontAsk plan"
@@ -81,6 +81,13 @@ _wiggum() {
             ;;
         status|kill)
             _filedir md
+            return
+            ;;
+        top)
+            # optional dirs or plan files
+            if [[ "$cur" != -* ]]; then
+                _filedir
+            fi
             return
             ;;
         watch)
