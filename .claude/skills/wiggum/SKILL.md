@@ -52,6 +52,12 @@ so always refer to a run by its **plan file**.
 
 ### 1. Classify the request
 
+- **A wiggum run already in progress** — the user asks to check on / monitor /
+  wait for / report on a run, or `wiggum status <plan>` shows `running`: do **not**
+  start a new run. Attach to it with `wiggum watch <plan>` to follow it to
+  completion (your "wait"), then report a summary (step 5). If you don't know which
+  plan, look for a `docs/*.pid` sidecar or ask. This is the common "what's my
+  background run doing?" case.
 - **An existing plan file** (path ending in `_plan.md`, or a markdown file full of
   `- [ ]` tasks): skip to step 3.
 - **"chain: a.md b.md c.md"** or several plan paths: this is a chain — go to
@@ -100,10 +106,13 @@ wiggum execute docs/<name>_plan.md --background
 Then supervise in a loop until it finishes:
 
 1. `wiggum status docs/<name>_plan.md` — read **State** and the task counts.
-2. While **State** is `running`, keep watching:
+2. While **State** is `running`, `wiggum watch <plan>` it — always watch a running
+   workplan through to the end rather than leaving it unattended:
    `wiggum watch docs/<name>_plan.md --timeout 1800 --kill-on-timeout`
-   `watch` blocks until the run ends (your "wait"); `--timeout`/`--kill-on-timeout`
-   bound a stuck run. Tune the timeout to the plan's size.
+   `watch` streams the run's output and blocks until it ends (your "wait");
+   `--timeout`/`--kill-on-timeout` bound a stuck run. Tune the timeout to the plan's
+   size. When it returns, summarize what happened (step 5) — don't just leave the
+   run finished and silent.
 3. **Spot a wedged run early.** Treat the run as spinning (not working) when
    `status` reports `running but appears blocked`, or `watch` returns non-zero —
    under the hood the `.out`/`.log` shows `No progress detected`, `Stalled for ...`,
