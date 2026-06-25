@@ -97,9 +97,12 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 ```
 
 Rules for a good plan:
-- Every task is one `- [ ]` line (GFM `*`/`+` bullets also count) with its own
-  **Acceptance:** and **Files:** lines. A task without observable acceptance is a
-  wish, not a step.
+- Every task is a real Markdown checkbox line — `- [ ]` (GFM `*`/`+` bullets also
+  count) — with its own **Acceptance:** and **Files:** lines. This matters
+  mechanically: wiggum tracks progress by *counting* `[ ]`/`[x]`/`[~]` checkboxes,
+  so a "task" written as a heading, bold text, or plain prose has no checkbox, is
+  invisible to wiggum, and makes the run report `0 tasks` and stop immediately. A
+  task without observable acceptance is a wish, not a step.
 - `[x]` = done, `[ ]` = pending, `[~]` = dropped (terminal — wiggum won't re-pick
   it). Record why on the `[~]` line.
 - Before finalizing, confirm the APIs/commands the plan assumes actually exist

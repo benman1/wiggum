@@ -1741,9 +1741,10 @@ EOF
     grep -q -- "--background" .claude/skills/wiggum/SKILL.md
     grep -q -- "--kill-on-timeout" .claude/skills/wiggum/SKILL.md
     grep -qi "blocked" .claude/skills/wiggum/SKILL.md
-    # Plan format it can author.
+    # Plan format it can author, and why the checkboxes matter (counted for progress).
     grep -q "Acceptance:" .claude/skills/wiggum/SKILL.md
     grep -q "Files:" .claude/skills/wiggum/SKILL.md
+    grep -q "0 tasks" .claude/skills/wiggum/SKILL.md
     # Runtime environment guidance (activate conda/venv/etc. before running).
     grep -qi "environment" .claude/skills/wiggum/SKILL.md
     grep -qi "conda" .claude/skills/wiggum/SKILL.md
