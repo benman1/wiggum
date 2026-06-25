@@ -115,7 +115,7 @@ By default `execute` runs in the foreground and blocks until it finishes. Add `-
 
 **Phase 1 -- Diagnostic & Status Sync**
 
-Before writing any code, Wiggum compares the plan against the actual state of the repository. It marks tasks that are already complete, flags inaccuracies, and identifies what to do next. This sync is committed separately so implementation commits stay clean.
+Before writing any code, Wiggum compares the plan against the actual state of the repository. It marks tasks that are already complete, flags inaccuracies, and identifies what to do next. It also normalizes the plan so every task is a trackable Markdown checkbox — if a task was written as a heading, bold text, or prose, it's rewritten as a `- [ ]` line so wiggum's progress counting can see it. Because progress is counted *after* this phase, any checkboxes added here are picked up immediately. This sync is committed separately so implementation commits stay clean.
 
 **Phase 2 -- Iterative Implementation**
 

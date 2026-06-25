@@ -3356,7 +3356,9 @@ EOF
     ! grep -q "Execute the next discrete implementation step" claude_calls
 }
 
-@test "run_execute: warns when the plan has no trackable tasks" {
+@test "run_execute: warns when the plan still has no trackable tasks" {
+    # If phase 1 can't produce any checkboxes (here, a no-op stub), wiggum skips
+    # implementation rather than spinning -- the post-phase-1 safety net.
     mkdir -p docs
     cat > docs/plan.md <<'EOF'
 # Plan
@@ -3373,6 +3375,34 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"no trackable tasks"* ]]
     ! grep -q "Execute the next discrete implementation step" claude_calls
+}
+
+@test "run_execute: counts checkboxes that phase 1 adds to the plan" {
+    # Proves the counts are read AFTER phase 1: a heading-only task (0 checkboxes
+    # to start) becomes trackable once the phase-1 diagnostic rewrites it.
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+# Plan
+### Task one (no checkbox yet)
+EOF
+    claude() {
+        if [[ "$*" == *"Analyze the repository against the workplan"* ]]; then
+            printf '# Plan\n- [ ] Task one\n' > docs/plan.md
+        fi
+        printf '%s\n' "$*" >> claude_calls
+        return 0
+    }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    run run_execute
+    [ "$status" -eq 0 ]
+    # The added checkbox was counted, so implementation ran (not the skip path).
+    [[ "$output" != *"no trackable tasks"* ]]
+    grep -q "Execute the next discrete implementation step" claude_calls
 }
 
 # ── env_reminder ─────────────────────────────────────────────────────────────
