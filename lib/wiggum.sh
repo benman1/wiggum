@@ -1262,8 +1262,7 @@ wiggum_skill_content() {
     cat <<'SKILL_EOF'
 ---
 name: wiggum
-description: Orchestrate the wiggum CLI — create a workplan, run it, monitor it, wait for it, detect when it's blocked, kill it if it runs too long, and chain workplans together
-disable-model-invocation: true
+description: Orchestrate the wiggum CLI — create a workplan, run it, monitor it, wait for it, detect when it's blocked, kill it if it runs too long, and chain workplans together. Use for any non-trivial change you want planned, executed, verified, and committed through wiggum.
 argument-hint: <issue, plan file, or "chain: plan-a.md plan-b.md">
 ---
 

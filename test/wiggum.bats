@@ -1682,8 +1682,14 @@ EOF
     echo "y" | setup_wiggum_skill
     [ -f ".claude/skills/wiggum/SKILL.md" ]
     grep -q "name: wiggum" .claude/skills/wiggum/SKILL.md
-    grep -q "disable-model-invocation: true" .claude/skills/wiggum/SKILL.md
     grep -q '\$ARGUMENTS' .claude/skills/wiggum/SKILL.md
+}
+
+@test "setup_wiggum_skill: skill is model-invocable (no disable flag)" {
+    echo "y" | setup_wiggum_skill
+    # The orchestrator is meant to be driven by Claude (execute, watch, ...),
+    # so it must NOT carry disable-model-invocation.
+    ! grep -q "disable-model-invocation" .claude/skills/wiggum/SKILL.md
 }
 
 @test "setup_wiggum_skill: skips when declined" {
