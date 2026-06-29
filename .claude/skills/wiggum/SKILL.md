@@ -61,6 +61,12 @@ Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
 `docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
 so always refer to a run by its **plan file**.
 
+Always invoke these as `wiggum <command>` (e.g. `wiggum top`, `wiggum status`).
+Wiggum's internals are shell functions named `run_top`, `run_status`, etc. — those
+are **not** commands. Never call `run_top`/`run_status`/… directly: they only exist
+inside wiggum's own process, so in any fresh shell (notably under `conda run …`)
+they fail with `command not found`. The `wiggum` binary is the only entry point.
+
 ## Workflow
 
 ### 1. Classify the request
