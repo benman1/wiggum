@@ -1353,6 +1353,11 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 ```markdown
 # <Title>
 
+## Constraints
+- In scope: <what this work will do>
+- Out of scope: <what it deliberately will not do>
+- Never do: <actions that would be wrong here>
+
 ## Phase 1: <name>
 - [ ] <discrete task>
   Acceptance: <observable outcome — a passing test, a specific log line, a file
@@ -1372,6 +1377,9 @@ a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
+- Open the plan, before any phase, with a `## Constraints` section as a self-check
+  — `In scope`, `Out of scope`, and `Never do` — then derive the phases so they
+  stay within those bounds.
 - Every task is a real Markdown checkbox line — `- [ ]` (GFM `*`/`+` bullets also
   count) — with its own **Acceptance:** and **Files:** lines. This matters
   mechanically: wiggum tracks progress by *counting* `[ ]`/`[x]`/`[~]` checkboxes,
@@ -1706,7 +1714,7 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p \
-        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_constraints_summary) Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
@@ -1733,6 +1741,11 @@ PROMPT_SUFFIX="Do not ask for confirmation -- just do it."
 # Build workplan context preamble.  Usage: $(prompt_workplan "$file_list")
 prompt_workplan() {
     echo "The workplan is defined ONLY in: $1. You may read README.md and other project documentation for context, but they are not the plan."
+}
+
+# Constraints self-check that must open the plan.  Usage: $(prompt_constraints_summary)
+prompt_constraints_summary() {
+    echo "FIRST, before writing any phases or tasks, open the plan with a '## Constraints' section as a self-check: 'In scope' (what this work will do), 'Out of scope' (what it deliberately will not do), and 'Never do' (actions that would be wrong here -- e.g. editing the user's config, breaking the public interface, or weakening verification to make it pass). Then derive the phases and tasks so they stay within these bounds."
 }
 
 # Verification discipline appended to the planner prompt.  Usage: $(prompt_plan_verification)

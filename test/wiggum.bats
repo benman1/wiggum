@@ -1709,6 +1709,25 @@ EOF
     [[ "$output" == *"per-task 'Acceptance:' and 'Files:' lines"* ]]
 }
 
+@test "prompt_constraints_summary: opens the plan with a Constraints section as a self-check" {
+    run prompt_constraints_summary
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"## Constraints"* ]]
+    [[ "$output" == *"self-check"* ]]
+}
+
+@test "prompt_constraints_summary: names in-scope, out-of-scope, and never-do" {
+    run prompt_constraints_summary
+    [[ "$output" == *"In scope"* ]]
+    [[ "$output" == *"Out of scope"* ]]
+    [[ "$output" == *"Never do"* ]]
+}
+
+@test "prompt_constraints_summary: requires it before any phases or tasks" {
+    run prompt_constraints_summary
+    [[ "$output" == *"before writing any phases or tasks"* ]]
+}
+
 # ── setup_wiggum_skill ───────────────────────────────────────────────────────
 
 @test "setup_wiggum_skill: creates skill file when approved" {
@@ -1743,6 +1762,14 @@ EOF
     [[ "$output" == *"Edge Cases"* ]]
     [[ "$output" == *"Error States"* ]]
     [[ "$output" == *"Non-Functional"* ]]
+}
+
+@test "wiggum_skill_content: documents opening the plan with a Constraints section" {
+    run wiggum_skill_content
+    [[ "$output" == *"## Constraints"* ]]
+    [[ "$output" == *"In scope"* ]]
+    [[ "$output" == *"Out of scope"* ]]
+    [[ "$output" == *"Never do"* ]]
 }
 
 @test "wiggum_skill_content: committed SKILL.md stays in sync with the heredoc" {
@@ -2544,6 +2571,9 @@ S
     grep -q 'Then' "$captured"
     # The unchanged per-task acceptance rule is still present verbatim (additive change)
     grep -q "'Acceptance:' line stating an observable outcome" "$captured"
+    # The constraints self-check reached the prompt
+    grep -q '## Constraints' "$captured"
+    grep -q 'before writing any phases or tasks' "$captured"
 }
 
 # ── Strict mode ──────────────────────────────────────────────────────────────
