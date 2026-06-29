@@ -1739,6 +1739,10 @@ EOF
     grep -q "wiggum kill" .claude/skills/wiggum/SKILL.md
     grep -q "wiggum chain" .claude/skills/wiggum/SKILL.md
     grep -q "wiggum top" .claude/skills/wiggum/SKILL.md
+    # Warn the driving agent off the internal shell-function names, which fail
+    # with "command not found" in a fresh shell (e.g. under conda run).
+    grep -q "run_top" .claude/skills/wiggum/SKILL.md
+    grep -qi "command not found" .claude/skills/wiggum/SKILL.md
 }
 
 @test "setup_wiggum_skill: skill covers supervision and plan format" {
