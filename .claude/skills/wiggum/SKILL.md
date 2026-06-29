@@ -91,6 +91,11 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 ```markdown
 # <Title>
 
+## Constraints
+- In scope: <what this work will do>
+- Out of scope: <what it deliberately will not do>
+- Never do: <actions that would be wrong here>
+
 ## Phase 1: <name>
 - [ ] <discrete task>
   Acceptance: <observable outcome — a passing test, a specific log line, a file
@@ -110,6 +115,9 @@ a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
+- Open the plan, before any phase, with a `## Constraints` section as a self-check
+  — `In scope`, `Out of scope`, and `Never do` — then derive the phases so they
+  stay within those bounds.
 - Every task is a real Markdown checkbox line — `- [ ]` (GFM `*`/`+` bullets also
   count) — with its own **Acceptance:** and **Files:** lines. This matters
   mechanically: wiggum tracks progress by *counting* `[ ]`/`[x]`/`[~]` checkboxes,
