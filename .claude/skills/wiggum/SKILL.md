@@ -99,6 +99,14 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 - [ ] <next task>
   Acceptance: ...
   Files: ...
+
+### Acceptance Criteria
+**Happy Path** — Given <context>, When <action>, Then <observable outcome>.
+**Edge Cases** — empty, boundary, or large inputs behave correctly.
+**Error States** — invalid input or a failed/unavailable dependency fails safely
+with a clear error.
+**Non-Functional** — name an observable check (a benchmark command, a lint rule,
+a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
@@ -110,6 +118,16 @@ Rules for a good plan:
   task without observable acceptance is a wish, not a step.
 - `[x]` = done, `[ ]` = pending, `[~]` = dropped (terminal — wiggum won't re-pick
   it). Record why on the `[~]` line.
+- Give each phase its own phase-level **### Acceptance Criteria** section, in
+  addition to (not instead of) the per-task `Acceptance:`/`Files:` lines. Organize
+  it into four categories: **Happy Path** (the primary flow works end to end),
+  **Edge Cases** (empty, boundary, or large inputs), **Error States** (invalid
+  input or a failed/unavailable dependency fails safely with a clear error), and
+  **Non-Functional** (performance, formatting, accessibility). Every Non-Functional
+  criterion must name an *observable check* — a benchmark command, a lint rule, a
+  measurable threshold — never a feeling. `Given <context>, When <action>, Then
+  <observable outcome>` is the recommended form, but a plain observable pass/fail
+  line is fine where Given/When/Then is overkill.
 - Before finalizing, confirm the APIs/commands the plan assumes actually exist
   (grep the repo). Don't plan around a hallucinated API.
 - Keep plans focused. Very large plans (40+ tasks) tend to stall — split them and
