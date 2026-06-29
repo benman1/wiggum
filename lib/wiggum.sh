@@ -1361,6 +1361,14 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 - [ ] <next task>
   Acceptance: ...
   Files: ...
+
+### Acceptance Criteria
+**Happy Path** — Given <context>, When <action>, Then <observable outcome>.
+**Edge Cases** — empty, boundary, or large inputs behave correctly.
+**Error States** — invalid input or a failed/unavailable dependency fails safely
+with a clear error.
+**Non-Functional** — name an observable check (a benchmark command, a lint rule,
+a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
@@ -1372,6 +1380,16 @@ Rules for a good plan:
   task without observable acceptance is a wish, not a step.
 - `[x]` = done, `[ ]` = pending, `[~]` = dropped (terminal — wiggum won't re-pick
   it). Record why on the `[~]` line.
+- Give each phase its own phase-level **### Acceptance Criteria** section, in
+  addition to (not instead of) the per-task `Acceptance:`/`Files:` lines. Organize
+  it into four categories: **Happy Path** (the primary flow works end to end),
+  **Edge Cases** (empty, boundary, or large inputs), **Error States** (invalid
+  input or a failed/unavailable dependency fails safely with a clear error), and
+  **Non-Functional** (performance, formatting, accessibility). Every Non-Functional
+  criterion must name an *observable check* — a benchmark command, a lint rule, a
+  measurable threshold — never a feeling. `Given <context>, When <action>, Then
+  <observable outcome>` is the recommended form, but a plain observable pass/fail
+  line is fine where Given/When/Then is overkill.
 - Before finalizing, confirm the APIs/commands the plan assumes actually exist
   (grep the repo). Don't plan around a hallucinated API.
 - Keep plans focused. Very large plans (40+ tasks) tend to stall — split them and
@@ -1688,7 +1706,7 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p \
-        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
@@ -1720,6 +1738,11 @@ prompt_workplan() {
 # Verification discipline appended to the planner prompt.  Usage: $(prompt_plan_verification)
 prompt_plan_verification() {
     echo "Every task MUST also have a 'Files:' line naming the files it will create or modify (best-effort paths). Before finalizing the plan, confirm the libraries, APIs, and commands the approach depends on actually exist -- grep the repo or read the dependency. Do not build the plan around an assumed or hallucinated API."
+}
+
+# Phase-level acceptance-criteria discipline appended to the planner prompt.  Usage: $(prompt_acceptance_criteria)
+prompt_acceptance_criteria() {
+    echo "In addition to the per-task 'Acceptance:'/'Files:' lines (which stay), give EACH phase its own '### Acceptance Criteria' section organized by four categories: 'Happy Path' (the primary flow works end to end), 'Edge Cases' (empty, boundary, or large inputs), 'Error States' (invalid input or a failed/unavailable dependency fails safely with a clear error), and 'Non-Functional' (performance, formatting, accessibility). Every 'Non-Functional' criterion MUST name an 'observable check' -- a benchmark command, a lint rule, a measurable threshold -- never a feeling. Recommend writing each criterion in the 'Given <context>, When <action>, Then <observable outcome>' form, but a plain observable pass/fail line is allowed where Given/When/Then is overkill. This phase-level section is additive: it does NOT replace the per-task 'Acceptance:' and 'Files:' lines."
 }
 
 # Verification discipline appended to the implementation prompt.  Usage: $(prompt_implement_verification)

@@ -1676,6 +1676,39 @@ EOF
     [[ "$output" == *"acceptance criterion is met and all three spot checks pass"* ]]
 }
 
+@test "prompt_acceptance_criteria: requires a per-phase Acceptance Criteria section" {
+    run prompt_acceptance_criteria
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"### Acceptance Criteria"* ]]
+}
+
+@test "prompt_acceptance_criteria: names the four criteria categories" {
+    run prompt_acceptance_criteria
+    [[ "$output" == *"Happy Path"* ]]
+    [[ "$output" == *"Edge Cases"* ]]
+    [[ "$output" == *"Error States"* ]]
+    [[ "$output" == *"Non-Functional"* ]]
+}
+
+@test "prompt_acceptance_criteria: recommends the Given/When/Then form" {
+    run prompt_acceptance_criteria
+    [[ "$output" == *"Given"* ]]
+    [[ "$output" == *"When"* ]]
+    [[ "$output" == *"Then"* ]]
+}
+
+@test "prompt_acceptance_criteria: demands an observable check for Non-Functional" {
+    run prompt_acceptance_criteria
+    [[ "$output" == *"Non-Functional"* ]]
+    [[ "$output" == *"observable check"* ]]
+}
+
+@test "prompt_acceptance_criteria: keeps the section additive to per-task lines" {
+    run prompt_acceptance_criteria
+    [[ "$output" == *"additive"* ]]
+    [[ "$output" == *"per-task 'Acceptance:' and 'Files:' lines"* ]]
+}
+
 # ── setup_wiggum_skill ───────────────────────────────────────────────────────
 
 @test "setup_wiggum_skill: creates skill file when approved" {
@@ -1701,6 +1734,23 @@ EOF
     run wiggum_skill_content
     [[ "$output" == *"name: wiggum"* ]]
     [[ "$output" == *"wiggum execute"* ]]
+}
+
+@test "wiggum_skill_content: documents the phase-level Acceptance Criteria section" {
+    run wiggum_skill_content
+    [[ "$output" == *"### Acceptance Criteria"* ]]
+    [[ "$output" == *"Happy Path"* ]]
+    [[ "$output" == *"Edge Cases"* ]]
+    [[ "$output" == *"Error States"* ]]
+    [[ "$output" == *"Non-Functional"* ]]
+}
+
+@test "wiggum_skill_content: committed SKILL.md stays in sync with the heredoc" {
+    local committed
+    committed="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/.claude/skills/wiggum/SKILL.md"
+    [ -f "$committed" ]
+    # Fails loudly if the two copies drift; the function is the source of truth.
+    diff <(wiggum_skill_content) "$committed"
 }
 
 @test "setup_wiggum_skill: leaves an up-to-date skill untouched" {
@@ -2465,6 +2515,35 @@ S
     output="$(run_plan 2>/dev/null)"
     # Should only contain the file content, not Claude's chatter
     [ "$output" = "# Plan" ]
+}
+
+@test "run_plan: wires the acceptance-criteria helper and per-task rule into the planner prompt" {
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    # Capture the prompt claude receives; still write the plan so run_plan succeeds
+    captured="$TEST_DIR/captured_prompt.txt"
+    claude() { printf '%s\n' "$@" > "$captured"; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>/dev/null
+
+    # The phase-level Acceptance Criteria section and its four categories reached the prompt
+    grep -q '### Acceptance Criteria' "$captured"
+    grep -q 'Happy Path' "$captured"
+    grep -q 'Edge Cases' "$captured"
+    grep -q 'Error States' "$captured"
+    grep -q 'Non-Functional' "$captured"
+    # The recommended Given/When/Then form reached the prompt
+    grep -q 'Given' "$captured"
+    grep -q 'When' "$captured"
+    grep -q 'Then' "$captured"
+    # The unchanged per-task acceptance rule is still present verbatim (additive change)
+    grep -q "'Acceptance:' line stating an observable outcome" "$captured"
 }
 
 # ── Strict mode ──────────────────────────────────────────────────────────────
