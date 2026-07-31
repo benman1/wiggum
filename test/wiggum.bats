@@ -2635,6 +2635,16 @@ S
     # The constraints self-check reached the prompt
     grep -q '## Constraints' "$captured"
     grep -q 'before writing any phases or tasks' "$captured"
+    # The four risk gates reached the prompt
+    grep -q 'read-only measurement' "$captured"
+    grep -q 'dry run' "$captured"
+    grep -q 'idempotent' "$captured"
+    grep -q 'legitimate exceptions' "$captured"
+    # The sequencing rule reached the prompt
+    grep -q 'ship independently' "$captured"
+    grep -q 'not the task-dependency list' "$captured"
+    # Appended once for the whole prompt, not once per input file
+    [ "$(grep -c 'dry run' "$captured")" -eq 1 ]
 }
 
 # ── Strict mode ──────────────────────────────────────────────────────────────

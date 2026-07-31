@@ -179,7 +179,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       Acceptance: `bash -c 'source lib/wiggum.sh; prompt_phase_sequencing'` exits 0 and
       output contains `ship independently`, `must wait`, and `not the task-dependency list`.
       Files: `lib/wiggum.sh`
-- [ ] Wire both helpers into `run_plan`'s prompt string (`lib/wiggum.sh:1717`) after
+- [x] Wire both helpers into `run_plan`'s prompt string (`lib/wiggum.sh:1717`) after
       `$(prompt_acceptance_criteria)` and before the `Use the Write tool` clause, keeping
       every existing clause byte-identical.
       Acceptance: `grep -c 'prompt_risk_gates\|prompt_phase_sequencing' lib/wiggum.sh`
@@ -196,7 +196,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       reports 3 passing tests, 0 failures.
       Files: `test/wiggum.bats`
       Depends on: the two helper tasks above.
-- [ ] Extend the existing `run_plan` wiring test (`test/wiggum.bats:2547`) — by adding
+- [x] Extend the existing `run_plan` wiring test (`test/wiggum.bats:2547`) — by adding
       assertions, not replacing any — so the captured prompt contains the risk-gate and
       sequencing text alongside the existing checkbox/`Acceptance:`/`Files:`/`## Constraints`
       assertions.
