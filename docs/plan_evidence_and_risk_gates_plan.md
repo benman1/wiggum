@@ -111,7 +111,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       `needs a new one`; the same command as above exits 0.
       Files: `lib/wiggum.sh`
       Depends on: previous task (same function body).
-- [ ] Add Bats tests `prompt_plan_verification: requires path:line citations for current
+- [x] Add Bats tests `prompt_plan_verification: requires path:line citations for current
       behaviour` and `prompt_plan_verification: requires checking test-file harness
       feasibility`, placed in the existing prompt-helper block near
       `test/wiggum.bats:1640`.
@@ -155,7 +155,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
 
 ## Phase 2: `prompt_risk_gates` and `prompt_phase_sequencing` (universal)
 
-- [ ] Add `prompt_risk_gates()` to `lib/wiggum.sh` next to the other prompt templates
+- [x] Add `prompt_risk_gates()` to `lib/wiggum.sh` next to the other prompt templates
       (after `prompt_acceptance_criteria`, ~`lib/wiggum.sh:1759`), emitting the four gates:
       (1) measure before you act — if a phase is justified by a claim about production data
       or runtime state, the first phase is a read-only measurement of that claim and each

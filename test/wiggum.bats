@@ -1740,6 +1740,36 @@ EOF
     [[ "$output" == *"Never do"* ]]
 }
 
+@test "prompt_risk_gates: names the four risk gates" {
+    run prompt_risk_gates
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"read-only measurement"* ]]
+    [[ "$output" == *"never"* ]]
+    [[ "$output" == *"legitimate exceptions"* ]]
+    [[ "$output" == *"first run"* ]]
+}
+
+@test "prompt_risk_gates: states each gate conditionally so no phase is mandated" {
+    run prompt_risk_gates
+    [[ "$output" == *"If a phase is justified by"* ]]
+    [[ "$output" == *"If a task"* ]]
+    [[ "$output" == *"not triggered"* ]]
+}
+
+@test "prompt_risk_gates: irreversible tasks carry all four conditions" {
+    run prompt_risk_gates
+    [[ "$output" == *"dry run"* ]]
+    [[ "$output" == *"export"* ]]
+    [[ "$output" == *"idempotent"* ]]
+    [[ "$output" == *"affected count"* ]]
+}
+
+@test "prompt_risk_gates: a new guard must pass now and fail on reintroduction" {
+    run prompt_risk_gates
+    [[ "$output" == *"passes against current code on its first run"* ]]
+    [[ "$output" == *"reintroduced"* ]]
+}
+
 @test "prompt_constraints_summary: requires it before any phases or tasks" {
     run prompt_constraints_summary
     [[ "$output" == *"before writing any phases or tasks"* ]]
