@@ -934,6 +934,26 @@ looks_like_plan() {
     grep -qE "^[[:space:]]*${WIGGUM_TASK_PREFIX}[[:space:]]*\[[ xX]\]|^#" "$f"
 }
 
+# Returns 0 if any readable input file reads like a defect report, 1 otherwise.
+#
+# Gates the diagnosis sections of the planner prompt so a greenfield feature
+# request is never pushed into inventing symptoms. Only strong signals count:
+# weak words (`error`, `fail`, `missing`, `null` on their own) appear in
+# ordinary feature specs and are deliberately excluded. Absent or unreadable
+# paths are skipped silently, and an empty argument list returns 1.
+DEFECT_SIGNAL_REGEX='bug|defect|regression|broken|breaks|crash|traceback|stack ?trace|incident|steps to reproduce|no longer|used to work|silently|wrong|incorrect|misreport'
+
+input_describes_defect() {
+    local f
+    for f in "$@"; do
+        [[ -f "$f" && -r "$f" ]] || continue
+        if grep -qiE "$DEFECT_SIGNAL_REGEX" "$f" 2>/dev/null; then
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Derive a filename-safe slug from a file's first heading or first line.
 # Falls back to a date stamp if nothing usable is found.
 slugify() {

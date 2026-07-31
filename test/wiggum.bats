@@ -895,6 +895,18 @@ EOF
     ! looks_like_plan plan.md
 }
 
+# ── input_describes_defect ───────────────────────────────────────────────────
+
+@test "input_describes_defect: accepts a defect-shaped input file" {
+    echo "This is a Bug: the column is wrong" > issue.md
+    input_describes_defect issue.md
+}
+
+@test "input_describes_defect: rejects a feature-shaped input file" {
+    echo "Add a CSV export button to the reports page" > issue.md
+    ! input_describes_defect issue.md
+}
+
 # ── run_benchmarks ───────────────────────────────────────────────────────────
 
 @test "run_benchmarks: returns nothing when no scripts configured" {
