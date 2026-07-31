@@ -1818,6 +1818,41 @@ EOF
     [[ "$output" == *"delete good data"* ]]
 }
 
+@test "prompt_defect_diagnosis: names the four diagnosis sections" {
+    run prompt_defect_diagnosis
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"## Symptoms"* ]]
+    [[ "$output" == *"## Root cause"* ]]
+    [[ "$output" == *"## Why existing verification missed it"* ]]
+    [[ "$output" == *"## Blast radius"* ]]
+    [[ "$output" == *"unaffected"* ]]
+}
+
+@test "prompt_defect_diagnosis: requires every symptom tagged observed or predicted" {
+    run prompt_defect_diagnosis
+    [[ "$output" == *"observed"* ]]
+    [[ "$output" == *"predicted"* ]]
+    [[ "$output" == *"EVERY symptom tagged"* ]]
+}
+
+@test "prompt_defect_diagnosis: requires the tell" {
+    run prompt_defect_diagnosis
+    [[ "$output" == *"tell"* ]]
+    [[ "$output" == *"benign explanation"* ]]
+}
+
+@test "prompt_defect_diagnosis: requires path:line for each root-cause step" {
+    run prompt_defect_diagnosis
+    [[ "$output" == *"numbered path from entry point to failure"* ]]
+    [[ "$output" == *"path:line"* ]]
+}
+
+@test "prompt_defect_diagnosis: permits skipping for non-defect work" {
+    run prompt_defect_diagnosis
+    [[ "$output" =~ not.*defect ]]
+    [[ "$output" == *"inventing symptoms"* ]]
+}
+
 @test "prompt_constraints_summary: requires it before any phases or tasks" {
     run prompt_constraints_summary
     [[ "$output" == *"before writing any phases or tasks"* ]]
@@ -2679,6 +2714,61 @@ S
     grep -q 'not the task-dependency list' "$captured"
     # Appended once for the whole prompt, not once per input file
     [ "$(grep -c 'dry run' "$captured")" -eq 1 ]
+}
+
+@test "run_plan: includes the diagnosis sections for defect-shaped input" {
+    mkdir -p docs
+    echo "Login crashes after deploy -- the traceback points at session.py" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    captured="$TEST_DIR/captured_prompt.txt"
+    errlog="$TEST_DIR/stderr.txt"
+    claude() { printf '%s\n' "$@" > "$captured"; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>"$errlog"
+
+    # All four diagnosis sections reached the prompt
+    grep -q '## Symptoms' "$captured"
+    grep -q '## Root cause' "$captured"
+    grep -q '## Why existing verification missed it' "$captured"
+    grep -q '## Blast radius' "$captured"
+    # The stderr line reports the sections were enabled
+    grep -q 'Diagnosis sections: enabled' "$errlog"
+    # Pre-existing clauses survive the insertion
+    grep -q "'Acceptance:' line stating an observable outcome" "$captured"
+    grep -q '## Constraints' "$captured"
+    # Appended once for the whole prompt, not once per input file
+    [ "$(grep -c '## Blast radius' "$captured")" -eq 1 ]
+}
+
+@test "run_plan: omits the diagnosis sections for a feature request" {
+    mkdir -p docs
+    echo "Add a CSV export button to the reports page" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    captured="$TEST_DIR/captured_prompt.txt"
+    errlog="$TEST_DIR/stderr.txt"
+    claude() { printf '%s\n' "$@" > "$captured"; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>"$errlog"
+
+    # The planner is never asked to invent symptoms
+    ! grep -q '## Symptoms' "$captured"
+    ! grep -q '## Blast radius' "$captured"
+    # The stderr line reports the sections were skipped
+    grep -q 'Diagnosis sections: skipped' "$errlog"
+    # The universal rules still reached the prompt
+    grep -q 'dry run' "$captured"
+    grep -q 'ship independently' "$captured"
+    grep -q '## Constraints' "$captured"
 }
 
 # ── Strict mode ──────────────────────────────────────────────────────────────

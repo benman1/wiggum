@@ -280,7 +280,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       tests, 0 failures.
       Files: `test/wiggum.bats`
       Depends on: the helper task.
-- [ ] Wire the conditional into `run_plan`: build a local `defect_rules` variable that is
+- [x] Wire the conditional into `run_plan`: build a local `defect_rules` variable that is
       `"$(prompt_defect_diagnosis) "` when `input_describes_defect "${FILES[@]}"` succeeds
       and empty otherwise, interpolate it right after `$(prompt_constraints_summary)`, and
       echo to stderr `Diagnosis sections: enabled (input looks like a defect report)` or
@@ -292,7 +292,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       prompt does **not** contain `## Symptoms`.
       Files: `lib/wiggum.sh`
       Depends on: the detector and the `prompt_defect_diagnosis` helper.
-- [ ] Add two `run_plan` Bats tests — `run_plan: includes the diagnosis sections for
+- [x] Add two `run_plan` Bats tests — `run_plan: includes the diagnosis sections for
       defect-shaped input` and `run_plan: omits the diagnosis sections for a feature request`
       — using the existing capture pattern (`test/wiggum.bats:2547`), asserting both the
       prompt content and the stderr line.

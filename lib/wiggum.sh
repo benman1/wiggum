@@ -1715,6 +1715,17 @@ run_plan() {
 
     echo "=== WIGGUM PLAN MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
+    # The diagnosis sections are paid for only when the input reads like a
+    # defect report -- a feature request must never be pushed into inventing
+    # symptoms. The detector is a heuristic, so the emitted text also carries
+    # its own skip clause.
+    local defect_rules=""
+    if input_describes_defect "${FILES[@]+"${FILES[@]}"}"; then
+        defect_rules="$(prompt_defect_diagnosis) "
+        echo "Diagnosis sections: enabled (input looks like a defect report)" >&2
+    else
+        echo "Diagnosis sections: skipped (input does not look like a defect report)" >&2
+    fi
     if [[ "$piped" == true ]]; then
         echo "Output: stdout" >&2
     else
@@ -1734,7 +1745,7 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p \
-        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_constraints_summary) Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) $(prompt_risk_gates) $(prompt_phase_sequencing) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_constraints_summary) ${defect_rules}Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) $(prompt_risk_gates) $(prompt_phase_sequencing) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
@@ -1786,6 +1797,12 @@ prompt_risk_gates() {
 # Phase sequencing rule appended to the planner prompt.  Usage: $(prompt_phase_sequencing)
 prompt_phase_sequencing() {
     echo "After the phases, close the plan with a '## Sequencing -- what can ship independently' section that names, for every phase, whether it can ship independently or must wait, and the reason. This is not the task-dependency list: 'Depends on:' orders the work, this states shipping risk. Discriminator: a fix that only turns nulls into values ships freely; a fix that can delete good data must wait for the measurement that bounds its blast radius."
+}
+
+# Defect diagnosis sections, emitted only when the input looks like a defect
+# report (see input_describes_defect).  Usage: $(prompt_defect_diagnosis)
+prompt_defect_diagnosis() {
+    echo "The input reads like a defect report, so the plan MUST diagnose before it prescribes: place these four sections BEFORE the phases. '## Symptoms': what is observably wrong, in the terms of whoever sees it (a user, an on-call engineer, a dashboard), with EVERY symptom tagged **observed** (you saw it in data, logs, or a reproduction) or **predicted** (it follows from the code but you have not seen it happen) -- never present a predicted symptom as observed. Name the tell: the specific signal that separates this defect from the benign explanation, so a reader can tell them apart. '## Root cause': a numbered path from entry point to failure, each step carrying its \`path:line\`. '## Why existing verification missed it': name the blind spot and cite the tests that pass anyway; if a passing test pins the buggy behaviour, say so and name it. '## Blast radius': what is affected, and explicitly what is unaffected and why. If the input turns out not to be a defect after all, omit these four sections rather than inventing symptoms."
 }
 
 # Verification discipline appended to the implementation prompt.  Usage: $(prompt_implement_verification)
