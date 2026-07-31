@@ -1650,6 +1650,14 @@ EOF
     [[ "$output" == *"actually exist"* ]]
 }
 
+@test "prompt_plan_verification: requires path:line citations for current behaviour" {
+    run prompt_plan_verification
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"path:line"* ]]
+    [[ "$output" == *"read that line"* ]]
+    [[ "$output" == *"current behaviour"* ]]
+}
+
 @test "prompt_implement_verification: demands assumption checks before coding" {
     run prompt_implement_verification
     [ "$status" -eq 0 ]

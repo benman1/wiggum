@@ -1750,7 +1750,7 @@ prompt_constraints_summary() {
 
 # Verification discipline appended to the planner prompt.  Usage: $(prompt_plan_verification)
 prompt_plan_verification() {
-    echo "Every task MUST also have a 'Files:' line naming the files it will create or modify (best-effort paths). Before finalizing the plan, confirm the libraries, APIs, and commands the approach depends on actually exist -- grep the repo or read the dependency. Do not build the plan around an assumed or hallucinated API."
+    echo "Every task MUST also have a 'Files:' line naming the files it will create or modify (best-effort paths). Before finalizing the plan, confirm the libraries, APIs, and commands the approach depends on actually exist -- grep the repo or read the dependency. Do not build the plan around an assumed or hallucinated API. Every statement the plan makes about current behaviour MUST cite its source as \`path:line\`, and you MUST have read that line before citing it -- no citation from memory or inference. This complements the 'Files:' line: 'Files:' covers what a task will write, the citations cover what you read to justify the plan."
 }
 
 # Phase-level acceptance-criteria discipline appended to the planner prompt.  Usage: $(prompt_acceptance_criteria)
