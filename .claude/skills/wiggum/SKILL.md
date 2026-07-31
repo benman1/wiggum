@@ -96,6 +96,23 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 - Out of scope: <what it deliberately will not do>
 - Never do: <actions that would be wrong here>
 
+<!-- defect work only — omit all four sections for feature work -->
+## Symptoms
+- <what is observably wrong, in the terms of whoever sees it> — **observed**
+- <what follows from the code but you have not seen happen> — **predicted**
+- The tell: <the signal that separates this defect from the benign explanation>
+
+## Root cause
+1. <step from the entry point toward the failure> — `path:line`
+2. <next step> — `path:line`
+
+## Why existing verification missed it
+<the blind spot, citing the tests that pass anyway; if a passing test pins the
+buggy behaviour, name it>
+
+## Blast radius
+<what is affected — and explicitly what is unaffected, and why>
+
 ## Phase 1: <name>
 - [ ] <discrete task>
   Acceptance: <observable outcome — a passing test, a specific log line, a file
@@ -138,6 +155,35 @@ Rules for a good plan:
   line is fine where Given/When/Then is overkill.
 - Before finalizing, confirm the APIs/commands the plan assumes actually exist
   (grep the repo). Don't plan around a hallucinated API.
+- Every statement the plan makes about *current* behaviour cites its source as
+  `path:line`, and you must have read that line before citing it — no citation
+  from memory or inference. This complements `Files:`: `Files:` covers what a task
+  will write, the citations cover what you read to justify the plan.
+- Before planning a task that adds a test to an existing file, read that file's
+  harness. Module-scope mocks (`vi.mock`, `jest.mock`, fixtures, monkeypatching)
+  are hoisted per file and can make the intended test impossible there, so the task
+  must state whether the test can live in that file or needs a new one. Never plan
+  to weaken an existing mock so a new test fits.
+- When the input is a defect report, diagnose before prescribing: the four sections
+  above (`## Symptoms`, `## Root cause`, `## Why existing verification missed it`,
+  `## Blast radius`) go before the phases, with every symptom tagged **observed**
+  or **predicted**. For work that isn't a defect, omit them rather than inventing
+  symptoms.
+- Apply the four risk gates, and mark a gate whose trigger is absent as *not
+  triggered* rather than dropping it silently: (1) **measure before you act** — a
+  phase justified by a claim about production data or runtime state starts with a
+  read-only measurement of that claim; (2) **activating never-run code is not a
+  no-op** — precede it with a read-only impact report over real inputs; (3)
+  **irreversible work carries four conditions** — default to a dry run, export the
+  affected rows before the first real write, be idempotent, and record the affected
+  count per scope; (4) **a new guard must pass on a clean tree** — enumerate the
+  legitimate exceptions up front, and its acceptance states that the guard passes
+  against current code on its first run and fails when the defect is reintroduced.
+- Close the plan with a `## Sequencing — what can ship independently` section
+  naming, for every phase, whether it can ship independently or must wait, and why.
+  This is not the task-dependency list: `Depends on:` orders the work, this states
+  shipping risk. A fix that only turns nulls into values ships freely; a fix that
+  can delete good data waits for the measurement that bounds its blast radius.
 - Keep plans focused. Very large plans (40+ tasks) tend to stall — split them and
   `chain` instead.
 
