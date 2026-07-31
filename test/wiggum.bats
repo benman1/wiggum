@@ -1658,6 +1658,15 @@ EOF
     [[ "$output" == *"current behaviour"* ]]
 }
 
+@test "prompt_plan_verification: requires checking test-file harness feasibility" {
+    run prompt_plan_verification
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"module-scope mocks"* ]]
+    [[ "$output" == *"vi.mock"* ]]
+    [[ "$output" == *"needs a new one"* ]]
+    [[ "$output" == *"weaken an existing mock"* ]]
+}
+
 @test "prompt_implement_verification: demands assumption checks before coding" {
     run prompt_implement_verification
     [ "$status" -eq 0 ]

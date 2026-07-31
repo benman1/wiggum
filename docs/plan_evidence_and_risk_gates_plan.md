@@ -101,7 +101,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       `bash -c 'source lib/wiggum.sh; prompt_plan_verification'` output contains `path:line`
       and `read that line`.
       Files: `lib/wiggum.sh`
-- [ ] Extend `prompt_plan_verification` with the test-task feasibility sentence: before
+- [x] Extend `prompt_plan_verification` with the test-task feasibility sentence: before
       specifying a task that adds a test to an existing file, read that file's harness —
       module-scope mocks (`vi.mock`, `jest.mock`, fixtures, monkeypatching) are hoisted per
       file and can make the intended test impossible there; the task must state whether the
@@ -118,7 +118,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       Acceptance: `bats test/wiggum.bats` reports the two new tests as `ok` and 0 failures.
       Files: `test/wiggum.bats`
       Depends on: both tasks above.
-- [ ] Confirm the two pre-existing `prompt_plan_verification` tests
+- [x] Confirm the two pre-existing `prompt_plan_verification` tests
       (`test/wiggum.bats:1640`, `:1647`) still pass unmodified — the change is additive, so
       neither assertion may be edited.
       Acceptance: `git diff test/wiggum.bats` shows no deletions or modifications inside
