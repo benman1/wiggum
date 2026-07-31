@@ -907,6 +907,28 @@ EOF
     ! input_describes_defect issue.md
 }
 
+@test "input_describes_defect: rejects an empty file" {
+    : > issue.md
+    ! input_describes_defect issue.md
+}
+
+@test "input_describes_defect: rejects a nonexistent path without stderr noise" {
+    run input_describes_defect does-not-exist.md
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+}
+
+@test "input_describes_defect: accepts when only a later file is defect-shaped" {
+    echo "Add a CSV export button to the reports page" > feature.md
+    echo "The nightly job crashes after the deploy" > issue.md
+    input_describes_defect feature.md issue.md
+}
+
+@test "input_describes_defect: matches a capitalized signal word" {
+    echo "# BUG REPORT" > issue.md
+    input_describes_defect issue.md
+}
+
 # ── run_benchmarks ───────────────────────────────────────────────────────────
 
 @test "run_benchmarks: returns nothing when no scripts configured" {
