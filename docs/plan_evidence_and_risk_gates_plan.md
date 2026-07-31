@@ -92,7 +92,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
 
 ## Phase 1: Evidence and test-feasibility rules (universal)
 
-- [ ] Extend `prompt_plan_verification` with the `path:line` evidence rule: every statement
+- [x] Extend `prompt_plan_verification` with the `path:line` evidence rule: every statement
       the plan makes about *current* behaviour must cite its source as `path:line`, and the
       planner must have read that line before citing it; state that this complements the
       `Files:` line (files the task will write) by covering the files the plan read to
