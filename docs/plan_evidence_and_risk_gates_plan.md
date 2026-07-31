@@ -252,7 +252,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       file containing `This is a Bug: the column is wrong` returns 0 and a file containing
       `Add a CSV export button to the reports page` returns 1.
       Files: `lib/wiggum.sh`
-- [ ] Add Bats tests for the detector covering: defect-shaped file → 0; feature-shaped file
+- [x] Add Bats tests for the detector covering: defect-shaped file → 0; feature-shaped file
       → 1; empty file → 1; nonexistent path → 1 with no stderr output; mixed list where only
       the second file is defect-shaped → 0; capitalized signal (`Bug`) → 0.
       Acceptance: `bats test/wiggum.bats -f "input_describes_defect"` reports 6 passing
