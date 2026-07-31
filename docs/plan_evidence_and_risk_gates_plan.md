@@ -171,7 +171,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       contains `read-only measurement`, `never`, `dry run`, `export`, `idempotent`,
       `affected count`, `legitimate exceptions`, and `first run`.
       Files: `lib/wiggum.sh`
-- [ ] Add `prompt_phase_sequencing()` emitting the sequencing rule: after the phases, state
+- [x] Add `prompt_phase_sequencing()` emitting the sequencing rule: after the phases, state
       which phases can ship independently and which must wait, with the reason; note that
       this is distinct from the per-task dependency list, and give the discriminator
       (fixes that only turn nulls into values ship freely; fixes that can delete good data
@@ -188,7 +188,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       matches inside `run_plan`.
       Files: `lib/wiggum.sh`
       Depends on: the two helper tasks above.
-- [ ] Add Bats tests for both helpers (`prompt_risk_gates: names the four risk gates`,
+- [x] Add Bats tests for both helpers (`prompt_risk_gates: names the four risk gates`,
       `prompt_risk_gates: irreversible tasks carry all four conditions`,
       `prompt_phase_sequencing: separates ship-independence from task dependencies`) in the
       prompt-helper block.

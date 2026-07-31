@@ -1770,6 +1770,20 @@ EOF
     [[ "$output" == *"reintroduced"* ]]
 }
 
+@test "prompt_phase_sequencing: separates ship-independence from task dependencies" {
+    run prompt_phase_sequencing
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ship independently"* ]]
+    [[ "$output" == *"must wait"* ]]
+    [[ "$output" == *"not the task-dependency list"* ]]
+}
+
+@test "prompt_phase_sequencing: gives the discriminator for shipping risk" {
+    run prompt_phase_sequencing
+    [[ "$output" == *"nulls into values"* ]]
+    [[ "$output" == *"delete good data"* ]]
+}
+
 @test "prompt_constraints_summary: requires it before any phases or tasks" {
     run prompt_constraints_summary
     [[ "$output" == *"before writing any phases or tasks"* ]]
