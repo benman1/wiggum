@@ -336,7 +336,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
 
 ## Phase 4: Skill documentation, both copies in sync
 
-- [ ] Update the "Create a wiggum-compatible workplan" section of the
+- [x] Update the "Create a wiggum-compatible workplan" section of the
       `wiggum_skill_content()` heredoc (`lib/wiggum.sh:1348-1404`): extend the plan skeleton
       with the optional `## Symptoms` / `## Root cause` / `## Why existing verification
       missed it` / `## Blast radius` block (marked "defect work only"), and add "Rules for a
@@ -347,7 +347,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       more.
       Files: `lib/wiggum.sh`
       Depends on: Phases 1-3 (the documented wording must match the shipped prompt text).
-- [ ] Regenerate the committed skill file from the function rather than hand-editing:
+- [x] Regenerate the committed skill file from the function rather than hand-editing:
       `bash -c 'source lib/wiggum.sh; wiggum_skill_content' > .claude/skills/wiggum/SKILL.md`.
       Acceptance: `diff <(bash -c 'source lib/wiggum.sh; wiggum_skill_content')
       .claude/skills/wiggum/SKILL.md` exits 0 with no output, and
