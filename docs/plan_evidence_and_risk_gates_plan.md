@@ -259,7 +259,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       tests, 0 failures.
       Files: `test/wiggum.bats`
       Depends on: the detector task.
-- [ ] Add `prompt_defect_diagnosis()` emitting the four required sections that must precede
+- [x] Add `prompt_defect_diagnosis()` emitting the four required sections that must precede
       the phases: `## Symptoms` (observable, in the terms of whoever sees it, each symptom
       tagged **observed** or **predicted**, and naming the *tell* that separates this defect
       from the benign explanation), `## Root cause` (numbered path from entry point to
@@ -273,7 +273,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       `## Why existing verification missed it`, `## Blast radius`, `unaffected`, and a skip
       clause matching `not .* defect`.
       Files: `lib/wiggum.sh`
-- [ ] Add Bats tests for `prompt_defect_diagnosis` (`names the four diagnosis sections`,
+- [x] Add Bats tests for `prompt_defect_diagnosis` (`names the four diagnosis sections`,
       `requires every symptom tagged observed or predicted`, `requires the tell`,
       `requires path:line for each root-cause step`, `permits skipping for non-defect work`).
       Acceptance: `bats test/wiggum.bats -f "prompt_defect_diagnosis"` reports 5 passing
