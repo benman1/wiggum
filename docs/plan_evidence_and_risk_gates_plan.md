@@ -240,7 +240,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
 
 ## Phase 3: `prompt_defect_diagnosis` behind an input detector (conditional)
 
-- [ ] Add `input_describes_defect()` to `lib/wiggum.sh` (near `looks_like_plan`,
+- [x] Add `input_describes_defect()` to `lib/wiggum.sh` (near `looks_like_plan`,
       `lib/wiggum.sh:931`): takes file paths as arguments, returns 0 if any *readable* file
       matches a case-insensitive extended regex of strong defect signals
       (`bug|defect|regression|broken|breaks|crash|traceback|stack ?trace|incident|steps to
