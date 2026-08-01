@@ -424,7 +424,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       `[[ ]]` assertions were unenforced unless they happened to be the test's last command.
       Fixed out-of-plan by binding every one with `|| return 1` and adding a guard test;
       only the deliberately reintroduced regression failed once bound.
-- [ ] Sanity-check the real planner end to end without spending a Claude call: source the
+- [x] Sanity-check the real planner end to end without spending a Claude call: source the
       library, set `FILES` to the source issue `docs/plan_evidence_and_risk_gates.md`, stub
       `claude` to capture `"$@"`, and confirm the captured prompt contains the diagnosis
       sections (that issue is defect-shaped), the risk gates, the citation rule, and every
@@ -434,6 +434,18 @@ Every claim this plan makes about current behaviour, with the line that proves i
       exits 0.
       Files: none (verification only)
       Depends on: the full-suite task.
+      Notes: `run_plan` exits 0 and stderr shows `Diagnosis sections: enabled (input looks
+      like a defect report)`. All five acceptance strings present, plus all four diagnosis
+      sections, all four risk gates, the `read that line` / `module-scope mocks` /
+      `needs a new one` rules, the sequencing rule, and all 15 pre-existing clauses
+      (`- [ ] <task>`, `'Files:' line`, `### Acceptance Criteria`, `Use the Write tool`,
+      `Do not ask for confirmation -- just do it.`, …). `dry run` and `## Blast radius` each
+      occur exactly once, so the helpers are appended per prompt, not per input file.
+      Defect-mode prompt 6177 bytes (< 9000); the zero-byte-input control skips diagnosis and
+      lands at 5109 bytes (< 6000). Failure path: a `claude` stub that writes no plan file —
+      and one that writes an empty plan file — both return `EXIT_PLAN_FAILED` (5) with
+      `Error: plan file was not created or is empty.` and leave no stray file.
+      `./test/run.sh` exits 0: `Lint passed.`, 388 tests, 0 failures, 106s.
 - [ ] Commit lib, tests, and the regenerated skill file together as one logical change with
       a short single-line imperative message (no prefixes, no trailers), per `CLAUDE.md`.
       Acceptance: `git status --porcelain` is empty afterwards and
