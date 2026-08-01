@@ -407,7 +407,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       against the measured baseline (~2.5k today).
       Files: `test/wiggum.bats`
       Depends on: Phases 1-3.
-- [ ] Run the lint gate exactly as configured: `shellcheck -s bash wiggum.sh lib/wiggum.sh install.sh`.
+- [x] Run the lint gate exactly as configured: `shellcheck -s bash wiggum.sh lib/wiggum.sh install.sh`.
       Acceptance: command exits 0 and prints nothing.
       Files: none (verification only)
       Depends on: Phases 1-4.
