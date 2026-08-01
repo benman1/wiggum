@@ -354,7 +354,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       `bats test/wiggum.bats -f "stays in sync"` passes.
       Files: `.claude/skills/wiggum/SKILL.md`
       Depends on: the heredoc task.
-- [ ] Add Bats tests `wiggum_skill_content: documents the defect diagnosis sections` and
+- [x] Add Bats tests `wiggum_skill_content: documents the defect diagnosis sections` and
       `wiggum_skill_content: documents the risk gates`, mirroring the existing
       `wiggum_skill_content: documents the phase-level Acceptance Criteria section`
       (`test/wiggum.bats:1758`).
@@ -362,7 +362,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
       tests passing.
       Files: `test/wiggum.bats`
       Depends on: the heredoc task.
-- [ ] Verify the skill's existing invariants survive the edit: front matter intact,
+- [x] Verify the skill's existing invariants survive the edit: front matter intact,
       `$ARGUMENTS` present, no `disable-model-invocation`, and the CLI table untouched.
       Acceptance: `bats test/wiggum.bats -f "skill"` exits 0 (all pre-existing skill tests
       at `test/wiggum.bats:1733-1870` pass unmodified).
