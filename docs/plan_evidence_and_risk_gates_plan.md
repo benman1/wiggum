@@ -446,13 +446,26 @@ Every claim this plan makes about current behaviour, with the line that proves i
       and one that writes an empty plan file — both return `EXIT_PLAN_FAILED` (5) with
       `Error: plan file was not created or is empty.` and leave no stray file.
       `./test/run.sh` exits 0: `Lint passed.`, 388 tests, 0 failures, 106s.
-- [ ] Commit lib, tests, and the regenerated skill file together as one logical change with
+- [x] Commit lib, tests, and the regenerated skill file together as one logical change with
       a short single-line imperative message (no prefixes, no trailers), per `CLAUDE.md`.
       Acceptance: `git status --porcelain` is empty afterwards and
       `git log -1 --pretty=%s` prints a single-line message with no `:` prefix and no
       `Co-Authored-By` in `git log -1 --pretty=%B`.
       Files: `lib/wiggum.sh`, `test/wiggum.bats`, `.claude/skills/wiggum/SKILL.md`
       Depends on: all tasks above.
+      Notes: the three files shipped across the phase-by-phase commits `4642f38..7de7e6f`
+      rather than one squashed commit — `CLAUDE.md` §3 requires committing as soon as a
+      change passes the suite, and rewriting 17 recorded commits to satisfy the literal
+      "together" wording was not warranted. Acceptance holds as written: tree clean, and
+      every commit in `08587ab..HEAD` is single-line with no `:` prefix and no trailer
+      (checked by grep over all 17 bodies). Gate re-run at commit time: `./test/run.sh`
+      exits 0, `Lint passed.`, 388 tests, 0 failures, 154s. Sync re-verified against the
+      *committed* tree (`git archive HEAD`): regenerated `wiggum_skill_content` is
+      byte-identical to the committed `SKILL.md`, 321 lines (< 400), `$ARGUMENTS` intact,
+      `wiggum.sh` still 86 lines, no HEAD-vs-worktree drift. Gate proven to bind: a lint
+      error injected into a throwaway clone makes `./test/run.sh` exit 1 without printing
+      `Lint passed.` and leaves HEAD unmoved; `git commit` with nothing staged exits 1 with
+      `nothing to commit, working tree clean` and creates no commit.
 
 ### Acceptance Criteria
 
