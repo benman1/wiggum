@@ -1902,6 +1902,32 @@ EOF
     [[ "$output" == *"Never do"* ]]
 }
 
+@test "wiggum_skill_content: documents the defect diagnosis sections" {
+    run wiggum_skill_content
+    [[ "$output" == *"## Symptoms"* ]]
+    [[ "$output" == *"## Root cause"* ]]
+    [[ "$output" == *"## Why existing verification missed it"* ]]
+    [[ "$output" == *"## Blast radius"* ]]
+    [[ "$output" == *"defect work only"* ]]
+    [[ "$output" == *"**observed**"* ]]
+    [[ "$output" == *"**predicted**"* ]]
+    [[ "$output" == *"omit them rather than inventing"* ]]
+}
+
+@test "wiggum_skill_content: documents the risk gates" {
+    run wiggum_skill_content
+    [[ "$output" == *"four risk gates"* ]]
+    [[ "$output" == *"read-only measurement"* ]]
+    [[ "$output" == *"dry run"* ]]
+    [[ "$output" == *"idempotent"* ]]
+    [[ "$output" == *"record the affected"* ]]
+    [[ "$output" == *"legitimate exceptions"* ]]
+    [[ "$output" == *"first run"* ]]
+    [[ "$output" == *"reintroduced"* ]]
+    # A gate that doesn't apply is marked, not dropped.
+    [[ "$output" == *"mark a gate whose trigger is absent"* ]]
+}
+
 @test "wiggum_skill_content: committed SKILL.md stays in sync with the heredoc" {
     local committed
     committed="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/.claude/skills/wiggum/SKILL.md"
@@ -2769,6 +2795,57 @@ S
     grep -q 'dry run' "$captured"
     grep -q 'ship independently' "$captured"
     grep -q '## Constraints' "$captured"
+}
+
+@test "run_plan: feature-request prompt stays within budget" {
+    mkdir -p docs
+    echo "Add a CSV export button to the reports page" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    captured="$TEST_DIR/captured_prompt.txt"
+    claude() { printf '%s\n' "$@" > "$captured"; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>/dev/null
+
+    # A feature request pays for the universal rules only, never the defect text.
+    ! grep -q '## Symptoms' "$captured"
+    [ "$(wc -c < "$captured")" -lt 6000 ]
+}
+
+@test "run_plan: defect prompt stays within budget and exceeds the feature prompt" {
+    mkdir -p docs
+    echo "Add a CSV export button to the reports page" > feature.md
+    echo "Login crashes after deploy -- the traceback points at session.py" > defect.md
+
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+
+    local feature_capture="$TEST_DIR/feature_prompt.txt"
+    local defect_capture="$TEST_DIR/defect_prompt.txt"
+    captured="$feature_capture"
+    claude() { printf '%s\n' "$@" > "$captured"; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    FILES=("feature.md")
+    PLAN_FILE="docs/feature_plan.md"
+    run_plan 2>/dev/null
+
+    captured="$defect_capture"
+    FILES=("defect.md")
+    PLAN_FILE="docs/defect_plan.md"
+    run_plan 2>/dev/null
+
+    local feature_size defect_size
+    feature_size="$(wc -c < "$feature_capture")"
+    defect_size="$(wc -c < "$defect_capture")"
+
+    # The diagnosis sections are real added text, and they stay bounded.
+    [ "$defect_size" -gt "$feature_size" ]
+    [ "$defect_size" -lt 9000 ]
 }
 
 # ── Strict mode ──────────────────────────────────────────────────────────────
