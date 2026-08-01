@@ -34,80 +34,92 @@ make_file() {
     echo "# placeholder" > "$path"
 }
 
+# ── Suite invariants ─────────────────────────────────────────────────────────
+
+# Bash 3.2 (the system bash on macOS) does not apply `set -e` to a failing
+# `[[ ]]` inside a function, so a bare mid-body `[[ ]]` never fails its test --
+# only the last command's status is reported.  Every standalone `[[ ]]`
+# assertion must therefore end in `|| return 1` to actually bind.
+@test "suite: every standalone [[ ]] assertion binds under bash 3.2" {
+    local unbound
+    unbound="$(grep -cE '^[[:space:]]*\[\[ .* \]\][[:space:]]*$' "$BATS_TEST_FILENAME" || true)"
+    [ "$unbound" -eq 0 ]
+}
+
 # ── parse_args ───────────────────────────────────────────────────────────────
 
 @test "parse_args: no arguments prints usage and exits EXIT_BAD_ARGS" {
     run parse_args
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"wiggum"* ]]
-    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"wiggum"* ]] || return 1
+    [[ "$output" == *"Usage"* ]] || return 1
 }
 
 @test "parse_args: --help prints usage and succeeds" {
     run parse_args --help
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Usage"* ]]
+    [[ "$output" == *"Usage"* ]] || return 1
 }
 
 @test "parse_args: help shows overview" {
     run parse_args help
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Commands"* ]]
-    [[ "$output" == *"help <command>"* ]]
+    [[ "$output" == *"Commands"* ]] || return 1
+    [[ "$output" == *"help <command>"* ]] || return 1
 }
 
 @test "parse_args: help plan shows plan details" {
     run parse_args help plan
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum plan"* ]]
-    [[ "$output" == *"--plan-file"* ]]
-    [[ "$output" == *"Examples"* ]]
+    [[ "$output" == *"wiggum plan"* ]] || return 1
+    [[ "$output" == *"--plan-file"* ]] || return 1
+    [[ "$output" == *"Examples"* ]] || return 1
 }
 
 @test "parse_args: help execute shows execute details" {
     run parse_args help execute
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum execute"* ]]
-    [[ "$output" == *"--max-iterations"* ]]
-    [[ "$output" == *"--background"* ]]
-    [[ "$output" == *"Phases"* ]]
+    [[ "$output" == *"wiggum execute"* ]] || return 1
+    [[ "$output" == *"--max-iterations"* ]] || return 1
+    [[ "$output" == *"--background"* ]] || return 1
+    [[ "$output" == *"Phases"* ]] || return 1
 }
 
 @test "parse_args: help status/watch/kill/chain show their details" {
     run parse_args help status
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum status"* ]]
+    [[ "$output" == *"wiggum status"* ]] || return 1
 
     run parse_args help watch
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum watch"* ]]
-    [[ "$output" == *"--timeout"* ]]
-    [[ "$output" == *"--kill-on-timeout"* ]]
+    [[ "$output" == *"wiggum watch"* ]] || return 1
+    [[ "$output" == *"--timeout"* ]] || return 1
+    [[ "$output" == *"--kill-on-timeout"* ]] || return 1
 
     run parse_args help kill
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum kill"* ]]
+    [[ "$output" == *"wiggum kill"* ]] || return 1
 
     run parse_args help chain
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum chain"* ]]
+    [[ "$output" == *"wiggum chain"* ]] || return 1
 }
 
 @test "parse_args: top-level help lists the orchestration commands" {
     run parse_args help
     [ "$status" -eq 0 ]
-    [[ "$output" == *"status"* ]]
-    [[ "$output" == *"watch"* ]]
-    [[ "$output" == *"kill"* ]]
-    [[ "$output" == *"chain"* ]]
-    [[ "$output" == *"top"* ]]
+    [[ "$output" == *"status"* ]] || return 1
+    [[ "$output" == *"watch"* ]] || return 1
+    [[ "$output" == *"kill"* ]] || return 1
+    [[ "$output" == *"chain"* ]] || return 1
+    [[ "$output" == *"top"* ]] || return 1
 }
 
 @test "parse_args: help top shows the overview details" {
     run parse_args help top
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum top"* ]]
-    [[ "$output" == *"at a glance"* ]]
+    [[ "$output" == *"wiggum top"* ]] || return 1
+    [[ "$output" == *"at a glance"* ]] || return 1
 }
 
 @test "parse_args: top is a known mode and needs no files" {
@@ -125,34 +137,34 @@ make_file() {
 @test "parse_args: help docs shows docs details" {
     run parse_args help docs
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum docs"* ]]
-    [[ "$output" == *"-i"* ]]
-    [[ "$output" == *"-o"* ]]
+    [[ "$output" == *"wiggum docs"* ]] || return 1
+    [[ "$output" == *"-i"* ]] || return 1
+    [[ "$output" == *"-o"* ]] || return 1
 }
 
 @test "parse_args: help init shows presets" {
     run parse_args help init
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum init"* ]]
-    [[ "$output" == *"Presets"* ]]
+    [[ "$output" == *"wiggum init"* ]] || return 1
+    [[ "$output" == *"Presets"* ]] || return 1
 }
 
 @test "parse_args: help unknown falls back to overview" {
     run parse_args help bogus
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Commands"* ]]
+    [[ "$output" == *"Commands"* ]] || return 1
 }
 
 @test "parse_args: unknown mode exits EXIT_BAD_ARGS" {
     run parse_args destroy
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"unknown mode"* ]]
+    [[ "$output" == *"unknown mode"* ]] || return 1
 }
 
 @test "parse_args: plan mode requires files when stdin is a terminal" {
     run parse_args plan < /dev/null
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"stdin was empty"* ]]
+    [[ "$output" == *"stdin was empty"* ]] || return 1
 }
 
 @test "parse_args: plan reads from stdin when no files given" {
@@ -162,14 +174,14 @@ make_file() {
     local sfile
     sfile="$(echo "$tmp" | tail -1)"
     [ -f "$sfile" ]
-    [[ "$(cat "$sfile")" == "Add dark mode toggle" ]]
+    [[ "$(cat "$sfile")" == "Add dark mode toggle" ]] || return 1
     rm -f "$sfile"
 }
 
 @test "parse_args: stdin rejects empty input" {
     run parse_args plan < /dev/null
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"stdin was empty"* ]]
+    [[ "$output" == *"stdin was empty"* ]] || return 1
 }
 
 @test "parse_args: stdin with --plan-file sets CLI_PLAN_FILE" {
@@ -177,20 +189,20 @@ make_file() {
     out="$(echo "Fix the bug" | { parse_args plan --plan-file my_plan.md; echo "$CLI_PLAN_FILE"; })"
     local val
     val="$(echo "$out" | tail -1)"
-    [[ "$val" == "my_plan.md" ]]
+    [[ "$val" == "my_plan.md" ]] || return 1
 }
 
 @test "parse_args: -- collects multiple remaining files" {
     make_file "a.md"
     make_file "b.md"
     parse_args plan -- "a.md" "b.md"
-    [[ "${#FILES[@]}" -eq 2 ]]
+    [[ "${#FILES[@]}" -eq 2 ]] || return 1
 }
 
 @test "parse_args: plan mode rejects missing file" {
     run parse_args plan nonexistent.md
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"file not found"* ]]
+    [[ "$output" == *"file not found"* ]] || return 1
 }
 
 @test "parse_args: rejects file outside project directory with EXIT_BAD_ARGS" {
@@ -200,14 +212,14 @@ make_file() {
     run parse_args plan "$outside/issue.md"
     rm -rf "$outside"
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"outside the project directory"* ]]
+    [[ "$output" == *"outside the project directory"* ]] || return 1
 }
 
 @test "parse_args: -- ends option parsing" {
     make_file "issue.md"
     parse_args plan --verbose -- "issue.md"
-    [[ " ${FILES[*]} " == *"issue.md"* ]]
-    [[ "$VERBOSE" == "true" ]]
+    [[ " ${FILES[*]} " == *"issue.md"* ]] || return 1
+    [[ "$VERBOSE" == "true" ]] || return 1
 }
 
 @test "parse_args: plan mode accepts existing file" {
@@ -292,7 +304,7 @@ EOF
 @test "parse_args: status/watch/kill require a plan file" {
     run parse_args status
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"requires a plan file"* ]]
+    [[ "$output" == *"requires a plan file"* ]] || return 1
 }
 
 @test "parse_args: chain collects multiple plan files" {
@@ -308,7 +320,7 @@ EOF
 @test "parse_args: chain requires at least one plan file" {
     run parse_args chain
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"requires one or more plan files"* ]]
+    [[ "$output" == *"requires one or more plan files"* ]] || return 1
 }
 
 @test "parse_args: status/watch/kill/chain are known modes" {
@@ -324,7 +336,7 @@ EOF
     make_file plan.md
     run parse_args plan plan.md --bogus
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"unknown option"* ]]
+    [[ "$output" == *"unknown option"* ]] || return 1
 }
 
 @test "parse_args: init mode sets INIT_PRESET" {
@@ -343,7 +355,7 @@ EOF
     make_file plan.md
     parse_args execute plan.md --verbose
     [ "$VERBOSE" = "true" ]
-    [[ " ${CLAUDE_EXTRA_ARGS[*]} " == *" --verbose "* ]]
+    [[ " ${CLAUDE_EXTRA_ARGS[*]} " == *" --verbose "* ]] || return 1
 }
 
 # ── wiggum_reset ─────────────────────────────────────────────────────────────
@@ -637,12 +649,12 @@ EOF
 EOF
     local result
     result="$(build_dropped_context plan.md)"
-    [[ "$result" == *"There are 2 dropped tasks"* ]]
-    [[ "$result" == *"What was dropped"* ]]
-    [[ "$result" == *"Do not re-mark"* ]]
-    [[ "$result" == *"[~]"* ]]
-    [[ "$result" == *"**2.6** dropped: no perplexity endpoint"* ]]
-    [[ "$result" == *"**3.1** dropped: covered by upstream"* ]]
+    [[ "$result" == *"There are 2 dropped tasks"* ]] || return 1
+    [[ "$result" == *"What was dropped"* ]] || return 1
+    [[ "$result" == *"Do not re-mark"* ]] || return 1
+    [[ "$result" == *"[~]"* ]] || return 1
+    [[ "$result" == *"**2.6** dropped: no perplexity endpoint"* ]] || return 1
+    [[ "$result" == *"**3.1** dropped: covered by upstream"* ]] || return 1
 }
 
 @test "build_dropped_context: starts with literal \\n\\n separator" {
@@ -653,7 +665,7 @@ EOF
     result="$(build_dropped_context plan.md)"
     # Match the conditional-context pattern in run_execute, which prepends
     # a literal `\n\n` so the appended block reads as a fresh paragraph.
-    [[ "$result" == '\n\n'* ]]
+    [[ "$result" == '\n\n'* ]] || return 1
 }
 
 @test "build_dropped_context: aggregates across multiple files" {
@@ -666,10 +678,10 @@ EOF
 EOF
     local result
     result="$(build_dropped_context a.md b.md)"
-    [[ "$result" == *"There are 3 dropped tasks"* ]]
-    [[ "$result" == *"from a"* ]]
-    [[ "$result" == *"from b1"* ]]
-    [[ "$result" == *"from b2"* ]]
+    [[ "$result" == *"There are 3 dropped tasks"* ]] || return 1
+    [[ "$result" == *"from a"* ]] || return 1
+    [[ "$result" == *"from b1"* ]] || return 1
+    [[ "$result" == *"from b2"* ]] || return 1
 }
 
 # ── End-to-end regression: dropped tasks ────────────────────────────────────
@@ -729,8 +741,8 @@ EOF
     done
     run warn_if_plan_large plan.md
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Warning"* ]]
-    [[ "$output" == *"41 tasks"* ]]
+    [[ "$output" == *"Warning"* ]] || return 1
+    [[ "$output" == *"41 tasks"* ]] || return 1
 }
 
 @test "warn_if_plan_large: silent at the threshold" {
@@ -755,7 +767,7 @@ EOF
     done
     run warn_if_plan_large plan.md
     [ "$status" -eq 0 ]
-    [[ "$output" == *"41 tasks"* ]]
+    [[ "$output" == *"41 tasks"* ]] || return 1
 }
 
 # ── derive_output_file ───────────────────────────────────────────────────────
@@ -805,7 +817,7 @@ EOF
     local result
     result="$(persist_stdin)"
     [ "$result" = "docs/stdin.md" ]
-    [[ "$(cat docs/stdin.md)" == "my issue text" ]]
+    [[ "$(cat docs/stdin.md)" == "my issue text" ]] || return 1
     rm -f "$STDIN_FILE"
 }
 
@@ -818,7 +830,7 @@ EOF
     local result
     result="$(persist_stdin)"
     [ "$result" = "docs/stdin.md" ]
-    [[ "$(cat docs/stdin.md)" == "new plan" ]]
+    [[ "$(cat docs/stdin.md)" == "new plan" ]] || return 1
     rm -f "$STDIN_FILE"
 }
 
@@ -942,23 +954,23 @@ EOF
     BENCHMARK_SCRIPTS=("echo 'score: 42'")
     local output
     output="$(run_benchmarks)"
-    [[ "$output" == *"score: 42"* ]]
-    [[ "$output" == *"Benchmark:"* ]]
+    [[ "$output" == *"score: 42"* ]] || return 1
+    [[ "$output" == *"Benchmark:"* ]] || return 1
 }
 
 @test "run_benchmarks: concatenates output from multiple scripts" {
     BENCHMARK_SCRIPTS=("echo 'size: 100kb'" "echo 'speed: 200ms'")
     local output
     output="$(run_benchmarks)"
-    [[ "$output" == *"size: 100kb"* ]]
-    [[ "$output" == *"speed: 200ms"* ]]
+    [[ "$output" == *"size: 100kb"* ]] || return 1
+    [[ "$output" == *"speed: 200ms"* ]] || return 1
 }
 
 @test "run_benchmarks: handles failing scripts gracefully" {
     BENCHMARK_SCRIPTS=("false")
     local output
     output="$(run_benchmarks)"
-    [[ "$output" == *"failed with exit code"* ]]
+    [[ "$output" == *"failed with exit code"* ]] || return 1
 }
 
 @test "parse_config: benchmark lines populate BENCHMARK_SCRIPTS" {
@@ -988,15 +1000,15 @@ EOF
     local result
     result="$(echo 'tasks: 5, errors: 0' | extract_benchmark_numbers)"
     [ "$(echo "$result" | wc -l | tr -d ' ')" -eq 2 ]
-    [[ "$result" == *"0"* ]]
-    [[ "$result" == *"5"* ]]
+    [[ "$result" == *"0"* ]] || return 1
+    [[ "$result" == *"5"* ]] || return 1
 }
 
 @test "extract_benchmark_numbers: extracts decimals" {
     local result
     result="$(echo 'Ratio: 0.955x, PR-AUC: 0.42' | extract_benchmark_numbers)"
-    [[ "$result" == *"0.955"* ]]
-    [[ "$result" == *"0.42"* ]]
+    [[ "$result" == *"0.955"* ]] || return 1
+    [[ "$result" == *"0.42"* ]] || return 1
 }
 
 @test "extract_benchmark_numbers: returns empty for no numbers" {
@@ -1014,9 +1026,9 @@ Enquiries: 3353  |  Converted: 586 (17.5%)
 EOF
 )"
     # Should find: 0.600, 0.955, 0.9, 1.1, 0.400, 0.045, 3353, 586, 17.5
-    [[ "$result" == *"0.955"* ]]
-    [[ "$result" == *"3353"* ]]
-    [[ "$result" == *"17.5"* ]]
+    [[ "$result" == *"0.955"* ]] || return 1
+    [[ "$result" == *"3353"* ]] || return 1
+    [[ "$result" == *"17.5"* ]] || return 1
 }
 
 @test "extract_benchmark_numbers: sorted numerically" {
@@ -1193,14 +1205,14 @@ EOF
     result="$(slugify plan.md)"
     [ "${#result}" -le 50 ]
     # Should not end with a hyphen from truncation
-    [[ "$result" != *- ]]
+    [[ "$result" != *- ]] || return 1
 }
 
 @test "slugify: falls back to date when file is empty" {
     touch plan.md
     local result
     result="$(slugify plan.md)"
-    [[ "$result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+    [[ "$result" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
 }
 
 # ── find_config ──────────────────────────────────────────────────────────────
@@ -1238,8 +1250,8 @@ verify = npm run build
 EOF
     local output
     output="$(load_config_from test.rc)"
-    [[ "$output" == *"verify=npm test"* ]]
-    [[ "$output" == *"verify=npm run build"* ]]
+    [[ "$output" == *"verify=npm test"* ]] || return 1
+    [[ "$output" == *"verify=npm run build"* ]] || return 1
 }
 
 @test "load_config_from: outputs autofix lines to stdout" {
@@ -1258,8 +1270,8 @@ max_validation_retries = 2
 EOF
     local output
     output="$(load_config_from test.rc)"
-    [[ "$output" == *"iterations=10"* ]]
-    [[ "$output" == *"max_validation_retries=2"* ]]
+    [[ "$output" == *"iterations=10"* ]] || return 1
+    [[ "$output" == *"max_validation_retries=2"* ]] || return 1
 }
 
 @test "load_config_from: skips comments and blank lines" {
@@ -1283,7 +1295,7 @@ banana = yellow
 EOF
     run load_config_from test.rc
     [ "$status" -eq 0 ]
-    [[ "$output" == *"unknown config key"* ]]
+    [[ "$output" == *"unknown config key"* ]] || return 1
 }
 
 # ── load_config (outer) ──────────────────────────────────────────────────────
@@ -1297,7 +1309,7 @@ EOF
     out="$(load_config 2>/dev/null)"
     err="$(load_config 2>&1 >/dev/null)"
     [ -z "$out" ]
-    [[ "$err" == *"Loading config from"* ]]
+    [[ "$err" == *"Loading config from"* ]] || return 1
 }
 
 @test "load_config: 'no config found' message goes to stderr not stdout" {
@@ -1307,7 +1319,7 @@ EOF
     out="$(load_config 2>/dev/null)"
     err="$(load_config 2>&1 >/dev/null)"
     [ -z "$out" ]
-    [[ "$err" == *"No .wiggumrc found"* ]]
+    [[ "$err" == *"No .wiggumrc found"* ]] || return 1
 }
 
 @test "load_config: stdout stays clean so it can be piped downstream" {
@@ -1461,35 +1473,35 @@ EOF
 @test "generate_rc: node preset contains npm verify steps" {
     local output
     output="$(generate_rc node)"
-    [[ "$output" == *"npm run type-check"* ]]
-    [[ "$output" == *"npm test"* ]]
-    [[ "$output" == *"npm run build"* ]]
+    [[ "$output" == *"npm run type-check"* ]] || return 1
+    [[ "$output" == *"npm test"* ]] || return 1
+    [[ "$output" == *"npm run build"* ]] || return 1
 }
 
 @test "generate_rc: python preset contains ruff and pytest" {
     local output
     output="$(generate_rc python)"
-    [[ "$output" == *"ruff format"* ]]
-    [[ "$output" == *"pytest"* ]]
+    [[ "$output" == *"ruff format"* ]] || return 1
+    [[ "$output" == *"pytest"* ]] || return 1
 }
 
 @test "generate_rc: astro preset contains prettier" {
     local output
     output="$(generate_rc astro)"
-    [[ "$output" == *"prettier"* ]]
+    [[ "$output" == *"prettier"* ]] || return 1
 }
 
 @test "generate_rc: bash preset contains shellcheck and bats" {
     local output
     output="$(generate_rc bash)"
-    [[ "$output" == *"shellcheck"* ]]
-    [[ "$output" == *"bats"* ]]
+    [[ "$output" == *"shellcheck"* ]] || return 1
+    [[ "$output" == *"bats"* ]] || return 1
 }
 
 @test "generate_rc: unknown preset exits EXIT_BAD_ARGS" {
     run generate_rc golang
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"unknown preset"* ]]
+    [[ "$output" == *"unknown preset"* ]] || return 1
 }
 
 # ── run_init ─────────────────────────────────────────────────────────────────
@@ -1553,7 +1565,7 @@ EOF
     INIT_PRESET=""
     run run_init
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"Could not auto-detect"* ]]
+    [[ "$output" == *"Could not auto-detect"* ]] || return 1
 }
 
 # ── setup_claude_permissions ─────────────────────────────────────────────────
@@ -1674,188 +1686,188 @@ EOF
 @test "prompt_plan_verification: requires a Files line per task" {
     run prompt_plan_verification
     [ "$status" -eq 0 ]
-    [[ "$output" == *"'Files:' line"* ]]
-    [[ "$output" == *"create or modify"* ]]
+    [[ "$output" == *"'Files:' line"* ]] || return 1
+    [[ "$output" == *"create or modify"* ]] || return 1
 }
 
 @test "prompt_plan_verification: requires confirming dependencies exist" {
     run prompt_plan_verification
-    [[ "$output" == *"confirm the libraries, APIs, and commands"* ]]
-    [[ "$output" == *"actually exist"* ]]
+    [[ "$output" == *"confirm the libraries, APIs, and commands"* ]] || return 1
+    [[ "$output" == *"actually exist"* ]] || return 1
 }
 
 @test "prompt_plan_verification: requires path:line citations for current behaviour" {
     run prompt_plan_verification
     [ "$status" -eq 0 ]
-    [[ "$output" == *"path:line"* ]]
-    [[ "$output" == *"read that line"* ]]
-    [[ "$output" == *"current behaviour"* ]]
+    [[ "$output" == *"path:line"* ]] || return 1
+    [[ "$output" == *"read that line"* ]] || return 1
+    [[ "$output" == *"current behaviour"* ]] || return 1
 }
 
 @test "prompt_plan_verification: requires checking test-file harness feasibility" {
     run prompt_plan_verification
     [ "$status" -eq 0 ]
-    [[ "$output" == *"module-scope mocks"* ]]
-    [[ "$output" == *"vi.mock"* ]]
-    [[ "$output" == *"needs a new one"* ]]
-    [[ "$output" == *"weaken an existing mock"* ]]
+    [[ "$output" == *"module-scope mocks"* ]] || return 1
+    [[ "$output" == *"vi.mock"* ]] || return 1
+    [[ "$output" == *"needs a new one"* ]] || return 1
+    [[ "$output" == *"weaken an existing mock"* ]] || return 1
 }
 
 @test "prompt_implement_verification: demands assumption checks before coding" {
     run prompt_implement_verification
     [ "$status" -eq 0 ]
-    [[ "$output" == *"verify your assumptions"* ]]
-    [[ "$output" == *"do not assume"* ]]
+    [[ "$output" == *"verify your assumptions"* ]] || return 1
+    [[ "$output" == *"do not assume"* ]] || return 1
 }
 
 @test "prompt_implement_verification: requires a failing test first when none exists" {
     run prompt_implement_verification
-    [[ "$output" == *"write a minimal failing test first"* ]]
+    [[ "$output" == *"write a minimal failing test first"* ]] || return 1
 }
 
 @test "prompt_implement_verification: requires happy, edge, and failure spot checks" {
     run prompt_implement_verification
-    [[ "$output" == *"three spot checks"* ]]
-    [[ "$output" == *"happy path"* ]]
-    [[ "$output" == *"edge case"* ]]
-    [[ "$output" == *"failure case"* ]]
+    [[ "$output" == *"three spot checks"* ]] || return 1
+    [[ "$output" == *"happy path"* ]] || return 1
+    [[ "$output" == *"edge case"* ]] || return 1
+    [[ "$output" == *"failure case"* ]] || return 1
 }
 
 @test "prompt_implement_verification: gates task completion on acceptance and spot checks" {
     run prompt_implement_verification
-    [[ "$output" == *"Do not mark a task"* ]]
-    [[ "$output" == *"acceptance criterion is met and all three spot checks pass"* ]]
+    [[ "$output" == *"Do not mark a task"* ]] || return 1
+    [[ "$output" == *"acceptance criterion is met and all three spot checks pass"* ]] || return 1
 }
 
 @test "prompt_acceptance_criteria: requires a per-phase Acceptance Criteria section" {
     run prompt_acceptance_criteria
     [ "$status" -eq 0 ]
-    [[ "$output" == *"### Acceptance Criteria"* ]]
+    [[ "$output" == *"### Acceptance Criteria"* ]] || return 1
 }
 
 @test "prompt_acceptance_criteria: names the four criteria categories" {
     run prompt_acceptance_criteria
-    [[ "$output" == *"Happy Path"* ]]
-    [[ "$output" == *"Edge Cases"* ]]
-    [[ "$output" == *"Error States"* ]]
-    [[ "$output" == *"Non-Functional"* ]]
+    [[ "$output" == *"Happy Path"* ]] || return 1
+    [[ "$output" == *"Edge Cases"* ]] || return 1
+    [[ "$output" == *"Error States"* ]] || return 1
+    [[ "$output" == *"Non-Functional"* ]] || return 1
 }
 
 @test "prompt_acceptance_criteria: recommends the Given/When/Then form" {
     run prompt_acceptance_criteria
-    [[ "$output" == *"Given"* ]]
-    [[ "$output" == *"When"* ]]
-    [[ "$output" == *"Then"* ]]
+    [[ "$output" == *"Given"* ]] || return 1
+    [[ "$output" == *"When"* ]] || return 1
+    [[ "$output" == *"Then"* ]] || return 1
 }
 
 @test "prompt_acceptance_criteria: demands an observable check for Non-Functional" {
     run prompt_acceptance_criteria
-    [[ "$output" == *"Non-Functional"* ]]
-    [[ "$output" == *"observable check"* ]]
+    [[ "$output" == *"Non-Functional"* ]] || return 1
+    [[ "$output" == *"observable check"* ]] || return 1
 }
 
 @test "prompt_acceptance_criteria: keeps the section additive to per-task lines" {
     run prompt_acceptance_criteria
-    [[ "$output" == *"additive"* ]]
-    [[ "$output" == *"per-task 'Acceptance:' and 'Files:' lines"* ]]
+    [[ "$output" == *"additive"* ]] || return 1
+    [[ "$output" == *"per-task 'Acceptance:' and 'Files:' lines"* ]] || return 1
 }
 
 @test "prompt_constraints_summary: opens the plan with a Constraints section as a self-check" {
     run prompt_constraints_summary
     [ "$status" -eq 0 ]
-    [[ "$output" == *"## Constraints"* ]]
-    [[ "$output" == *"self-check"* ]]
+    [[ "$output" == *"## Constraints"* ]] || return 1
+    [[ "$output" == *"self-check"* ]] || return 1
 }
 
 @test "prompt_constraints_summary: names in-scope, out-of-scope, and never-do" {
     run prompt_constraints_summary
-    [[ "$output" == *"In scope"* ]]
-    [[ "$output" == *"Out of scope"* ]]
-    [[ "$output" == *"Never do"* ]]
+    [[ "$output" == *"In scope"* ]] || return 1
+    [[ "$output" == *"Out of scope"* ]] || return 1
+    [[ "$output" == *"Never do"* ]] || return 1
 }
 
 @test "prompt_risk_gates: names the four risk gates" {
     run prompt_risk_gates
     [ "$status" -eq 0 ]
-    [[ "$output" == *"read-only measurement"* ]]
-    [[ "$output" == *"never"* ]]
-    [[ "$output" == *"legitimate exceptions"* ]]
-    [[ "$output" == *"first run"* ]]
+    [[ "$output" == *"read-only measurement"* ]] || return 1
+    [[ "$output" == *"never"* ]] || return 1
+    [[ "$output" == *"legitimate exceptions"* ]] || return 1
+    [[ "$output" == *"first run"* ]] || return 1
 }
 
 @test "prompt_risk_gates: states each gate conditionally so no phase is mandated" {
     run prompt_risk_gates
-    [[ "$output" == *"If a phase is justified by"* ]]
-    [[ "$output" == *"If a task"* ]]
-    [[ "$output" == *"not triggered"* ]]
+    [[ "$output" == *"If a phase is justified by"* ]] || return 1
+    [[ "$output" == *"If a task"* ]] || return 1
+    [[ "$output" == *"not triggered"* ]] || return 1
 }
 
 @test "prompt_risk_gates: irreversible tasks carry all four conditions" {
     run prompt_risk_gates
-    [[ "$output" == *"dry run"* ]]
-    [[ "$output" == *"export"* ]]
-    [[ "$output" == *"idempotent"* ]]
-    [[ "$output" == *"affected count"* ]]
+    [[ "$output" == *"dry run"* ]] || return 1
+    [[ "$output" == *"export"* ]] || return 1
+    [[ "$output" == *"idempotent"* ]] || return 1
+    [[ "$output" == *"affected count"* ]] || return 1
 }
 
 @test "prompt_risk_gates: a new guard must pass now and fail on reintroduction" {
     run prompt_risk_gates
-    [[ "$output" == *"passes against current code on its first run"* ]]
-    [[ "$output" == *"reintroduced"* ]]
+    [[ "$output" == *"passes against current code on its first run"* ]] || return 1
+    [[ "$output" == *"reintroduced"* ]] || return 1
 }
 
 @test "prompt_phase_sequencing: separates ship-independence from task dependencies" {
     run prompt_phase_sequencing
     [ "$status" -eq 0 ]
-    [[ "$output" == *"ship independently"* ]]
-    [[ "$output" == *"must wait"* ]]
-    [[ "$output" == *"not the task-dependency list"* ]]
+    [[ "$output" == *"ship independently"* ]] || return 1
+    [[ "$output" == *"must wait"* ]] || return 1
+    [[ "$output" == *"not the task-dependency list"* ]] || return 1
 }
 
 @test "prompt_phase_sequencing: gives the discriminator for shipping risk" {
     run prompt_phase_sequencing
-    [[ "$output" == *"nulls into values"* ]]
-    [[ "$output" == *"delete good data"* ]]
+    [[ "$output" == *"nulls into values"* ]] || return 1
+    [[ "$output" == *"delete good data"* ]] || return 1
 }
 
 @test "prompt_defect_diagnosis: names the four diagnosis sections" {
     run prompt_defect_diagnosis
     [ "$status" -eq 0 ]
-    [[ "$output" == *"## Symptoms"* ]]
-    [[ "$output" == *"## Root cause"* ]]
-    [[ "$output" == *"## Why existing verification missed it"* ]]
-    [[ "$output" == *"## Blast radius"* ]]
-    [[ "$output" == *"unaffected"* ]]
+    [[ "$output" == *"## Symptoms"* ]] || return 1
+    [[ "$output" == *"## Root cause"* ]] || return 1
+    [[ "$output" == *"## Why existing verification missed it"* ]] || return 1
+    [[ "$output" == *"## Blast radius"* ]] || return 1
+    [[ "$output" == *"unaffected"* ]] || return 1
 }
 
 @test "prompt_defect_diagnosis: requires every symptom tagged observed or predicted" {
     run prompt_defect_diagnosis
-    [[ "$output" == *"observed"* ]]
-    [[ "$output" == *"predicted"* ]]
-    [[ "$output" == *"EVERY symptom tagged"* ]]
+    [[ "$output" == *"observed"* ]] || return 1
+    [[ "$output" == *"predicted"* ]] || return 1
+    [[ "$output" == *"EVERY symptom tagged"* ]] || return 1
 }
 
 @test "prompt_defect_diagnosis: requires the tell" {
     run prompt_defect_diagnosis
-    [[ "$output" == *"tell"* ]]
-    [[ "$output" == *"benign explanation"* ]]
+    [[ "$output" == *"tell"* ]] || return 1
+    [[ "$output" == *"benign explanation"* ]] || return 1
 }
 
 @test "prompt_defect_diagnosis: requires path:line for each root-cause step" {
     run prompt_defect_diagnosis
-    [[ "$output" == *"numbered path from entry point to failure"* ]]
-    [[ "$output" == *"path:line"* ]]
+    [[ "$output" == *"numbered path from entry point to failure"* ]] || return 1
+    [[ "$output" == *"path:line"* ]] || return 1
 }
 
 @test "prompt_defect_diagnosis: permits skipping for non-defect work" {
     run prompt_defect_diagnosis
-    [[ "$output" =~ not.*defect ]]
-    [[ "$output" == *"inventing symptoms"* ]]
+    [[ "$output" =~ not.*defect ]] || return 1
+    [[ "$output" == *"inventing symptoms"* ]] || return 1
 }
 
 @test "prompt_constraints_summary: requires it before any phases or tasks" {
     run prompt_constraints_summary
-    [[ "$output" == *"before writing any phases or tasks"* ]]
+    [[ "$output" == *"before writing any phases or tasks"* ]] || return 1
 }
 
 # ── setup_wiggum_skill ───────────────────────────────────────────────────────
@@ -1881,51 +1893,51 @@ EOF
 
 @test "wiggum_skill_content: emits the skill markdown" {
     run wiggum_skill_content
-    [[ "$output" == *"name: wiggum"* ]]
-    [[ "$output" == *"wiggum execute"* ]]
+    [[ "$output" == *"name: wiggum"* ]] || return 1
+    [[ "$output" == *"wiggum execute"* ]] || return 1
 }
 
 @test "wiggum_skill_content: documents the phase-level Acceptance Criteria section" {
     run wiggum_skill_content
-    [[ "$output" == *"### Acceptance Criteria"* ]]
-    [[ "$output" == *"Happy Path"* ]]
-    [[ "$output" == *"Edge Cases"* ]]
-    [[ "$output" == *"Error States"* ]]
-    [[ "$output" == *"Non-Functional"* ]]
+    [[ "$output" == *"### Acceptance Criteria"* ]] || return 1
+    [[ "$output" == *"Happy Path"* ]] || return 1
+    [[ "$output" == *"Edge Cases"* ]] || return 1
+    [[ "$output" == *"Error States"* ]] || return 1
+    [[ "$output" == *"Non-Functional"* ]] || return 1
 }
 
 @test "wiggum_skill_content: documents opening the plan with a Constraints section" {
     run wiggum_skill_content
-    [[ "$output" == *"## Constraints"* ]]
-    [[ "$output" == *"In scope"* ]]
-    [[ "$output" == *"Out of scope"* ]]
-    [[ "$output" == *"Never do"* ]]
+    [[ "$output" == *"## Constraints"* ]] || return 1
+    [[ "$output" == *"In scope"* ]] || return 1
+    [[ "$output" == *"Out of scope"* ]] || return 1
+    [[ "$output" == *"Never do"* ]] || return 1
 }
 
 @test "wiggum_skill_content: documents the defect diagnosis sections" {
     run wiggum_skill_content
-    [[ "$output" == *"## Symptoms"* ]]
-    [[ "$output" == *"## Root cause"* ]]
-    [[ "$output" == *"## Why existing verification missed it"* ]]
-    [[ "$output" == *"## Blast radius"* ]]
-    [[ "$output" == *"defect work only"* ]]
-    [[ "$output" == *"**observed**"* ]]
-    [[ "$output" == *"**predicted**"* ]]
-    [[ "$output" == *"omit them rather than inventing"* ]]
+    [[ "$output" == *"## Symptoms"* ]] || return 1
+    [[ "$output" == *"## Root cause"* ]] || return 1
+    [[ "$output" == *"## Why existing verification missed it"* ]] || return 1
+    [[ "$output" == *"## Blast radius"* ]] || return 1
+    [[ "$output" == *"defect work only"* ]] || return 1
+    [[ "$output" == *"**observed**"* ]] || return 1
+    [[ "$output" == *"**predicted**"* ]] || return 1
+    [[ "$output" == *"omit them rather than inventing"* ]] || return 1
 }
 
 @test "wiggum_skill_content: documents the risk gates" {
     run wiggum_skill_content
-    [[ "$output" == *"four risk gates"* ]]
-    [[ "$output" == *"read-only measurement"* ]]
-    [[ "$output" == *"dry run"* ]]
-    [[ "$output" == *"idempotent"* ]]
-    [[ "$output" == *"record the affected"* ]]
-    [[ "$output" == *"legitimate exceptions"* ]]
-    [[ "$output" == *"first run"* ]]
-    [[ "$output" == *"reintroduced"* ]]
+    [[ "$output" == *"four risk gates"* ]] || return 1
+    [[ "$output" == *"read-only measurement"* ]] || return 1
+    [[ "$output" == *"dry run"* ]] || return 1
+    [[ "$output" == *"idempotent"* ]] || return 1
+    [[ "$output" == *"record the affected"* ]] || return 1
+    [[ "$output" == *"legitimate exceptions"* ]] || return 1
+    [[ "$output" == *"first run"* ]] || return 1
+    [[ "$output" == *"reintroduced"* ]] || return 1
     # A gate that doesn't apply is marked, not dropped.
-    [[ "$output" == *"mark a gate whose trigger is absent"* ]]
+    [[ "$output" == *"mark a gate whose trigger is absent"* ]] || return 1
 }
 
 @test "wiggum_skill_content: committed SKILL.md stays in sync with the heredoc" {
@@ -1941,7 +1953,7 @@ EOF
     wiggum_skill_content > .claude/skills/wiggum/SKILL.md
     run setup_wiggum_skill
     [ "$status" -eq 0 ]
-    [[ "$output" == *"up to date"* ]]
+    [[ "$output" == *"up to date"* ]] || return 1
 }
 
 @test "setup_wiggum_skill: offers to update an outdated skill and keeps it on no" {
@@ -1949,7 +1961,7 @@ EOF
     echo "old skill v0" > .claude/skills/wiggum/SKILL.md
     run bash -c "source '$WIGGUM_LIB'; echo n | setup_wiggum_skill"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"older /wiggum skill"* ]]
+    [[ "$output" == *"older /wiggum skill"* ]] || return 1
     # Declining keeps the user's file intact.
     grep -q "old skill v0" .claude/skills/wiggum/SKILL.md
 }
@@ -2061,14 +2073,14 @@ EOF
     VERIFY_STEPS=()
     run run_validation
     [ "$status" -eq 0 ]
-    [[ "$output" == *"No verification steps"* ]]
+    [[ "$output" == *"No verification steps"* ]] || return 1
 }
 
 @test "run_validation: passes when all steps succeed" {
     VERIFY_STEPS=("true" "true")
     run run_validation
     [ "$status" -eq 0 ]
-    [[ "$output" == *"All verification steps passed"* ]]
+    [[ "$output" == *"All verification steps passed"* ]] || return 1
 }
 
 @test "run_validation: fails with EXIT_VALIDATION_FAILED after max retries" {
@@ -2084,7 +2096,7 @@ S
     VERIFY_STEPS=("$TEST_DIR/fail.sh")
     run run_validation
     [ "$status" -eq "$EXIT_VALIDATION_FAILED" ]
-    [[ "$output" == *"Validation failed 2 times"* ]]
+    [[ "$output" == *"Validation failed 2 times"* ]] || return 1
 }
 
 @test "run_validation: attempt count never exceeds max_validation_retries" {
@@ -2098,10 +2110,10 @@ S
     VERIFY_STEPS=("$TEST_DIR/fail.sh")
     run run_validation
     # Should see attempts 1, 2, 3 but never 4
-    [[ "$output" == *"attempt 1 of 3"* ]]
-    [[ "$output" == *"attempt 2 of 3"* ]]
-    [[ "$output" == *"attempt 3 of 3"* ]]
-    [[ "$output" != *"attempt 4 of 3"* ]]
+    [[ "$output" == *"attempt 1 of 3"* ]] || return 1
+    [[ "$output" == *"attempt 2 of 3"* ]] || return 1
+    [[ "$output" == *"attempt 3 of 3"* ]] || return 1
+    [[ "$output" != *"attempt 4 of 3"* ]] || return 1
 }
 
 @test "run_validation: shows error output and .wiggumrc hint on failure" {
@@ -2115,10 +2127,10 @@ S
     MAX_VALIDATION_RETRIES=1
     VERIFY_STEPS=("$TEST_DIR/fail.sh")
     run run_validation
-    [[ "$output" == *"--- Error output ---"* ]]
-    [[ "$output" == *"some error details"* ]]
-    [[ "$output" == *"Check that your .wiggumrc verify commands are correct"* ]]
-    [[ "$output" == *"Last failing command"* ]]
+    [[ "$output" == *"--- Error output ---"* ]] || return 1
+    [[ "$output" == *"some error details"* ]] || return 1
+    [[ "$output" == *"Check that your .wiggumrc verify commands are correct"* ]] || return 1
+    [[ "$output" == *"Last failing command"* ]] || return 1
 }
 
 @test "run_validation: calls claude on verify failure" {
@@ -2131,7 +2143,7 @@ S
     MAX_VALIDATION_RETRIES=2
     VERIFY_STEPS=("$TEST_DIR/fail.sh")
     run run_validation
-    [[ "$output" == *"Requesting fix from Claude"* ]]
+    [[ "$output" == *"Requesting fix from Claude"* ]] || return 1
 }
 
 @test "run_validation: waterfall short-circuits on first failure" {
@@ -2145,7 +2157,7 @@ S
     VERIFY_STEPS=("$TEST_DIR/fail.sh" "echo SHOULD_NOT_RUN")
     run run_validation
     [ "$status" -eq "$EXIT_VALIDATION_FAILED" ]
-    [[ "$output" != *"SHOULD_NOT_RUN"* ]]
+    [[ "$output" != *"SHOULD_NOT_RUN"* ]] || return 1
 }
 
 @test "run_validation: autofix step runs command twice" {
@@ -2166,7 +2178,7 @@ SCRIPT
     VERIFY_STEPS=("autofix:$TEST_DIR/counter.sh")
     run run_validation
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASSED"* ]]
+    [[ "$output" == *"PASSED"* ]] || return 1
 }
 
 # ── parse_args: docs mode ────────────────────────────────────────────────────
@@ -2198,14 +2210,14 @@ SCRIPT
     make_file out.md
     run parse_args docs -o out.md
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"requires -i"* ]]
+    [[ "$output" == *"requires -i"* ]] || return 1
 }
 
 @test "parse_args: docs mode fails without -o" {
     make_file in.md
     run parse_args docs -i in.md
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"requires -o"* ]]
+    [[ "$output" == *"requires -o"* ]] || return 1
 }
 
 # ── parse_args: --update-docs ────────────────────────────────────────────────
@@ -2240,8 +2252,8 @@ SCRIPT
     make_file summary.md
     make_file readme.md
     run_update_docs summary.md -- readme.md
-    [[ "${claude_calls[0]}" == *"summary.md"* ]]
-    [[ "${claude_calls[0]}" == *"readme.md"* ]]
+    [[ "${claude_calls[0]}" == *"summary.md"* ]] || return 1
+    [[ "${claude_calls[0]}" == *"readme.md"* ]] || return 1
 }
 
 @test "run_update_docs: prints input and output in log" {
@@ -2249,9 +2261,9 @@ SCRIPT
     make_file r.md
     run run_update_docs s.md -- r.md
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Input: s.md"* ]]
-    [[ "$output" == *"Output: r.md"* ]]
-    [[ "$output" == *"Documentation updated"* ]]
+    [[ "$output" == *"Input: s.md"* ]] || return 1
+    [[ "$output" == *"Output: r.md"* ]] || return 1
+    [[ "$output" == *"Documentation updated"* ]] || return 1
 }
 
 @test "run_update_docs: handles multiple inputs and outputs" {
@@ -2261,8 +2273,8 @@ SCRIPT
     make_file y.md
     run run_update_docs a.md b.md -- x.md y.md
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Input: a.md b.md"* ]]
-    [[ "$output" == *"Output: x.md y.md"* ]]
+    [[ "$output" == *"Input: a.md b.md"* ]] || return 1
+    [[ "$output" == *"Output: x.md y.md"* ]] || return 1
 }
 
 # ── parse_args: check mode ────────────────────────────────────────────────────
@@ -2281,8 +2293,8 @@ SCRIPT
 @test "parse_args: help check shows check details" {
     run parse_args help check
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum check"* ]]
-    [[ "$output" == *"verification"* ]]
+    [[ "$output" == *"wiggum check"* ]] || return 1
+    [[ "$output" == *"verification"* ]] || return 1
 }
 
 # ── run_check ────────────────────────────────────────────────────────────────
@@ -2291,7 +2303,7 @@ SCRIPT
     VERIFY_STEPS=("true" "true")
     run run_check
     [ "$status" -eq 0 ]
-    [[ "$output" == *"ALL CHECKS PASSED"* ]]
+    [[ "$output" == *"ALL CHECKS PASSED"* ]] || return 1
 }
 
 @test "run_check: fails when verify step fails" {
@@ -2305,36 +2317,36 @@ S
     VERIFY_STEPS=("$TEST_DIR/fail.sh")
     run run_check
     [ "$status" -eq "$EXIT_VALIDATION_FAILED" ]
-    [[ "$output" == *"CHECKS FAILED"* ]]
+    [[ "$output" == *"CHECKS FAILED"* ]] || return 1
 }
 
 @test "run_check: reports no steps when none configured" {
     VERIFY_STEPS=()
     run run_check
     [ "$status" -eq 0 ]
-    [[ "$output" == *"No verification steps"* ]]
+    [[ "$output" == *"No verification steps"* ]] || return 1
 }
 
 @test "run_check: reminds about the shell environment when steps run" {
     VERIFY_STEPS=("true")
     run run_check
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Reminder:"* ]]
-    [[ "$output" == *"environment"* ]]
+    [[ "$output" == *"Reminder:"* ]] || return 1
+    [[ "$output" == *"environment"* ]] || return 1
 }
 
 @test "run_check: no environment reminder when there are no steps" {
     VERIFY_STEPS=()
     run run_check
-    [[ "$output" != *"Reminder:"* ]]
+    [[ "$output" != *"Reminder:"* ]] || return 1
 }
 
 @test "run_check: uses same run_validation as execute mode" {
     # Verify it calls the shared function by checking for validation pass output
     VERIFY_STEPS=("true")
     run run_check
-    [[ "$output" == *"Validation pass"* ]]
-    [[ "$output" == *"All verification steps passed"* ]]
+    [[ "$output" == *"Validation pass"* ]] || return 1
+    [[ "$output" == *"All verification steps passed"* ]] || return 1
 }
 
 # ── run_docs ─────────────────────────────────────────────────────────────────
@@ -2346,10 +2358,10 @@ S
     DOCS_OUTPUT=("readme.md")
     run run_docs
     [ "$status" -eq 0 ]
-    [[ "$output" == *"WIGGUM DOCS MODE"* ]]
-    [[ "$output" == *"Input: summary.md"* ]]
-    [[ "$output" == *"Output: readme.md"* ]]
-    [[ "$output" == *"WIGGUM DOCS COMPLETE"* ]]
+    [[ "$output" == *"WIGGUM DOCS MODE"* ]] || return 1
+    [[ "$output" == *"Input: summary.md"* ]] || return 1
+    [[ "$output" == *"Output: readme.md"* ]] || return 1
+    [[ "$output" == *"WIGGUM DOCS COMPLETE"* ]] || return 1
 }
 
 # ── generate_uuid ────────────────────────────────────────────────────────────
@@ -2357,7 +2369,7 @@ S
 @test "generate_uuid: produces valid UUID format" {
     local uuid
     uuid="$(generate_uuid)"
-    [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+    [[ "$uuid" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || return 1
 }
 
 @test "generate_uuid: produces unique values" {
@@ -2439,7 +2451,7 @@ S
     log_init "plan.md"
     WIGGUM_CURRENT_LABEL="test"
     run_claude -p "hello"
-    [[ "$captured_args" == *"--session-id"* ]]
+    [[ "$captured_args" == *"--session-id"* ]] || return 1
 }
 
 @test "run_claude: replaces -c with --resume and --fork-session" {
@@ -2459,11 +2471,11 @@ S
     # Second call with -c should resume from the first
     WIGGUM_CURRENT_LABEL="second"
     run_claude -p -c "follow up"
-    [[ "$captured_args" == *"--resume"* ]]
-    [[ "$captured_args" == *"--fork-session"* ]]
-    [[ "$captured_args" == *"$first_id"* ]]
+    [[ "$captured_args" == *"--resume"* ]] || return 1
+    [[ "$captured_args" == *"--fork-session"* ]] || return 1
+    [[ "$captured_args" == *"$first_id"* ]] || return 1
     # -c should be stripped
-    [[ "$captured_args" != *" -c "* ]]
+    [[ "$captured_args" != *" -c "* ]] || return 1
 }
 
 @test "run_claude: never combines --session-id with -c" {
@@ -2560,7 +2572,7 @@ S
     stdout="$(run_claude -p "hello" 2>/dev/null)"
     stderr="$(run_claude -p "hello" 2>&1 >/dev/null)"
     [ -z "$stdout" ]
-    [[ "$stderr" == *"session:"* ]]
+    [[ "$stderr" == *"session:"* ]] || return 1
 }
 
 # ── Exit codes ───────────────────────────────────────────────────────────────
@@ -2619,7 +2631,7 @@ S
 
     run run_plan
     [ "$status" -eq "$EXIT_PLAN_FAILED" ]
-    [[ "$output" == *"not created or is empty"* ]]
+    [[ "$output" == *"not created or is empty"* ]] || return 1
 }
 
 @test "run_plan: fails when plan file is not created" {
@@ -2636,7 +2648,7 @@ S
 
     run run_plan
     [ "$status" -eq "$EXIT_PLAN_FAILED" ]
-    [[ "$output" == *"not created or is empty"* ]]
+    [[ "$output" == *"not created or is empty"* ]] || return 1
 }
 
 @test "run_plan: keeps plan file when explicit -o given" {
@@ -2859,7 +2871,7 @@ S
 @test "lib/wiggum.sh rejects direct execution" {
     run bash "$WIGGUM_LIB"
     [ "$status" -eq 1 ]
-    [[ "$output" == *"must be sourced"* ]]
+    [[ "$output" == *"must be sourced"* ]] || return 1
 }
 
 @test "CLI entry point runs under set -euo pipefail" {
@@ -2887,8 +2899,8 @@ S
     local cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
     run bash -c "printf 'Loading config from .wiggumrc\nPlan written to X.\n' | '$cli' execute"
     [ "$status" -eq 1 ]   # EXIT_BAD_ARGS
-    [[ "$output" == *"does not look like a wiggum plan"* ]]
-    [[ "$output" == *"wiggum execute <plan-file>"* ]]
+    [[ "$output" == *"does not look like a wiggum plan"* ]] || return 1
+    [[ "$output" == *"wiggum execute <plan-file>"* ]] || return 1
 }
 
 @test "CLI: execute accepts stdin that is a real plan" {
@@ -2898,7 +2910,7 @@ S
     local cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
     run bash -c "printf '# Workplan\n- [ ] First task\n' | '$cli' execute 2>&1 | head -5"
     # We only care that the shape check did not reject the input.
-    [[ "$output" != *"does not look like a wiggum plan"* ]]
+    [[ "$output" != *"does not look like a wiggum plan"* ]] || return 1
 }
 
 # ── --no-verify / --no-commit ────────────────────────────────────────────────
@@ -2963,8 +2975,8 @@ max_iterations = 2
 EOF
     run load_config_from test.rc
     [ "$status" -eq 0 ]
-    [[ "$output" != *"unknown config key"* ]]
-    [[ "$output" != *"Warning"* ]]
+    [[ "$output" != *"unknown config key"* ]] || return 1
+    [[ "$output" != *"Warning"* ]] || return 1
 }
 
 @test "apply_config: skip_verify=true sets NO_VERIFY" {
@@ -2999,13 +3011,13 @@ EOF
 @test "apply_config: invalid skip_verify value warns and treats as false" {
     run apply_config <<< "skip_verify=maybe"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"invalid value for skip_verify"* ]]
+    [[ "$output" == *"invalid value for skip_verify"* ]] || return 1
 }
 
 @test "apply_config: invalid skip_commit value warns and treats as false" {
     run apply_config <<< "skip_commit=sometimes"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"invalid value for skip_commit"* ]]
+    [[ "$output" == *"invalid value for skip_commit"* ]] || return 1
 }
 
 @test "print_verify_steps: shows (skipped) when NO_VERIFY=true" {
@@ -3013,8 +3025,8 @@ EOF
     VERIFY_STEPS=("npm test")
     run print_verify_steps 1
     [ "$status" -eq 0 ]
-    [[ "$output" == *"(skipped)"* ]]
-    [[ "$output" != *"npm test"* ]]
+    [[ "$output" == *"(skipped)"* ]] || return 1
+    [[ "$output" != *"npm test"* ]] || return 1
 }
 
 @test "print_verify_steps: shows (none configured) when no steps and NO_VERIFY=false" {
@@ -3022,7 +3034,7 @@ EOF
     VERIFY_STEPS=()
     run print_verify_steps 1
     [ "$status" -eq 0 ]
-    [[ "$output" == *"(none configured)"* ]]
+    [[ "$output" == *"(none configured)"* ]] || return 1
 }
 
 @test "commit_or_skip: skips and prints message when NO_COMMIT=true" {
@@ -3032,7 +3044,7 @@ EOF
     export -f claude
     run commit_or_skip "test-commit"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"(commit skipped via --no-commit)"* ]]
+    [[ "$output" == *"(commit skipped via --no-commit)"* ]] || return 1
 }
 
 @test "commit_or_skip: invokes claude when NO_COMMIT=false" {
@@ -3043,7 +3055,7 @@ EOF
     log_init "plan.md"
     commit_or_skip "test-commit"
     # claude should have been called with a prompt about committing
-    [[ -n "$captured" ]]
+    [[ -n "$captured" ]] || return 1
 }
 
 @test "commit_or_skip: passes extra files arg through to prompt_commit" {
@@ -3053,7 +3065,7 @@ EOF
     export -f claude
     log_init "plan.md"
     commit_or_skip "test-commit" "summary.md and plan.md"
-    [[ "$captured" == *"summary.md and plan.md"* ]]
+    [[ "$captured" == *"summary.md and plan.md"* ]] || return 1
 }
 
 @test "run_check: --no-verify produces clear error and exits EXIT_BAD_ARGS" {
@@ -3061,7 +3073,7 @@ EOF
     VERIFY_STEPS=("true")
     run run_check
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"--no-verify makes 'wiggum check' a no-op"* ]]
+    [[ "$output" == *"--no-verify makes 'wiggum check' a no-op"* ]] || return 1
 }
 
 @test "run_check: --no-commit suppresses post-fix commit" {
@@ -3080,7 +3092,7 @@ EOF
     # Force a dirty working tree so the commit branch would be entered
     run run_check
     [ "$status" -eq 0 ]
-    [[ "$output" == *"ALL CHECKS PASSED"* ]]
+    [[ "$output" == *"ALL CHECKS PASSED"* ]] || return 1
     # The commit-skipped marker may appear if the working tree is dirty.
     # Either way: claude must not have been called for a commit.
 }
@@ -3093,7 +3105,7 @@ EOF
     VERIFY_STEPS=("true")
     run run_validation
     [ "$status" -eq 0 ]
-    [[ "$output" == *"All verification steps passed"* ]]
+    [[ "$output" == *"All verification steps passed"* ]] || return 1
 }
 
 # ── Effort & permission mode ──────────────────────────────────────────────────
@@ -3137,7 +3149,7 @@ EOF
     make_file plan.md
     run parse_args plan plan.md --effort turbo
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"invalid --effort"* ]]
+    [[ "$output" == *"invalid --effort"* ]] || return 1
 }
 
 @test "parse_args: --permission-mode sets PERMISSION_MODE and CLI_PERMISSION_MODE" {
@@ -3151,7 +3163,7 @@ EOF
     make_file plan.md
     run parse_args plan plan.md --permission-mode godmode
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"invalid --permission-mode"* ]]
+    [[ "$output" == *"invalid --permission-mode"* ]] || return 1
 }
 
 @test "load_config_from: effort is recognized and forwarded" {
@@ -3199,13 +3211,13 @@ EOF
 @test "apply_config: invalid effort warns and keeps default" {
     run apply_config <<< "effort=turbo"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"invalid value for effort"* ]]
+    [[ "$output" == *"invalid value for effort"* ]] || return 1
 }
 
 @test "apply_config: invalid permission_mode warns and keeps default" {
     run apply_config <<< "permission_mode=godmode"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"invalid value for permission_mode"* ]]
+    [[ "$output" == *"invalid value for permission_mode"* ]] || return 1
 }
 
 @test "run_claude: injects default --effort and --permission-mode" {
@@ -3214,8 +3226,8 @@ EOF
     log_init "plan.md"
     WIGGUM_CURRENT_LABEL="t"
     run_claude -p "hi"
-    [[ "$captured" == *"--effort xhigh"* ]]
-    [[ "$captured" == *"--permission-mode bypassPermissions"* ]]
+    [[ "$captured" == *"--effort xhigh"* ]] || return 1
+    [[ "$captured" == *"--permission-mode bypassPermissions"* ]] || return 1
 }
 
 @test "run_claude: honors EFFORT and PERMISSION_MODE overrides" {
@@ -3226,8 +3238,8 @@ EOF
     PERMISSION_MODE="auto"
     WIGGUM_CURRENT_LABEL="t"
     run_claude -p "hi"
-    [[ "$captured" == *"--effort low"* ]]
-    [[ "$captured" == *"--permission-mode auto"* ]]
+    [[ "$captured" == *"--effort low"* ]] || return 1
+    [[ "$captured" == *"--permission-mode auto"* ]] || return 1
 }
 
 @test "run_claude: omits --effort when EFFORT is empty" {
@@ -3237,7 +3249,7 @@ EOF
     EFFORT=""
     WIGGUM_CURRENT_LABEL="t"
     run_claude -p "hi"
-    [[ "$captured" != *"--effort"* ]]
+    [[ "$captured" != *"--effort"* ]] || return 1
 }
 
 @test "run_claude: does not duplicate a caller-provided --permission-mode" {
@@ -3246,9 +3258,9 @@ EOF
     log_init "plan.md"
     WIGGUM_CURRENT_LABEL="t"
     run_claude -p --permission-mode plan "hi"
-    [[ "$captured" == *"--permission-mode plan"* ]]
+    [[ "$captured" == *"--permission-mode plan"* ]] || return 1
     # Default (bypassPermissions) must NOT also be injected.
-    [[ "$captured" != *"bypassPermissions"* ]]
+    [[ "$captured" != *"bypassPermissions"* ]] || return 1
 }
 
 # ── split_prompts ─────────────────────────────────────────────────────────────
@@ -3311,13 +3323,13 @@ EOF
 @test "parse_args: run mode with no prompts exits EXIT_BAD_ARGS" {
     run parse_args run < /dev/null
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"no prompts"* ]]
+    [[ "$output" == *"no prompts"* ]] || return 1
 }
 
 @test "parse_args: run mode -f with missing file exits EXIT_BAD_ARGS" {
     run parse_args run -f nope.txt
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"prompts file not found"* ]]
+    [[ "$output" == *"prompts file not found"* ]] || return 1
 }
 
 @test "parse_args: run mode sets --session-file, --new-session, --delimiter" {
@@ -3331,8 +3343,8 @@ EOF
 @test "parse_args: help run shows run details" {
     run parse_args help run
     [ "$status" -eq 0 ]
-    [[ "$output" == *"wiggum run"* ]]
-    [[ "$output" == *"--session-file"* ]]
+    [[ "$output" == *"wiggum run"* ]] || return 1
+    [[ "$output" == *"--session-file"* ]] || return 1
 }
 
 # ── run_prompts ───────────────────────────────────────────────────────────────
@@ -3347,9 +3359,9 @@ EOF
     l1="$(sed -n 1p calls.log)"
     l2="$(sed -n 2p calls.log)"
     l3="$(sed -n 3p calls.log)"
-    [[ "$l1" != *"--resume"* ]]
-    [[ "$l2" == *"--resume"* ]]
-    [[ "$l3" == *"--resume"* ]]
+    [[ "$l1" != *"--resume"* ]] || return 1
+    [[ "$l2" == *"--resume"* ]] || return 1
+    [[ "$l3" == *"--resume"* ]] || return 1
 }
 
 @test "run_prompts: writes the session id to --session-file" {
@@ -3369,7 +3381,7 @@ EOF
     RUN_PROMPTS=("only")
     RUN_SESSION_FILE="sess.id"
     run_prompts >/dev/null 2>&1
-    [[ "$(cat calls.log)" == *"--resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"* ]]
+    [[ "$(cat calls.log)" == *"--resume aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"* ]] || return 1
 }
 
 @test "run_prompts: --new-session ignores an existing --session-file" {
@@ -3380,7 +3392,7 @@ EOF
     RUN_SESSION_FILE="sess.id"
     RUN_NEW_SESSION=true
     run_prompts >/dev/null 2>&1
-    [[ "$(cat calls.log)" != *"--resume"* ]]
+    [[ "$(cat calls.log)" != *"--resume"* ]] || return 1
 }
 
 # ── run_sidecar_file ─────────────────────────────────────────────────────────
@@ -3457,9 +3469,9 @@ EOF
 EOF
     FILES=(plan.md)
     run run_status
-    [[ "$output" == *"Plan: plan.md"* ]]
-    [[ "$output" == *"Tasks: 1/2 done, 1 remaining, 0 dropped"* ]]
-    [[ "$output" == *"State: not started"* ]]
+    [[ "$output" == *"Plan: plan.md"* ]] || return 1
+    [[ "$output" == *"Tasks: 1/2 done, 1 remaining, 0 dropped"* ]] || return 1
+    [[ "$output" == *"State: not started"* ]] || return 1
 }
 
 @test "run_status: reports running when pidfile names a live process" {
@@ -3472,7 +3484,7 @@ EOF
     FILES=(plan.md)
     run run_status
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
-    [[ "$output" == *"State: running (pid $pid)"* ]]
+    [[ "$output" == *"State: running (pid $pid)"* ]] || return 1
 }
 
 @test "run_status: reports finished status from the out file" {
@@ -3482,7 +3494,7 @@ EOF
     printf 'Status: stalled\n' > plan.out
     FILES=(plan.md)
     run run_status
-    [[ "$output" == *"State: finished: stalled"* ]]
+    [[ "$output" == *"State: finished: stalled"* ]] || return 1
 }
 
 # ── kill_run / run_kill ──────────────────────────────────────────────────────
@@ -3500,7 +3512,7 @@ EOF
 @test "kill_run: errors when the pidfile is missing" {
     run kill_run nope.pid
     [ "$status" -ne 0 ]
-    [[ "$output" == *"No run pidfile"* ]]
+    [[ "$output" == *"No run pidfile"* ]] || return 1
 }
 
 @test "kill_run: cleans up a stale pidfile for a dead process" {
@@ -3511,7 +3523,7 @@ EOF
     run kill_run run.pid
     [ "$status" -eq 0 ]
     [ ! -f run.pid ]
-    [[ "$output" == *"not running"* ]]
+    [[ "$output" == *"not running"* ]] || return 1
 }
 
 @test "run_kill: derives the pidfile from the plan path" {
@@ -3562,7 +3574,7 @@ EOF
     run launch_execute_background
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
     [ "$status" -ne 0 ]
-    [[ "$output" == *"already active"* ]]
+    [[ "$output" == *"already active"* ]] || return 1
 }
 
 # ── run_watch ─────────────────────────────────────────────────────────────────
@@ -3574,7 +3586,7 @@ EOF
     FILES=(plan.md)
     run run_watch
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"No background run found"* ]]
+    [[ "$output" == *"No background run found"* ]] || return 1
 }
 
 @test "run_watch: streams output and returns 0 when run completes" {
@@ -3589,7 +3601,7 @@ EOF
     WATCH_POLL=1
     run run_watch
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Status: complete"* ]]
+    [[ "$output" == *"Status: complete"* ]] || return 1
     [ ! -f plan.pid ]
 }
 
@@ -3628,7 +3640,7 @@ EOF
     run run_chain
     [ "$status" -eq "$EXIT_PLAN_FAILED" ]
     [ "$(grep -c . chain.log)" -eq 2 ]
-    [[ "$(cat chain.log)" != *"c.md"* ]]
+    [[ "$(cat chain.log)" != *"c.md"* ]] || return 1
 }
 
 # ── find_run_pidfiles / run_top ──────────────────────────────────────────────
@@ -3640,9 +3652,9 @@ EOF
     : > c_plan.pid
     run find_run_pidfiles
     [ "$status" -eq 0 ]
-    [[ "${lines[0]}" == "./c_plan.pid" || "${lines[0]}" == "c_plan.pid" ]]
-    [[ "$output" == *"docs/a_plan.pid"* ]]
-    [[ "$output" == *"docs/b_plan.pid"* ]]
+    [[ "${lines[0]}" == "./c_plan.pid" || "${lines[0]}" == "c_plan.pid" ]] || return 1
+    [[ "$output" == *"docs/a_plan.pid"* ]] || return 1
+    [[ "$output" == *"docs/b_plan.pid"* ]] || return 1
     [ "${#lines[@]}" -eq 3 ]
 }
 
@@ -3656,16 +3668,16 @@ EOF
     mkdir -p docs
     : > docs/x_plan.pid
     run find_run_pidfiles docs/x_plan.md
-    [[ "$output" == *"docs/x_plan.pid"* ]]
+    [[ "$output" == *"docs/x_plan.pid"* ]] || return 1
     run find_run_pidfiles docs/x_plan.pid
-    [[ "$output" == *"docs/x_plan.pid"* ]]
+    [[ "$output" == *"docs/x_plan.pid"* ]] || return 1
 }
 
 @test "run_top: friendly message when there are no runs" {
     FILES=()
     run run_top
     [ "$status" -eq 0 ]
-    [[ "$output" == *"No wiggum runs found"* ]]
+    [[ "$output" == *"No wiggum runs found"* ]] || return 1
 }
 
 @test "run_top: lists a running run with pid, state and task tally" {
@@ -3682,11 +3694,11 @@ EOF
     run run_top
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PLAN"* ]]
-    [[ "$output" == *"docs/r_plan.md"* ]]
-    [[ "$output" == *"$pid"* ]]
-    [[ "$output" == *"running"* ]]
-    [[ "$output" == *"1/3 done, 2 left"* ]]
+    [[ "$output" == *"PLAN"* ]] || return 1
+    [[ "$output" == *"docs/r_plan.md"* ]] || return 1
+    [[ "$output" == *"$pid"* ]] || return 1
+    [[ "$output" == *"running"* ]] || return 1
+    [[ "$output" == *"1/3 done, 2 left"* ]] || return 1
 }
 
 @test "run_top: shows a finished run from its out file" {
@@ -3702,9 +3714,9 @@ EOF
     printf 'Status: complete\n' > docs/f_plan.out
     FILES=()
     run run_top
-    [[ "$output" == *"docs/f_plan.md"* ]]
-    [[ "$output" == *"finished: complete"* ]]
-    [[ "$output" == *"2/2 done"* ]]
+    [[ "$output" == *"docs/f_plan.md"* ]] || return 1
+    [[ "$output" == *"finished: complete"* ]] || return 1
+    [[ "$output" == *"2/2 done"* ]] || return 1
 }
 
 @test "run_top: flags a blocked run" {
@@ -3719,7 +3731,7 @@ EOF
     FILES=()
     run run_top
     kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
-    [[ "$output" == *"running (blocked)"* ]]
+    [[ "$output" == *"running (blocked)"* ]] || return 1
 }
 
 # ── run_execute: empty / all-done guard ──────────────────────────────────────
@@ -3740,8 +3752,8 @@ EOF
     NO_COMMIT=true
     run run_execute
     [ "$status" -eq 0 ]
-    [[ "$output" == *"No pending tasks"* ]]
-    [[ "$output" == *"(complete)"* ]]
+    [[ "$output" == *"No pending tasks"* ]] || return 1
+    [[ "$output" == *"(complete)"* ]] || return 1
     # Phase 1 still ran, but the phase-2 implement prompt was never issued.
     grep -q "Analyze the repository against the workplan" claude_calls
     ! grep -q "Execute the next discrete implementation step" claude_calls
@@ -3764,7 +3776,7 @@ EOF
     NO_COMMIT=true
     run run_execute
     [ "$status" -eq 0 ]
-    [[ "$output" == *"no trackable tasks"* ]]
+    [[ "$output" == *"no trackable tasks"* ]] || return 1
     ! grep -q "Execute the next discrete implementation step" claude_calls
 }
 
@@ -3792,7 +3804,7 @@ EOF
     run run_execute
     [ "$status" -eq 0 ]
     # The added checkbox was counted, so implementation ran (not the skip path).
-    [[ "$output" != *"no trackable tasks"* ]]
+    [[ "$output" != *"no trackable tasks"* ]] || return 1
     grep -q "Execute the next discrete implementation step" claude_calls
 }
 
@@ -3800,52 +3812,52 @@ EOF
 
 @test "env_reminder: generic reminder when no environment markers" {
     run env_reminder
-    [[ "$output" == *"current shell environment"* ]]
+    [[ "$output" == *"current shell environment"* ]] || return 1
 }
 
 @test "env_reminder: warns when a conda project has no env active" {
     touch environment.yml
     export CONDA_DEFAULT_ENV="" VIRTUAL_ENV=""
     run env_reminder
-    [[ "$output" == *"Warning:"* ]]
-    [[ "$output" == *"conda activate"* ]]
+    [[ "$output" == *"Warning:"* ]] || return 1
+    [[ "$output" == *"conda activate"* ]] || return 1
 }
 
 @test "env_reminder: treats conda 'base' as no env active" {
     touch environment.yml
     export CONDA_DEFAULT_ENV="base" VIRTUAL_ENV=""
     run env_reminder
-    [[ "$output" == *"Warning:"* ]]
+    [[ "$output" == *"Warning:"* ]] || return 1
 }
 
 @test "env_reminder: warns when a Python venv project has no env active" {
     touch requirements.txt
     export CONDA_DEFAULT_ENV="" VIRTUAL_ENV=""
     run env_reminder
-    [[ "$output" == *"Warning:"* ]]
-    [[ "$output" == *"virtualenv"* ]]
+    [[ "$output" == *"Warning:"* ]] || return 1
+    [[ "$output" == *"virtualenv"* ]] || return 1
 }
 
 @test "env_reminder: stays soft when a virtualenv is active" {
     touch requirements.txt
     export CONDA_DEFAULT_ENV="" VIRTUAL_ENV="/tmp/proj/.venv"
     run env_reminder
-    [[ "$output" != *"Warning:"* ]]
-    [[ "$output" == *"is active"* ]]
+    [[ "$output" != *"Warning:"* ]] || return 1
+    [[ "$output" == *"is active"* ]] || return 1
 }
 
 @test "env_reminder: stays soft when a non-base conda env is active" {
     touch environment.yml
     export CONDA_DEFAULT_ENV="proj-env" VIRTUAL_ENV=""
     run env_reminder
-    [[ "$output" != *"Warning:"* ]]
-    [[ "$output" == *"proj-env"* ]]
+    [[ "$output" != *"Warning:"* ]] || return 1
+    [[ "$output" == *"proj-env"* ]] || return 1
 }
 
 @test "env_reminder: tailors the hint to Node projects" {
     touch package.json
     run env_reminder
-    [[ "$output" == *"Node"* ]] || [[ "$output" == *"nvm"* ]]
+    [[ "$output" == *"Node"* ]] || [[ "$output" == *"nvm"* ]] || return 1
 }
 
 @test "run_execute: reminds about the shell environment" {
@@ -3861,6 +3873,6 @@ EOF
     NO_VERIFY=true
     NO_COMMIT=true
     run run_execute
-    [[ "$output" == *"Reminder:"* ]]
-    [[ "$output" == *"environment"* ]]
+    [[ "$output" == *"Reminder:"* ]] || return 1
+    [[ "$output" == *"environment"* ]] || return 1
 }
