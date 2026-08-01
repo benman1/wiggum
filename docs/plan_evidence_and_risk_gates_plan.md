@@ -411,12 +411,19 @@ Every claim this plan makes about current behaviour, with the line that proves i
       Acceptance: command exits 0 and prints nothing.
       Files: none (verification only)
       Depends on: Phases 1-4.
-- [ ] Run the full suite: `./test/run.sh`.
+- [x] Run the full suite: `./test/run.sh`.
       Acceptance: exits 0, prints `Lint passed.`, and the bats summary shows 0 failures with
       a test count strictly greater than the pre-change count (record both numbers in the
       commit-time notes).
       Files: none (verification only)
       Depends on: the lint task.
+      Notes: pre-change test count 362 (`08587ab`), post-change 388; suite exits 0 with
+      `Lint passed.` and 0 failures. Running this phase's Error-State check (delete
+      `path:line` from `prompt_plan_verification`) exposed a harness defect: bash 3.2 does
+      not apply `set -e` to a failing `[[ ]]` inside a function, so all 318 standalone
+      `[[ ]]` assertions were unenforced unless they happened to be the test's last command.
+      Fixed out-of-plan by binding every one with `|| return 1` and adding a guard test;
+      only the deliberately reintroduced regression failed once bound.
 - [ ] Sanity-check the real planner end to end without spending a Claude call: source the
       library, set `FILES` to the source issue `docs/plan_evidence_and_risk_gates.md`, stub
       `claude` to capture `"$@"`, and confirm the captured prompt contains the diagnosis
