@@ -399,7 +399,7 @@ Every claim this plan makes about current behaviour, with the line that proves i
 
 ## Phase 5: Whole-suite verification, prompt budget, and commit
 
-- [ ] Add a prompt-size Bats test `run_plan: feature-request prompt stays within budget`
+- [x] Add a prompt-size Bats test `run_plan: feature-request prompt stays within budget`
       that captures the prompt for a non-defect input and asserts
       `[ "$(wc -c < "$captured")" -lt 6000 ]`, plus a companion asserting the defect-mode
       prompt is under 9000 characters and strictly larger than the feature-mode prompt.
