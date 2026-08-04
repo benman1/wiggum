@@ -27,6 +27,10 @@ max_iterations = 3
 # Max retries per validation cycle (default: 5)
 max_validation_retries = 5
 
+# Retries when a claude session itself dies mid-run (dropped connection, API
+# error) rather than finishing its task. Set to 0 to fail on the first drop.
+claude_retries = 2
+
 # Reasoning effort passed to Claude Code: low | medium | high | xhigh | max (default: xhigh)
 # effort = xhigh
 

@@ -27,6 +27,7 @@ wiggum_reset() {
     MAX_ITERATIONS=3
     MAX_VALIDATION_RETRIES=5
     MAX_STALL_COUNT=2
+    CLAUDE_RETRIES=2
     INIT_PRESET=""
     VERIFY_STEPS=()
     BENCHMARK_SCRIPTS=()
@@ -35,6 +36,7 @@ wiggum_reset() {
     CLAUDE_EXTRA_ARGS=()
     CLI_MAX_ITERATIONS=""
     CLI_MAX_RETRIES=""
+    CLI_CLAUDE_RETRIES=""
     UPDATE_DOCS=()
     DOCS_INPUT=()
     DOCS_OUTPUT=()
@@ -103,7 +105,7 @@ load_config_from() {
         value="$(echo "$value" | xargs)"
 
         case "$key" in
-            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|skip_verify|skip_commit|effort|permission_mode)
+            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|claude_retries|skip_verify|skip_commit|effort|permission_mode)
                 echo "$key=$value"
                 ;;
             *)
@@ -136,6 +138,11 @@ apply_config() {
             max_validation_retries)
                 if [[ -z "$CLI_MAX_RETRIES" ]]; then
                     MAX_VALIDATION_RETRIES="$value"
+                fi
+                ;;
+            claude_retries)
+                if [[ -z "$CLI_CLAUDE_RETRIES" ]]; then
+                    CLAUDE_RETRIES="$value"
                 fi
                 ;;
             skip_verify)
@@ -265,6 +272,8 @@ Usage:
 Options:
   --max-iterations <n>          Maximum implementation iterations (default: 3)
   --max-validation-retries <n>  Max fix attempts per verification step (default: 5)
+  --claude-retries <n>          Retries when a claude session dies mid-run,
+                                e.g. a dropped connection (default: 2; 0 disables)
   --summary-file <path>         Output path for the summary (default: <base>_summary.md)
   --benchmark <script>          Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>         Comma-separated doc files to update after execution
@@ -573,6 +582,11 @@ parse_args() {
             --max-retries|--max-validation-retries)
                 MAX_VALIDATION_RETRIES="$2"
                 CLI_MAX_RETRIES="$2"
+                shift 2
+                ;;
+            --claude-retries)
+                CLAUDE_RETRIES="$2"
+                CLI_CLAUDE_RETRIES="$2"
                 shift 2
                 ;;
             --verbose)
@@ -1693,24 +1707,84 @@ generate_uuid() {
 
 WIGGUM_LAST_SESSION_ID=""
 
+# Path to the transcript of the claude invocation that most recently failed.
+# Empty while every session has succeeded.
+WIGGUM_LAST_FAILURE_OUT=""
+
+# Markers the Claude CLI prints when a session dies or degrades at the
+# transport/API layer rather than finishing its task. Used only to name the
+# cause in the failure report; the exit code is what decides failure, so a
+# marker appearing in ordinary output can never abort a healthy run.
+WIGGUM_CLAUDE_FAILURE_MARKERS='API Error|Connection closed mid-response|Connection error|Request timed out|Request was aborted|overloaded_error|rate_limit_error|Credit balance is too low|Invalid API key|OAuth token has expired|Prompt is too long'
+
+# Echo the first transport/API failure marker found in a captured transcript,
+# with a little trailing context, or nothing. Separate from run_claude so it
+# can be tested against a fixture file.
+#
+# Always exits 0. A clean transcript makes grep exit 1, and callers assign the
+# result to a variable, so returning grep's status would abort the whole run
+# under `set -e` every time a session succeeded.
+scan_claude_failure() {
+    local outfile="$1"
+    [[ -f "$outfile" ]] || return 0
+    grep -oiE "($WIGGUM_CLAUDE_FAILURE_MARKERS).{0,100}" "$outfile" | head -n1 || true
+}
+
+# Create a private transcript file for one claude invocation. Deleted when the
+# session succeeds, kept (and its path reported) when it fails, so a crash can
+# be read after the fact without leaving files in the user's repo.
+claude_capture_file() {
+    local dir="${TMPDIR:-/tmp}"
+    mktemp "${dir%/}/wiggum-claude-XXXXXX"
+}
+
+# Report a failed claude session on stderr. This is the whole point of the
+# wrapper: in quiet mode claude's output went to /dev/null and `set -e` then
+# unwound the run, so a dead session showed on the terminal as nothing but the
+# session id line and a returned shell prompt.
+report_claude_failure() {
+    local label="$1" session_id="$2" rc="$3" outfile="$4"
+    local reason
+    reason="$(scan_claude_failure "$outfile")"
+
+    {
+        echo ""
+        echo "!! claude session failed during '$label' (exit $rc)."
+        if [[ -n "$reason" ]]; then
+            echo "   cause:      $reason"
+        fi
+        echo "   session:    $session_id"
+        if [[ -s "$outfile" ]]; then
+            echo "   transcript: $outfile"
+            echo "   --- last 20 lines ---"
+            tail -n 20 "$outfile" | sed 's/^/   | /'
+            echo "   --- end of transcript ---"
+        else
+            echo "   transcript: (claude produced no output)"
+        fi
+        echo "   inspect:    claude --resume $session_id"
+        echo ""
+    } >&2
+
+    log_entry "$label" "FAILED exit $rc${reason:+ - $reason}"
+}
+
 run_claude() {
     local label="${WIGGUM_CURRENT_LABEL:-claude}"
-    local session_id
-    session_id="$(generate_uuid)"
-    local session_args=("--session-id" "$session_id")
 
-    # Replace -c/--continue with --resume <previous-session-id>.
-    # Track whether the caller passed its own --permission-mode so we don't
-    # also inject the configured one (an explicit per-call override wins).
+    # Snapshot the session a -c call forks from before looping: a retry must
+    # fork from the same predecessor, not from the attempt that just died.
+    local resume_from="$WIGGUM_LAST_SESSION_ID"
+
+    # Split out -c/--continue (wiggum's flag, not claude's) and note whether
+    # the caller passed its own --permission-mode, so we don't also inject the
+    # configured one (an explicit per-call override wins).
     local filtered_args=()
     local has_perm_mode=false
+    local wants_continue=false
     for arg in "$@"; do
         if [[ "$arg" == "-c" || "$arg" == "--continue" ]]; then
-            if [[ -n "$WIGGUM_LAST_SESSION_ID" ]]; then
-                session_args=("--session-id" "$session_id" "--resume" "$WIGGUM_LAST_SESSION_ID" "--fork-session")
-                log_entry "$label" "session $session_id (resumed from $WIGGUM_LAST_SESSION_ID)"
-                echo "  session: $session_id (resumed from $WIGGUM_LAST_SESSION_ID)" >&2
-            fi
+            wants_continue=true
         else
             [[ "$arg" == "--permission-mode" ]] && has_perm_mode=true
             filtered_args+=("$arg")
@@ -1726,22 +1800,67 @@ run_claude() {
         injected_args+=("--permission-mode" "$PERMISSION_MODE")
     fi
 
-    if [[ "${session_args[*]}" != *"--resume"* ]]; then
-        log_entry "$label" "session $session_id"
-        echo "  session: $session_id" >&2
-    fi
+    local attempt=1 rc=0
+    while :; do
+        # A fresh session id per attempt: --session-id rejects an id that has
+        # already been used, so reusing the dead attempt's id would turn a
+        # retryable network blip into a hard failure.
+        local session_id
+        session_id="$(generate_uuid)"
+        local session_args=("--session-id" "$session_id")
+        if [[ "$wants_continue" == true && -n "$resume_from" ]]; then
+            session_args+=("--resume" "$resume_from" "--fork-session")
+            log_entry "$label" "session $session_id (resumed from $resume_from)"
+            echo "  session: $session_id (resumed from $resume_from)" >&2
+        else
+            log_entry "$label" "session $session_id"
+            echo "  session: $session_id" >&2
+        fi
+        WIGGUM_LAST_SESSION_ID="$session_id"
 
-    WIGGUM_LAST_SESSION_ID="$session_id"
+        local outfile
+        outfile="$(claude_capture_file)"
 
-    if [[ "$VERBOSE" == true || "$WIGGUM_SHOW_OUTPUT" == true ]]; then
-        claude "${session_args[@]}" \
-            ${injected_args[@]+"${injected_args[@]}"} \
-            ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}"
-    else
-        claude "${session_args[@]}" \
-            ${injected_args[@]+"${injected_args[@]}"} \
-            ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}" >/dev/null
-    fi
+        rc=0
+        if [[ "$VERBOSE" == true || "$WIGGUM_SHOW_OUTPUT" == true ]]; then
+            claude "${session_args[@]}" \
+                ${injected_args[@]+"${injected_args[@]}"} \
+                ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}" \
+                2>&1 | tee "$outfile" || rc=$?
+        else
+            claude "${session_args[@]}" \
+                ${injected_args[@]+"${injected_args[@]}"} \
+                ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}" \
+                >"$outfile" 2>&1 || rc=$?
+        fi
+
+        if [[ "$rc" -eq 0 ]]; then
+            # A session can finish successfully and still have dropped a
+            # response part way through. Say so rather than letting the next
+            # phase build on a half-finished one.
+            local warning
+            warning="$(scan_claude_failure "$outfile")"
+            if [[ -n "$warning" ]]; then
+                echo "Warning: claude exited 0 during '$label' but reported: $warning" >&2
+                log_entry "$label" "warning - $warning"
+            fi
+            rm -f "$outfile"
+            break
+        fi
+
+        report_claude_failure "$label" "$session_id" "$rc" "$outfile"
+        WIGGUM_LAST_FAILURE_OUT="$outfile"
+
+        if [[ "$attempt" -gt "$CLAUDE_RETRIES" ]]; then
+            echo "Giving up on '$label' after $attempt attempt(s)." >&2
+            log_entry "$label" "gave up after $attempt attempt(s)"
+            return "$EXIT_CLAUDE_FAILED"
+        fi
+
+        echo "Retrying '$label' (attempt $((attempt + 1)) of $((CLAUDE_RETRIES + 1)))..." >&2
+        log_entry "$label" "retry $attempt of $CLAUDE_RETRIES"
+        attempt=$((attempt + 1))
+    done
 
     log_entry "$label" "done"
 }
@@ -2050,6 +2169,41 @@ env_reminder() {
     esac
 }
 
+# Set to true only once run_execute reaches its normal end. The EXIT trap reads
+# it to tell an orderly finish from an unwind.
+WIGGUM_RUN_FINISHED=true
+
+# EXIT-trap reporter. Any failing command inside run_execute unwinds the whole
+# script under `set -e`, skipping the "Status:" line at the bottom of the run.
+# Without that line read_run_status finds nothing and `wiggum status` reports
+# "not running (no status recorded)", which reads identically to a run that was
+# never started. Print the status here so a crash is recorded as a crash.
+report_unfinished_run() {
+    local rc=$?
+    if [[ "${WIGGUM_RUN_FINISHED:-true}" == true ]]; then
+        return 0
+    fi
+    log_entry "abort" "run ended early (exit $rc)"
+    {
+        echo ""
+        echo "Status: aborted (exit $rc)"
+        if [[ "$rc" -eq "$EXIT_CLAUDE_FAILED" ]]; then
+            echo "The run stopped because a claude session failed, not because the plan finished."
+            if [[ -n "$WIGGUM_LAST_FAILURE_OUT" ]]; then
+                echo "Transcript: $WIGGUM_LAST_FAILURE_OUT"
+            fi
+        fi
+        if [[ -n "$WIGGUM_LOG_FILE" ]]; then
+            echo "Log: $WIGGUM_LOG_FILE"
+        fi
+        if [[ -n "$WIGGUM_LAST_SESSION_ID" ]]; then
+            echo "Session: $WIGGUM_LAST_SESSION_ID"
+        fi
+        echo "=== WIGGUM RUN ABORTED ==="
+    } >&2
+    return "$rc"
+}
+
 run_execute() {
     # Surface this before anything else (and before the background hand-off) so
     # the person launching the run sees it, not just the .out log.
@@ -2061,6 +2215,9 @@ run_execute() {
         launch_execute_background
         return $?
     fi
+
+    WIGGUM_RUN_FINISHED=false
+    trap 'report_unfinished_run' EXIT
 
     echo "=== WIGGUM EXECUTE MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
@@ -2272,6 +2429,9 @@ run_execute() {
     echo "Log: $WIGGUM_LOG_FILE" >&2
     echo "Session: $WIGGUM_LAST_SESSION_ID" >&2
     echo "=== WIGGUM EXECUTION COMPLETE ===" >&2
+
+    WIGGUM_RUN_FINISHED=true
+    trap - EXIT
 }
 
 # ── Orchestration (background / status / watch / kill / chain) ────────────────
