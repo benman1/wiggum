@@ -1387,6 +1387,34 @@ EOF
     [ "$MAX_VALIDATION_RETRIES" = "3" ]
 }
 
+@test "apply_config: sets claude_retries" {
+    apply_config <<< "claude_retries=4"
+    [ "$CLAUDE_RETRIES" = "4" ]
+}
+
+@test "apply_config: CLI_CLAUDE_RETRIES takes precedence over config" {
+    CLI_CLAUDE_RETRIES="0"
+    CLAUDE_RETRIES="0"
+    apply_config <<< "claude_retries=4"
+    [ "$CLAUDE_RETRIES" = "0" ]
+}
+
+@test "load_config_from: claude_retries is recognized and forwarded" {
+    cat > .wiggumrc <<'EOF'
+claude_retries = 4
+EOF
+    run load_config_from .wiggumrc
+    [[ "$output" == *"claude_retries=4"* ]] || return 1
+    [[ "$output" != *"unknown config key"* ]] || return 1
+}
+
+@test "parse_args: --claude-retries sets CLAUDE_RETRIES and marks the CLI override" {
+    make_file "plan.md"
+    parse_args execute plan.md --claude-retries 5
+    [ "$CLAUDE_RETRIES" = "5" ]
+    [ "$CLI_CLAUDE_RETRIES" = "5" ]
+}
+
 # ── detect_preset ────────────────────────────────────────────────────────────
 
 @test "detect_preset: detects next from next.config.ts" {
@@ -2573,6 +2601,299 @@ S
     stderr="$(run_claude -p "hello" 2>&1 >/dev/null)"
     [ -z "$stdout" ]
     [[ "$stderr" == *"session:"* ]] || return 1
+}
+
+# ── run_claude failure reporting ─────────────────────────────────────────────
+#
+# Three consecutive real runs died on "API Error: Connection closed
+# mid-response" and reported nothing to the terminal: quiet mode sent claude's
+# output to /dev/null and `set -e` unwound the script. These tests pin the
+# behaviour that makes such a death visible.
+
+@test "run_claude: reports a failed session on stderr instead of dying silently" {
+    log_init "plan.md"
+    claude() { echo "API Error: Connection closed mid-response."; return 1; }
+    export -f claude
+    CLAUDE_RETRIES=0
+    WIGGUM_CURRENT_LABEL="phase2-implement-1"
+
+    run run_claude -p "do the work"
+    [ "$status" -eq "$EXIT_CLAUDE_FAILED" ]
+    [[ "$output" == *"claude session failed during 'phase2-implement-1'"* ]] || return 1
+    [[ "$output" == *"Connection closed mid-response"* ]] || return 1
+}
+
+@test "run_claude: failure report includes the exit code and the session id" {
+    log_init "plan.md"
+    claude() { echo "boom"; return 7; }
+    export -f claude
+    CLAUDE_RETRIES=0
+    WIGGUM_CURRENT_LABEL="test"
+
+    run run_claude -p "hi"
+    [[ "$output" == *"exit 7"* ]] || return 1
+    [[ "$output" == *"session:"* ]] || return 1
+    [[ "$output" == *"claude --resume"* ]] || return 1
+}
+
+@test "run_claude: failure report quotes the tail of the transcript" {
+    log_init "plan.md"
+    claude() { echo "the last thing claude said"; return 1; }
+    export -f claude
+    CLAUDE_RETRIES=0
+    WIGGUM_CURRENT_LABEL="test"
+
+    run run_claude -p "hi"
+    [[ "$output" == *"the last thing claude said"* ]] || return 1
+}
+
+@test "run_claude: logs the failure so the run log records it" {
+    log_init "plan.md"
+    claude() { echo "API Error"; return 1; }
+    export -f claude
+    CLAUDE_RETRIES=0
+    WIGGUM_CURRENT_LABEL="phase1-diagnostic"
+
+    run run_claude -p "hi"
+    grep -q "phase1-diagnostic: FAILED exit 1" plan.log
+}
+
+@test "run_claude: does not log 'done' for a failed session" {
+    log_init "plan.md"
+    claude() { return 1; }
+    export -f claude
+    CLAUDE_RETRIES=0
+    WIGGUM_CURRENT_LABEL="test"
+
+    run run_claude -p "hi"
+    ! grep -q "test: done" plan.log
+}
+
+@test "run_claude: retries a failed session up to CLAUDE_RETRIES times" {
+    log_init "plan.md"
+    echo 0 > attempts
+    claude() {
+        local n
+        n=$(cat attempts)
+        echo $((n + 1)) > attempts
+        return 1
+    }
+    export -f claude
+    CLAUDE_RETRIES=2
+    WIGGUM_CURRENT_LABEL="test"
+
+    run run_claude -p "hi"
+    [ "$status" -eq "$EXIT_CLAUDE_FAILED" ]
+    [ "$(cat attempts)" -eq 3 ]
+}
+
+@test "run_claude: stops retrying once a session succeeds" {
+    log_init "plan.md"
+    echo 0 > attempts
+    claude() {
+        local n
+        n=$(cat attempts)
+        n=$((n + 1))
+        echo "$n" > attempts
+        if [ "$n" -ge 2 ]; then
+            return 0
+        fi
+        return 1
+    }
+    export -f claude
+    CLAUDE_RETRIES=3
+    WIGGUM_CURRENT_LABEL="test"
+
+    run run_claude -p "hi"
+    [ "$status" -eq 0 ]
+    [ "$(cat attempts)" -eq 2 ]
+}
+
+@test "run_claude: each retry gets a fresh session id" {
+    log_init "plan.md"
+    claude() {
+        while [[ $# -gt 0 ]]; do
+            if [[ "$1" == "--session-id" ]]; then
+                echo "$2" >> ids
+            fi
+            shift
+        done
+        return 1
+    }
+    export -f claude
+    CLAUDE_RETRIES=1
+    WIGGUM_CURRENT_LABEL="test"
+
+    run run_claude -p "hi"
+    [ "$(wc -l < ids)" -eq 2 ]
+    [ "$(sort -u ids | wc -l)" -eq 2 ]
+}
+
+@test "run_claude: a retry forks from the original session, not the dead attempt" {
+    log_init "plan.md"
+    claude() { return 0; }
+    export -f claude
+    WIGGUM_CURRENT_LABEL="test"
+    run_claude -p "first" 2>/dev/null
+    local first="$WIGGUM_LAST_SESSION_ID"
+
+    claude() {
+        while [[ $# -gt 0 ]]; do
+            if [[ "$1" == "--resume" ]]; then
+                echo "$2" >> resumes
+            fi
+            shift
+        done
+        return 1
+    }
+    export -f claude
+    CLAUDE_RETRIES=1
+    run run_claude -p -c "second"
+
+    [ "$(sort -u resumes | wc -l)" -eq 1 ]
+    [ "$(head -n1 resumes)" = "$first" ]
+}
+
+@test "run_claude: warns when claude exits 0 but reported an API error" {
+    log_init "plan.md"
+    claude() { echo "API Error: Connection closed mid-response."; return 0; }
+    export -f claude
+    WIGGUM_CURRENT_LABEL="test"
+
+    run run_claude -p "hi"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Warning: claude exited 0"* ]] || return 1
+    grep -q "test: done" plan.log
+}
+
+@test "run_claude: a clean session produces no failure noise" {
+    log_init "plan.md"
+    claude() { echo "all good"; return 0; }
+    export -f claude
+    WIGGUM_CURRENT_LABEL="test"
+
+    run run_claude -p "hi"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"failed"* ]] || return 1
+    [[ "$output" != *"Warning"* ]] || return 1
+}
+
+@test "run_claude: keeps the transcript of a failed session" {
+    log_init "plan.md"
+    mkdir -p tmpdir
+    TMPDIR="$TEST_DIR/tmpdir"
+    claude() { echo "dead"; return 1; }
+    export -f claude
+    CLAUDE_RETRIES=0
+    WIGGUM_CURRENT_LABEL="test"
+
+    run_claude -p "hi" 2>/dev/null || true
+    [ -s "$WIGGUM_LAST_FAILURE_OUT" ]
+    grep -q "dead" "$WIGGUM_LAST_FAILURE_OUT"
+}
+
+@test "run_claude: deletes the transcript of a successful session" {
+    log_init "plan.md"
+    mkdir -p tmpdir
+    TMPDIR="$TEST_DIR/tmpdir"
+    claude() { echo "fine"; return 0; }
+    export -f claude
+    WIGGUM_CURRENT_LABEL="test"
+
+    run_claude -p "hi" 2>/dev/null
+    [ "$(find "$TMPDIR" -name 'wiggum-claude-*' | wc -l)" -eq 0 ]
+}
+
+# ── report_unfinished_run ────────────────────────────────────────────────────
+#
+# read_run_status greps the .out file for "Status: ". A run that unwound under
+# `set -e` never printed one, so `wiggum status` said "not running (no status
+# recorded)" for a crash and for a run that was never launched alike.
+
+@test "report_unfinished_run: prints a status line when the run did not finish" {
+    log_init "plan.md"
+    WIGGUM_RUN_FINISHED=false
+    run report_unfinished_run
+    [[ "$output" == *"Status: aborted"* ]] || return 1
+    [[ "$output" == *"WIGGUM RUN ABORTED"* ]] || return 1
+}
+
+@test "report_unfinished_run: stays silent when the run finished normally" {
+    log_init "plan.md"
+    WIGGUM_RUN_FINISHED=true
+    run report_unfinished_run
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "report_unfinished_run: names a claude failure as the cause" {
+    log_init "plan.md"
+    WIGGUM_RUN_FINISHED=false
+    WIGGUM_LAST_FAILURE_OUT="/tmp/wiggum-claude-xyz"
+    run bash -c "source '$WIGGUM_LIB'
+        WIGGUM_RUN_FINISHED=false
+        WIGGUM_LAST_FAILURE_OUT=/tmp/wiggum-claude-xyz
+        (exit $EXIT_CLAUDE_FAILED)
+        report_unfinished_run" 2>&1
+    [[ "$output" == *"a claude session failed"* ]] || return 1
+    [[ "$output" == *"/tmp/wiggum-claude-xyz"* ]] || return 1
+}
+
+@test "report_unfinished_run: aborted status is readable by read_run_status" {
+    log_init "plan.md"
+    WIGGUM_RUN_FINISHED=false
+    report_unfinished_run > out.txt 2>&1 || true
+    local final
+    final="$(read_run_status out.txt)"
+    [[ "$final" == aborted* ]] || return 1
+}
+
+# ── scan_claude_failure ──────────────────────────────────────────────────────
+
+@test "scan_claude_failure: finds the connection-drop marker" {
+    printf 'working...\nAPI Error: Connection closed mid-response.\n' > out.txt
+    run scan_claude_failure out.txt
+    [[ "$output" == *"Connection closed mid-response"* ]] || return 1
+}
+
+@test "scan_claude_failure: reports nothing for a clean transcript" {
+    printf 'read the plan\nedited two files\ndone\n' > out.txt
+    run scan_claude_failure out.txt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "scan_claude_failure: reports nothing for a missing file" {
+    run scan_claude_failure /nonexistent/transcript
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+# The CLI sources this library under `set -euo pipefail`; bats does not. A
+# helper whose grep finds nothing exits 1, and assigning that to a variable
+# aborts the run -- which is how a *successful* claude session first came to
+# kill the whole execute loop. Exercise the set -e path explicitly.
+@test "scan_claude_failure: a clean transcript does not abort under set -e" {
+    printf 'all fine\n' > out.txt
+    run bash -c "set -euo pipefail
+        source '$WIGGUM_LIB'
+        found=\"\$(scan_claude_failure out.txt)\"
+        echo \"survived:[\$found]\""
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"survived:[]"* ]] || return 1
+}
+
+@test "run_claude: a successful session does not abort under set -e" {
+    run bash -c "set -euo pipefail
+        source '$WIGGUM_LIB'
+        claude() { echo 'did some work'; return 0; }
+        log_init plan.md
+        WIGGUM_CURRENT_LABEL=phase1-diagnostic
+        run_claude -p 'hi' >/dev/null 2>&1
+        echo 'reached the end'"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"reached the end"* ]] || return 1
+    grep -q "phase1-diagnostic: done" plan.log
 }
 
 # ── Exit codes ───────────────────────────────────────────────────────────────
