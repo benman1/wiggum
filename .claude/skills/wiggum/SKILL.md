@@ -197,10 +197,36 @@ run under the wrong interpreter and thrash, and you waste a `kill` + relaunch.
 `wiggum execute` prints an environment line at startup; if it warns that no env is
 active, stop, activate it, and relaunch.
 
+**Size the iteration budget to the plan, on the FIRST launch.** An iteration
+completes roughly one task, so a run needs at least as many iterations as the plan
+has open checkboxes, plus headroom for the ones that need a second pass. The
+default is **3** — from `--max-iterations`'s built-in default, the `max_iterations`
+in the `.wiggumrc` templates wiggum generates, or a `.wiggumrc` written for an
+older, smaller plan — and it is almost always wrong for a real workplan. A 3-
+iteration budget on an 11-task plan does not fail loudly; it stops `incomplete`
+about a quarter of the way in, which reads like a stall and costs a supervise
+cycle to diagnose.
+
+So count the boxes and pass the flag explicitly — **always**, even when
+`.wiggumrc` already sets `max_iterations`, because the flag overrides it and you
+should not have to read their config to get this right:
+
+```
+open=$(grep -c '^ *[-*+] \[ \]' docs/<name>_plan.md)
+wiggum execute docs/<name>_plan.md --background --max-iterations $(( open * 2 + 3 ))
+```
+
+`open * 2 + 3` is a reasonable rule of thumb — roughly two passes per task plus
+slack. Do **not** economise here: iterations are a *ceiling*, not a target. Wiggum
+stops as soon as every task is done, and it stops on its own stall detection long
+before it burns a large budget, so an over-generous ceiling costs nothing while a
+tight one reliably costs a re-run. If you catch yourself re-running a plan purely
+because it stopped `incomplete`, the budget was too small at launch.
+
 Then launch detached so you can monitor and bound it:
 
 ```
-wiggum execute docs/<name>_plan.md --background
+wiggum execute docs/<name>_plan.md --background --max-iterations <sized above>
 ```
 
 Then supervise in a loop until it finishes:
@@ -238,9 +264,11 @@ stops for three reasons; handle each differently:
 - **`incomplete`** — it hit `--max-iterations` while still making progress; it just
   ran out of budget. The plan is fine. Re-run `wiggum execute <plan>` — phase 1
   reconciles the repo against the plan, then it continues the remaining `[ ]`
-  tasks — optionally with a higher `--max-iterations`. Between runs, `wiggum status
-  <plan>` must show `remaining` going *down*; if it stops dropping, treat it as a
-  stall.
+  tasks — **with a budget sized to the tasks that are still open** (step 3's
+  `open * 2 + 3`), not the same ceiling that just ran out. Between runs, `wiggum
+  status <plan>` must show `remaining` going *down*; if it stops dropping, treat it
+  as a stall. Reaching `incomplete` at all usually means the launch budget was
+  under-sized — fix that at launch next time rather than re-running repeatedly.
 - **`stalled`** — no progress for two iterations in a row. Re-running as-is will
   just stall again. **Diagnose, mitigate, then re-run.**
 
@@ -307,6 +335,9 @@ can inspect and fix between stages.
 - **Never ask for confirmation** — just execute.
 - **Refer to runs by their plan file** — that's how status/watch/kill find the
   sidecars.
+- **Always pass `--max-iterations`, sized to the plan's open checkboxes** (step 3).
+  The 3-iteration default is a floor for toy plans, not a budget for a real
+  workplan, and under-sizing it turns a working run into a false `incomplete`.
 - **Kill scope:** only ever stop the run you started (`wiggum kill <plan>`), never
   a blanket process kill.
 - **Don't edit `.wiggumrc`** to make verification pass — it's the user's config. If
