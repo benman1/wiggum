@@ -69,9 +69,12 @@
 
 ## Phase 6: Quote Everything
 
-- [ ] **6.1 Run `shellcheck` with strict quoting rules** — Run `shellcheck -S warning lib/wiggum.sh wiggum.sh` and fix all quoting warnings (SC2086, SC2046, SC2248, etc.).
-- [ ] **6.2 Audit `eval` usage** — `run_validation` uses `eval "$cmd"`. This is a known risk. Document why it's necessary (user-provided commands from `.wiggumrc`) and add a comment. Consider whether a safer dispatch is possible.
-- [ ] **6.3 Audit `xargs` trimming** — `load_config_from` uses `echo "$key" | xargs` for whitespace trimming. Replace with a pure-bash trim pattern (`key="${key#"${key%%[![:space:]]*}"}"`) to avoid word-splitting surprises with special characters.
+- [x] **6.1 Run `shellcheck` with strict quoting rules** — Run `shellcheck -S warning lib/wiggum.sh wiggum.sh` and fix all quoting warnings (SC2086, SC2046, SC2248, etc.).
+  Verified 2026-08-11: `shellcheck -S warning -s bash lib/wiggum.sh wiggum.sh install.sh` exits 0 with no findings, so no quoting fixes were needed.
+- [x] **6.2 Audit `eval` usage** — `run_validation` uses `eval "$cmd"`. This is a known risk. Document why it's necessary (user-provided commands from `.wiggumrc`) and add a comment. Consider whether a safer dispatch is possible.
+  Done 2026-08-11 (`run_validation` and `run_benchmarks` both documented). Recorded that a verify step is a user-authored shell command line, so a word-array dispatch would break pipes and `&&`; and that VERIFY_STEPS is .wiggumrc-only while BENCHMARK_SCRIPTS also accepts `--benchmark`, so the two evals carry different provenance.
+- [x] **6.3 Audit `xargs` trimming** — `load_config_from` uses `echo "$key" | xargs` for whitespace trimming. Replace with a pure-bash trim pattern (`key="${key#"${key%%[![:space:]]*}"}"`) to avoid word-splitting surprises with special characters.
+  Done 2026-08-11. The defect was wider than described: xargs parses its input as shell words, so `verify = pytest -k "not slow"` ran as `pytest -k not slow`, an apostrophe aborted xargs and truncated the value to its first word, and regex backslashes were eaten. Replaced by `trim_whitespace` (parameter expansion) with 9 bats tests.
 
 **Acceptance criteria:** `shellcheck` passes clean (it already runs in CI via `.wiggumrc`). No unquoted variable expansions remain. `eval` usage is documented.
 
