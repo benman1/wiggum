@@ -297,9 +297,33 @@ identically; macOS has `screen` at `/usr/bin/screen` and no `setsid`.
 
 The cost: a foreground run writes no `.pid`, so `wiggum status` can't find it and a
 `kill -0 $(cat <plan>.pid)` liveness check reports "gone" when the file is merely
-absent — indistinguishable from a real death. Check liveness with `screen -ls` and
-`pgrep -f "wiggum execute docs/<name>_plan"` instead. Task counts still work,
-because `wiggum status` reads the plan's checkboxes.
+absent — indistinguishable from a real death. Check liveness with `screen -ls` /
+`tmux ls` and a process check instead. Task counts still work, because
+`wiggum status` reads the plan's checkboxes.
+
+**Check a PID, not a pattern.** wiggum's own `process_alive()` is `kill -0 "$pid"`
+(`lib/wiggum.sh`), and that is the primitive to copy: it asks the kernel about one
+process and parses no text, so nothing about other processes or terminal width can
+fool it. Capture the PID when you launch (`$!`, or `screen -ls`) and check that.
+
+Pattern-matching liveness fails in two ways that both look exactly like "the job
+finished", and a waiter shaped `until ! <check>; do sleep 30; done` cannot tell
+either from success, because it reads *any* non-zero exit as "gone":
+
+- `pgrep -f` **errors** rather than returning empty when any unrelated process has
+  non-UTF-8 bytes in its command line: `Regular expression evaluation error (illegal
+  byte sequence)`, exit non-zero, waiter fires.
+- `ps -eo pid,command` **truncates** the command column to the terminal width, so in
+  a background context with no tty the match string can be cut off entirely. Use
+  `ps -eo pid,command -ww` if you must match text at all.
+
+Whatever you check, confirm a *completion* by its **artifact** — the output file
+exists, the job's log has its `saved …` line — never by the absence of a process
+alone. A job that dies at minute 50 also stops being a process, and the two are
+indistinguishable until you look for what it was supposed to produce.
+
+For a run wiggum itself started, skip all of this: `wiggum watch <plan>` blocks
+until it finishes and streams its output.
 
 **Verify survival before believing any launch pattern.** Every one of these failure
 modes looks healthy at the five-minute mark. Don't record a pattern as working
