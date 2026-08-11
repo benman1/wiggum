@@ -944,3 +944,24 @@ brew install bats-core shellcheck
 - **Resume any step with `claude -r`.** Wiggum logs a Claude session ID for every step. Find the session ID in the `.log` file and resume it interactively: `claude -r <session-id>`. Useful for asking follow-up questions about what Claude did during a specific implementation or validation step.
 - **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` reminds you if one is missing.
 - **Use `/wiggum` inside Claude Code.** If you're already in a Claude Code session and want to kick off the full loop without switching to the terminal, use `/wiggum <issue>`. It runs the same workflow natively.
+
+## Long runs
+
+`--background` daemonizes inside the shell session that launched it. That is enough for a run you sit with, but a run expected to last hours dies when that session is destroyed: a closed terminal, an ended agent session, a supervising process exiting. The signature is a clean `.out` that stops mid-phase with no error and no summary file, which looks like a wiggum bug and is not one. `nohup … &` delays this rather than fixing it.
+
+Launch anything long inside a detached multiplexer, with wiggum in the **foreground** inside it:
+
+```bash
+screen -dmS wig1 bash -lc 'conda activate myenv; \
+  exec wiggum execute docs/plan.md --max-iterations 12 >> docs/plan.out 2>&1'
+```
+
+No `--background` here: the multiplexer provides the durability, and a daemonizing child would let its session exit immediately and take the run with it. The trade-off is that a foreground run writes no `.pid`, so `wiggum status` cannot find the process. Task counts still work (they come from the plan's checkboxes); for liveness use `screen -ls` and `pgrep -f "wiggum execute docs/plan"`.
+
+**Tasks that take longer than an iteration need care.** An iteration completes roughly one task, so a task that trains a model or runs a long migration will not tick its checkbox inside that iteration. Wiggum records no progress, and two of those in a row stop the run while the work is still going. Write such tasks to launch their job into a separate detached session and to accept on the artifact's existence, so a later iteration sees the finished output instead of restarting an hour of work. Before treating `No progress detected` as a stall, check whether that job is still alive and its output still growing.
+
+**Two runs on one machine compete.** wiggum runs Claude, the verify steps, and anything a task spawns. Two concurrent runs plus a training job on a 4-core machine reached a load average of 59, which tripled the time of every verify pass. Running two plans one after the other finishes both sooner than interleaving them.
+
+**Watch the verification cost.** `verify` and `autofix` run over the whole repo after every task, and again after each fix attempt (`max_validation_retries`, default 5). On a large suite that can dominate the run: check the `phase2-validate-*` timings in the `.log` before assuming the work itself is slow. `--no-verify` turns the sweep off for one run without touching your `.wiggumrc`, at the cost of the safety net, which suits a run whose own tests you are checking directly rather than one left unattended.
+
+**The `.out` file is append-only.** It accumulates every run's history, so a grep over the whole file will match a stall from a previous run and report it as current. Baseline your match count before launching, or scan only after the last `=== WIGGUM EXECUTE MODE ===` banner.
