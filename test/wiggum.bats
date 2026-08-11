@@ -1241,7 +1241,62 @@ EOF
     [ -z "$result" ]
 }
 
+# ── trim_whitespace ──────────────────────────────────────────────────────────
+
+@test "trim_whitespace: strips leading and trailing whitespace" {
+    [ "$(trim_whitespace "   npm test   ")" = "npm test" ]
+    [ "$(trim_whitespace $'\tnpm test\t')" = "npm test" ]
+}
+
+@test "trim_whitespace: keeps interior whitespace" {
+    [ "$(trim_whitespace "  ruff format .  ")" = "ruff format ." ]
+}
+
+@test "trim_whitespace: preserves double quotes" {
+    [ "$(trim_whitespace ' pytest -k "not slow" ')" = 'pytest -k "not slow"' ]
+}
+
+@test "trim_whitespace: preserves an apostrophe" {
+    [ "$(trim_whitespace " echo don't ")" = "echo don't" ]
+}
+
+@test "trim_whitespace: preserves backslashes" {
+    [ "$(trim_whitespace ' grep \d file ')" = 'grep \d file' ]
+}
+
+@test "trim_whitespace: empty and all-whitespace inputs yield empty" {
+    [ "$(trim_whitespace "")" = "" ]
+    [ "$(trim_whitespace "    ")" = "" ]
+}
+
 # ── load_config_from ─────────────────────────────────────────────────────────
+
+@test "load_config_from: preserves quotes in a verify command" {
+    cat > test.rc <<'EOF'
+verify = pytest -k "not slow"
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = 'verify=pytest -k "not slow"' ]
+}
+
+@test "load_config_from: preserves a backslash in a verify command" {
+    cat > test.rc <<'EOF'
+verify = grep -q \d report.txt
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = 'verify=grep -q \d report.txt' ]
+}
+
+@test "load_config_from: an apostrophe does not truncate the value" {
+    cat > test.rc <<'EOF'
+verify = sh -c "echo it's fine"
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = 'verify=sh -c "echo it'"'"'s fine"' ]
+}
 
 @test "load_config_from: outputs verify lines to stdout" {
     cat > test.rc <<'EOF'

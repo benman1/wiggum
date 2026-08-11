@@ -84,6 +84,22 @@ validate_permission_mode() {
 
 # ── Config loading ───────────────────────────────────────────────────────────
 
+# Strip leading and trailing whitespace, leaving the value otherwise intact.
+#
+# Deliberately not `echo "$s" | xargs`: xargs parses its input as shell-ish
+# words, so quotes and backslashes are syntax to it rather than data. On real
+# .wiggumrc values that silently rewrites the command being configured —
+# `pytest -k "not slow"` loses its quotes and runs as `pytest -k not slow`,
+# `grep \d file` loses the backslash, and a lone apostrophe makes xargs abort
+# with "unmatched single quote", truncating the value to its first word.
+# Parameter expansion touches whitespace only.
+trim_whitespace() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    s="${s%"${s##*[![:space:]]}"}"
+    printf '%s' "$s"
+}
+
 find_config() {
     if [[ -f ".wiggumrc" ]]; then
         echo ".wiggumrc"
@@ -101,8 +117,8 @@ load_config_from() {
 
         local key="${line%%=*}"
         local value="${line#*=}"
-        key="$(echo "$key" | xargs)"
-        value="$(echo "$value" | xargs)"
+        key="$(trim_whitespace "$key")"
+        value="$(trim_whitespace "$value")"
 
         case "$key" in
             verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|claude_retries|skip_verify|skip_commit|effort|permission_mode)
@@ -2218,6 +2234,22 @@ print_verify_steps() {
     done
 }
 
+# Run each configured verify/autofix step, asking Claude to fix what fails,
+# up to MAX_VALIDATION_RETRIES passes.
+#
+# On the `eval "$cmd"` below: this is intentional and cannot be replaced with a
+# plain "${cmd_array[@]}" dispatch. A verify step is a *shell command line* the
+# user wrote in their own .wiggumrc — `ruff format . && ruff check --fix .`,
+# `npm test | tee log`, `cd sub && make` — so it legitimately contains operators,
+# pipes, redirections and quoting that only a shell can interpret. Splitting it
+# into words and exec'ing it would break every step that uses them.
+#
+# The trust boundary is therefore .wiggumrc itself: its contents execute with the
+# privileges of whoever runs wiggum, exactly like a Makefile or an npm script.
+# That is the same trust a user already extends by running the tool in their
+# repo. What matters is that nothing *else* reaches this eval: values arrive only
+# from load_config_from's fixed key allowlist, never from a plan file, a Claude
+# response, or a CLI argument, so a workplan cannot inject a command here.
 run_validation() {
     if [[ ${#VERIFY_STEPS[@]} -eq 0 ]]; then
         echo "(No verification steps configured in .wiggumrc - skipping validation)"
@@ -2312,6 +2344,13 @@ benchmark_numbers_changed() {
 
 # Run all benchmark scripts and capture concatenated output.
 # Returns empty string if no benchmarks are configured.
+#
+# The `eval "$script"` here is the same deliberate choice as in run_validation:
+# a benchmark is a user-authored shell command line, so pipes and operators must
+# work. Note the provenance differs — BENCHMARK_SCRIPTS is filled from
+# .wiggumrc *and* from `--benchmark` on the command line, so unlike VERIFY_STEPS
+# it is not config-only. Both sources are the invoking user, not the workplan or
+# a Claude response, so a plan still cannot inject a command here.
 run_benchmarks() {
     if [[ ${#BENCHMARK_SCRIPTS[@]} -eq 0 ]]; then
         return 0
