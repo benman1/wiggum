@@ -956,7 +956,9 @@ screen -dmS wig1 bash -lc 'conda activate myenv; \
   exec wiggum execute docs/plan.md --max-iterations 12 >> docs/plan.out 2>&1'
 ```
 
-No `--background` here: the multiplexer provides the durability, and a daemonizing child would let its session exit immediately and take the run with it. The trade-off is that a foreground run writes no `.pid`, so `wiggum status` cannot find the process. Task counts still work (they come from the plan's checkboxes); for liveness use `screen -ls` and `pgrep -f "wiggum execute docs/plan"`.
+No `--background` here: the multiplexer provides the durability, and a daemonizing child would let its session exit immediately and take the run with it. The trade-off is that a foreground run writes no `.pid`, so `wiggum status` cannot find the process. Task counts still work (they come from the plan's checkboxes); for liveness use `screen -ls`, or capture the PID and check it with `kill -0 <pid>` — the same primitive wiggum's own `process_alive()` uses.
+
+Prefer that PID check over matching command lines. `pgrep -f` *errors* (rather than returning empty) if any unrelated process on the machine has non-UTF-8 bytes in its command line, and `ps -eo pid,command` truncates to the terminal width, so in a background context the string you are matching can be cut off. Both failures look identical to "the job finished", so a `until ! <check>` waiter fires early. Confirm a completion by the artifact it was supposed to produce, never by the absence of a process alone.
 
 **Tasks that take longer than an iteration need care.** An iteration completes roughly one task, so a task that trains a model or runs a long migration will not tick its checkbox inside that iteration. Wiggum records no progress, and two of those in a row stop the run while the work is still going. Write such tasks to launch their job into a separate detached session and to accept on the artifact's existence, so a later iteration sees the finished output instead of restarting an hour of work. Before treating `No progress detected` as a stall, check whether that job is still alive and its output still growing.
 
