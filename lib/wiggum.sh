@@ -1480,6 +1480,23 @@ Rules for a good plan:
   This is not the task-dependency list: `Depends on:` orders the work, this states
   shipping risk. A fix that only turns nulls into values ships freely; a fix that
   can delete good data waits for the measurement that bounds its blast radius.
+- **Tie a claim to its artifact.** When tasks write a report, a status table, or a
+  changelog *about* something they produce, add a guard asserting the record matches
+  reality — a row claiming a trained model names a checkpoint that exists on disk, a
+  row marked done names a real output. Agents fill in a row optimistically before the
+  work behind it finishes, and a plausible false record is worse than a missing one.
+  In a real run this guard is what stopped a report claiming a model was trained
+  while its training was still running.
+- **A parity claim must be tested against the pre-change code.** When a task's
+  acceptance is "behaviour is unchanged when the switch is off", a test comparing the
+  new code's two paths to each other proves only internal consistency: a diff that
+  removes lines can pass it while having moved the baseline. Say in the task that the
+  comparison is against the previous commit — extract the old file
+  (`git show <ref>:<path>`) and compare outputs, or pin a digest computed on the
+  clean tree. Prefer pinning a digest over pure inputs (a transform, a parser); for
+  anything whose output depends on the BLAS library or thread count, such as trained
+  weights, a pinned digest is flaky and the old-vs-new comparison is a one-time
+  migration check instead.
 - Keep plans focused. Very large plans (40+ tasks) tend to stall — split them and
   `chain` instead.
 
@@ -1493,10 +1510,36 @@ run under the wrong interpreter and thrash, and you waste a `kill` + relaunch.
 `wiggum execute` prints an environment line at startup; if it warns that no env is
 active, stop, activate it, and relaunch.
 
+**Size the iteration budget to the plan, on the FIRST launch.** An iteration
+completes roughly one task, so a run needs at least as many iterations as the plan
+has open checkboxes, plus headroom for the ones that need a second pass. The
+default is **3** — from `--max-iterations`'s built-in default, the `max_iterations`
+in the `.wiggumrc` templates wiggum generates, or a `.wiggumrc` written for an
+older, smaller plan — and it is almost always wrong for a real workplan. A 3-
+iteration budget on an 11-task plan does not fail loudly; it stops `incomplete`
+about a quarter of the way in, which reads like a stall and costs a supervise
+cycle to diagnose.
+
+So count the boxes and pass the flag explicitly — **always**, even when
+`.wiggumrc` already sets `max_iterations`, because the flag overrides it and you
+should not have to read their config to get this right:
+
+```
+open=$(grep -c '^ *[-*+] \[ \]' docs/<name>_plan.md)
+wiggum execute docs/<name>_plan.md --background --max-iterations $(( open * 2 + 3 ))
+```
+
+`open * 2 + 3` is a reasonable rule of thumb — roughly two passes per task plus
+slack. Do **not** economise here: iterations are a *ceiling*, not a target. Wiggum
+stops as soon as every task is done, and it stops on its own stall detection long
+before it burns a large budget, so an over-generous ceiling costs nothing while a
+tight one reliably costs a re-run. If you catch yourself re-running a plan purely
+because it stopped `incomplete`, the budget was too small at launch.
+
 Then launch detached so you can monitor and bound it:
 
 ```
-wiggum execute docs/<name>_plan.md --background
+wiggum execute docs/<name>_plan.md --background --max-iterations <sized above>
 ```
 
 Then supervise in a loop until it finishes:
@@ -1524,6 +1567,105 @@ Then supervise in a loop until it finishes:
 For a quick, small run you may skip backgrounding and just `wiggum execute <plan>`
 in the foreground.
 
+### 3a. Runs longer than your own session: launch durably
+
+`--background` daemonizes inside the **calling shell's session**. That survives you
+closing a pipe; it does *not* survive the session itself being destroyed — a
+terminal restart, the agent session ending, the supervising process exiting. When
+that happens the whole tree goes with it, and the signature is a clean `.out`
+ending mid-phase: no error, no summary file. Don't go hunting for a bug in the
+plan; it was killed from outside. `nohup … &` buys immunity to SIGHUP only, so it
+delays this rather than fixing it.
+
+For any run you expect to outlive your own session, launch it inside a detached
+multiplexer instead:
+
+```
+screen -dmS wig1 bash -lc 'source "$(conda info --base)/etc/profile.d/conda.sh"; \
+  conda activate <env>; \
+  exec wiggum execute docs/<name>_plan.md --max-iterations N >> docs/<name>_plan.out 2>&1'
+```
+
+Run wiggum in the **foreground inside** the multiplexer — no `--background`. The
+multiplexer supplies the durability, and a daemonizing child would let its session
+exit immediately and take the tree down. `tmux new -d -s wig1 '<same>'` works
+identically; macOS has `screen` at `/usr/bin/screen` and no `setsid`.
+
+The cost: a foreground run writes no `.pid`, so `wiggum status` can't find it and a
+`kill -0 $(cat <plan>.pid)` liveness check reports "gone" when the file is merely
+absent — indistinguishable from a real death. Check liveness with `screen -ls` /
+`tmux ls` and a process check instead. Task counts still work, because
+`wiggum status` reads the plan's checkboxes.
+
+**Check a PID, not a pattern.** wiggum's own `process_alive()` is `kill -0 "$pid"`
+(`lib/wiggum.sh`), and that is the primitive to copy: it asks the kernel about one
+process and parses no text, so nothing about other processes or terminal width can
+fool it. Capture the PID when you launch (`$!`, or `screen -ls`) and check that.
+
+Pattern-matching liveness fails in two ways that both look exactly like "the job
+finished", and a waiter shaped `until ! <check>; do sleep 30; done` cannot tell
+either from success, because it reads *any* non-zero exit as "gone":
+
+- `pgrep -f` **errors** rather than returning empty when any unrelated process has
+  non-UTF-8 bytes in its command line: `Regular expression evaluation error (illegal
+  byte sequence)`, exit non-zero, waiter fires.
+- `ps -eo pid,command` **truncates** the command column to the terminal width, so in
+  a background context with no tty the match string can be cut off entirely. Use
+  `ps -eo pid,command -ww` if you must match text at all.
+
+Whatever you check, confirm a *completion* by its **artifact** — the output file
+exists, the job's log has its `saved …` line — never by the absence of a process
+alone. A job that dies at minute 50 also stops being a process, and the two are
+indistinguishable until you look for what it was supposed to produce.
+
+For a run wiggum itself started, skip all of this: `wiggum watch <plan>` blocks
+until it finishes and streams its output.
+
+**Verify survival before believing any launch pattern.** Every one of these failure
+modes looks healthy at the five-minute mark. Don't record a pattern as working
+until it has outlived at least one session teardown.
+
+### 3b. Tasks that outlast an iteration
+
+An iteration completes roughly one task, so a task whose work takes longer than an
+iteration — training a model, a long build, a big migration — will not flip its
+checkbox inside that iteration. Wiggum scores the iteration as no progress, and two
+of those in a row stop the run while the real work is still going.
+
+Handle it from both sides:
+
+- **In the plan:** a long-running task should launch its job into its own detached
+  session and record the artifact path in its `Acceptance:`. A later iteration then
+  observes the finished artifact instead of restarting an hour of work. Say so in
+  the task, so the implementing agent doesn't run it inline.
+- **As supervisor:** never treat `No progress detected` as a stall before checking
+  whether such a job is alive (next section).
+
+### 3c. Reading the sidecars without fooling yourself
+
+`.out` is opened in **append** mode, so it accumulates every run's history. Two
+traps follow, and both bit a real supervision session:
+
+- A grep over the whole file matches a stall line from a *dead* run and reports it
+  as current.
+- A monitor that dedupes by message text records that string once, then goes
+  **deaf** to the next genuine occurrence of it.
+
+Baseline the match count before you launch and report only the increase, with line
+numbers so you can tell which run a hit belongs to:
+
+```
+prevn=$(grep -cE 'No progress detected|RUN ABORTED' docs/<name>_plan.out)
+```
+
+Filtering to "just this run" has its own trap: if the new run hasn't flushed its
+`=== WIGGUM EXECUTE MODE ===` banner yet, a check that scans only after the last
+banner finds an empty section, and "no stalls in this run" is then trivially true.
+Count the banners before trusting that conclusion.
+
+`.log` is the timing record: its `phase2-validate-N-fix-M` entries give wall clock
+per phase, which is how you find out where a run actually spent its time.
+
 ### 4. If the run didn't finish `complete` — remediate and re-run
 
 A finished run is not necessarily a done one. Read its stop reason from
@@ -1534,11 +1676,30 @@ stops for three reasons; handle each differently:
 - **`incomplete`** — it hit `--max-iterations` while still making progress; it just
   ran out of budget. The plan is fine. Re-run `wiggum execute <plan>` — phase 1
   reconciles the repo against the plan, then it continues the remaining `[ ]`
-  tasks — optionally with a higher `--max-iterations`. Between runs, `wiggum status
-  <plan>` must show `remaining` going *down*; if it stops dropping, treat it as a
-  stall.
+  tasks — **with a budget sized to the tasks that are still open** (step 3's
+  `open * 2 + 3`), not the same ceiling that just ran out. Between runs, `wiggum
+  status <plan>` must show `remaining` going *down*; if it stops dropping, treat it
+  as a stall. Reaching `incomplete` at all usually means the launch budget was
+  under-sized — fix that at launch next time rather than re-running repeatedly.
 - **`stalled`** — no progress for two iterations in a row. Re-running as-is will
   just stall again. **Diagnose, mitigate, then re-run.**
+
+**First, rule out a false stall.** A stall means *wiggum* saw no checkbox move, not
+that nothing is happening. Before diagnosing anything, check whether work is
+progressing outside the iteration window:
+
+- `pgrep -f "<the long command the task launches>"` and `screen -ls` / `tmux ls` —
+  is the job the task spawned still alive?
+- Is its output still growing? Cache directory size, an output file's mtime, a
+  checkpoint appearing. Take two readings a minute apart rather than one.
+
+If something is running, **do nothing**: let it finish, then relaunch. Phase 1
+reconciles the repo against the plan and marks the task done from the artifact
+instead of redoing the work. Killing the run here is safe (the detached job
+survives); relaunching *before* the job finishes is not useful, because the same
+task will fail its acceptance the same way.
+
+Only when nothing is running is it a real stall:
 
 **Diagnose the stall** (don't trust the checkboxes alone):
 1. Read the evidence — `docs/<name>_summary.md` ("issues encountered" / "deferred"),
@@ -1565,6 +1726,30 @@ stops for three reasons; handle each differently:
   one-line rationale so wiggum stops re-picking it (its designed escape hatch).
 - *Needs access, credentials, an external dependency, or a real product decision* →
   stop and ask the user; you can't resolve it.
+
+**Check the machine before blaming the plan.** wiggum runs Claude, the verify
+steps, and anything a task spawns — concurrently with any *other* wiggum run on the
+box. Read `uptime`'s load average against the core count (`sysctl -n hw.ncpu` /
+`nproc`). A load many times the core count makes every verify pass several times
+slower, turns a working run into one that looks wedged, and makes the supervising
+session itself a candidate for being reaped. Two concurrent runs plus a training job
+on a 4-core machine reached load 59 in a real session. Serialising two runs finishes
+both sooner than interleaving them; if the other run isn't yours to stop, say so
+rather than quietly competing with it.
+
+**The verify tax is often the real cost.** `verify`/`autofix` run over the **whole
+repo** after every task and again after **each** fix attempt (up to
+`max_validation_retries`, default 5). On a large suite that dominates everything
+else: measure one pass from `.log` before concluding the task's own work is slow. A
+single real session spent 27 minutes on one round's three fix attempts and 40 on the
+next round's one.
+
+If that tax is the bottleneck, `--no-verify` is a **CLI flag** — use it instead of
+editing `.wiggumrc`, which is the user's config. It is a real reduction in safety,
+so when you spend it: say what you traded, run the specific tests that guard the
+work after each task yourself, and run the full suite once before calling the work
+done. Report what that final run found rather than fixing quietly and claiming a
+clean finish.
 
 Then re-execute. **Bound the loop:** at most ~2–3 remediation cycles. If it stalls
 again on the *same* task after a mitigation, stop and hand the user the diagnosis
@@ -1603,6 +1788,9 @@ can inspect and fix between stages.
 - **Never ask for confirmation** — just execute.
 - **Refer to runs by their plan file** — that's how status/watch/kill find the
   sidecars.
+- **Always pass `--max-iterations`, sized to the plan's open checkboxes** (step 3).
+  The 3-iteration default is a floor for toy plans, not a budget for a real
+  workplan, and under-sizing it turns a working run into a false `incomplete`.
 - **Kill scope:** only ever stop the run you started (`wiggum kill <plan>`), never
   a blanket process kill.
 - **Don't edit `.wiggumrc`** to make verification pass — it's the user's config. If
@@ -1613,8 +1801,21 @@ can inspect and fix between stages.
 - **Remediate, don't loop forever.** Cap re-runs (~2–3) and confirm `remaining` is
   dropping between them; if a task stays stuck after a mitigation, escalate with the
   diagnosis instead of burning more runs.
+- **Launch durably for anything long** (step 3a): `--background` dies with the
+  session that started it. Use a detached `screen`/`tmux` with wiggum in the
+  foreground inside it, and check liveness with `pgrep`, not the `.pid` file.
+- **Rule out a false stall before remediating** (step 4): if a job the task spawned
+  is still alive and its output still growing, wait and relaunch — don't rewrite a
+  task that was working.
+- **Read the sidecars as append-only history** (step 3c): baseline your grep counts,
+  or you will report a dead run's stall as current and then miss the live one.
+- **Don't trust a green report over the artifact.** Read the numbers an agent writes
+  into a report against the files that produced them; check that a "parity" or
+  "unchanged" claim was tested against the previous commit and not against the new
+  code's own second path.
 - **Report honestly:** if it stalled or was killed, say so with the cause from the
-  log — don't round an incomplete run up to "done".
+  log — don't round an incomplete run up to "done". The same applies to your own
+  supervision: if you turned off verification or skipped a check, say which.
 SKILL_EOF
 }
 
