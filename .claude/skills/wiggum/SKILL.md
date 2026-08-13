@@ -240,6 +240,16 @@ before it burns a large budget, so an over-generous ceiling costs nothing while 
 tight one reliably costs a re-run. If you catch yourself re-running a plan purely
 because it stopped `incomplete`, the budget was too small at launch.
 
+**Size it to tasks, not to how flaky the suite is.** Verification has its own,
+separate budget: a failing `verify` step spends `max_validation_retries` (default
+5, per verification step), never `max_iterations`. So a flaky or slow test suite
+cannot exhaust the iteration budget, and padding `--max-iterations` does nothing to
+absorb it. The two knobs answer different questions — *how many tasks are there*
+versus *how many fix attempts does a failing check get* — and conflating them leads
+to sizing the wrong one. If verification is the problem, the levers are narrowing
+the `verify` command or `--no-verify` (see the verify tax below), not a bigger
+iteration ceiling.
+
 Then launch detached so you can monitor and bound it:
 
 ```
