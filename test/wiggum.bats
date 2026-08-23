@@ -4256,8 +4256,8 @@ EOF
 # ── current_run_slice / .out appends across runs ──────────────────────────────
 
 @test "current_run_slice: returns only the last run's section" {
-    printf '--- wiggum run 2026-01-01 00:00:00 ---\nold noise\nStatus: stalled\n' > run.out
-    printf '--- wiggum run 2026-01-02 00:00:00 ---\nfresh\n' >> run.out
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nold noise\nStatus: stalled\n' > run.out
+    printf -- '--- wiggum run 2026-01-02 00:00:00 ---\nfresh\n' >> run.out
     run current_run_slice run.out
     [[ "$output" == *"fresh"* ]] || return 1
     [[ "$output" != *"old noise"* ]] || return 1
@@ -4276,26 +4276,26 @@ EOF
 }
 
 @test "read_run_status: ignores a previous run's status" {
-    printf '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: stalled\n' > run.out
-    printf '--- wiggum run 2026-01-02 00:00:00 ---\nStatus: complete\n' >> run.out
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: stalled\n' > run.out
+    printf -- '--- wiggum run 2026-01-02 00:00:00 ---\nStatus: complete\n' >> run.out
     [ "$(read_run_status run.out)" = "complete" ]
 }
 
 @test "read_run_status: empty while the current run has recorded no status" {
-    printf '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: complete\n' > run.out
-    printf '--- wiggum run 2026-01-02 00:00:00 ---\nstill working\n' >> run.out
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: complete\n' > run.out
+    printf -- '--- wiggum run 2026-01-02 00:00:00 ---\nstill working\n' >> run.out
     [ -z "$(read_run_status run.out)" ]
 }
 
 @test "detect_blocked: a dead run's stall does not flag the current run" {
-    printf '--- wiggum run 2026-01-01 00:00:00 ---\nNo progress detected\n' > run.out
-    printf '--- wiggum run 2026-01-02 00:00:00 ---\nworking fine\n' >> run.out
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nNo progress detected\n' > run.out
+    printf -- '--- wiggum run 2026-01-02 00:00:00 ---\nworking fine\n' >> run.out
     ! detect_blocked run.out
 }
 
 @test "detect_blocked: still true for a stall in the current run" {
-    printf '--- wiggum run 2026-01-01 00:00:00 ---\nfine\n' > run.out
-    printf '--- wiggum run 2026-01-02 00:00:00 ---\nStalled for 300s\n' >> run.out
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nfine\n' > run.out
+    printf -- '--- wiggum run 2026-01-02 00:00:00 ---\nStalled for 300s\n' >> run.out
     detect_blocked run.out
 }
 
@@ -4340,7 +4340,7 @@ EOF
     cat > plan.md <<'EOF'
 - [x] one
 EOF
-    printf '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: complete\n' > plan.out
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: complete\n' > plan.out
     # The run being watched stays alive long enough for a relaunch to land
     # mid-watch, which is where the race lives.
     ( sleep 3 ) &
@@ -4359,10 +4359,10 @@ EOF
     cat > plan.md <<'EOF'
 - [x] one
 EOF
-    printf '--- wiggum run 2026-01-01 00:00:00 ---\nANCIENT_MARKER\nStatus: stalled\n' > plan.out
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nANCIENT_MARKER\nStatus: stalled\n' > plan.out
     # launch_execute_background writes this run's separator synchronously, before
     # any watch can attach; model that rather than withholding it.
-    printf '--- wiggum run 2026-01-02 00:00:00 ---\n' >> plan.out
+    printf -- '--- wiggum run 2026-01-02 00:00:00 ---\n' >> plan.out
     ( sleep 1; printf 'CURRENT_MARKER\nStatus: complete\n' >> plan.out ) &
     local pid=$!
     echo "$pid" > plan.pid
