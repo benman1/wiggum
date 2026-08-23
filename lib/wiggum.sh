@@ -1520,6 +1520,44 @@ Confirm the plan looks right, then continue.
 
 ### 3. Execute and supervise
 
+**Pick the launch mode from how long the job will run — before anything else.**
+Most supervision pain comes from launching a multi-hour plan the way you'd launch
+a five-minute one. Estimate roughly: a real workplan spends *minutes per task*,
+and the verify step runs over the whole repo after every task (and again after
+each fix attempt), so a 35-task plan on a big suite is hours, not minutes.
+
+| Job length | Launch it | Wait on it | Why |
+|---|---|---|---|
+| Minutes, a handful of tasks | `wiggum execute <plan>` foreground | it blocks | Nothing to supervise. |
+| Longer than one tool call, shorter than your session | `wiggum execute <plan> --background --max-iterations N` | `wiggum watch <plan>` | You get `status`/`watch`/`kill` and a `.pid` sidecar. |
+| Longer than your own session | detached `screen`/`tmux`, wiggum **foreground inside it** (§3a) | `screen -ls` + a PID check | `--background` dies with the session that started it. |
+
+If you are unsure which of the last two you are in, assume the third. Re-launching
+a plan is cheap (phase 1 reconciles the repo against the plan); losing four hours
+of a run to a session teardown is not.
+
+**Both budgets get sized, and they are not the same budget.** A long job has two
+independent ceilings and under-sizing either one ends the run early:
+
+| Flag | Bounds | Size it by |
+|---|---|---|
+| `--max-iterations` | how many **tasks** it may attempt | `open × 2 + 3` (below) |
+| `watch --timeout` | how long **you** wait, in seconds | the plan's realistic wall clock, generously |
+
+Setting a six-hour `--timeout` on a 25-iteration budget for a 35-task plan is
+incoherent: the wall clock is irrelevant once the iteration ceiling stops the run
+two-thirds through. Compute the iteration budget from the plan, then set a timeout
+that comfortably exceeds how long that many iterations will take. When you cannot
+estimate the wall clock, use a large `--timeout` **without** `--kill-on-timeout`
+so an overrun leaves the run alive for you to inspect rather than killing healthy
+work.
+
+**If a human suggests an iteration number, check it against the box count before
+using it.** "use --max-iterations 25" on a 35-box plan is a number that cannot
+finish, and taking it literally buys a guaranteed re-run. Do the arithmetic, say
+what it comes to and why, and launch with the sized figure — this is a correction
+they will want, not an instruction to follow off a cliff.
+
 **First, activate the project environment** (from preflight) — *before* you launch,
 not after. Launching `-b` into the wrong env means the verify steps (pytest/ruff/…)
 run under the wrong interpreter and thrash, and you waste a `kill` + relaunch.
@@ -1552,6 +1590,16 @@ before it burns a large budget, so an over-generous ceiling costs nothing while 
 tight one reliably costs a re-run. If you catch yourself re-running a plan purely
 because it stopped `incomplete`, the budget was too small at launch.
 
+**Size it to tasks, not to how flaky the suite is.** Verification has its own,
+separate budget: a failing `verify` step spends `max_validation_retries` (default
+5, per verification step), never `max_iterations`. So a flaky or slow test suite
+cannot exhaust the iteration budget, and padding `--max-iterations` does nothing to
+absorb it. The two knobs answer different questions — *how many tasks are there*
+versus *how many fix attempts does a failing check get* — and conflating them leads
+to sizing the wrong one. If verification is the problem, the levers are narrowing
+the `verify` command or `--no-verify` (see the verify tax below), not a bigger
+iteration ceiling.
+
 Then launch detached so you can monitor and bound it:
 
 ```
@@ -1565,9 +1613,13 @@ Then supervise in a loop until it finishes:
    workplan through to the end rather than leaving it unattended:
    `wiggum watch docs/<name>_plan.md --timeout 1800 --kill-on-timeout`
    `watch` streams the run's output and blocks until it ends (your "wait");
-   `--timeout`/`--kill-on-timeout` bound a stuck run. Tune the timeout to the plan's
-   size. When it returns, summarize what happened (step 5) — don't just leave the
-   run finished and silent.
+   `--timeout`/`--kill-on-timeout` bound a stuck run. **Tune the timeout to the
+   plan's size, and drop `--kill-on-timeout` when you are not confident in the
+   estimate** — 1800 s is right for a handful of tasks and will execute a healthy
+   multi-hour run. Without the kill flag an overrun just returns and says the run
+   is still active, which is recoverable; with it, you have destroyed hours of
+   work to enforce a guess. When it returns, summarize what happened (step 5) —
+   don't just leave the run finished and silent.
 3. **Spot a wedged run early.** Treat the run as spinning (not working) when
    `status` reports `running but appears blocked`, or `watch` returns non-zero —
    under the hood the `.out`/`.log` shows `No progress detected`, `Stalled for ...`,
@@ -1659,16 +1711,28 @@ Handle it from both sides:
 
 ### 3c. Reading the sidecars without fooling yourself
 
-`.out` is opened in **append** mode, so it accumulates every run's history. Two
-traps follow, and both bit a real supervision session:
+**How `.out` is opened depends on how you launched, and the two behave
+oppositely.** Check which you are in before drawing any conclusion from a grep:
+
+- **`wiggum execute --background`** redirects with `>` (`lib/wiggum.sh:2738`), so
+  each run **truncates** `.out`. The file holds only the current run — a grep is
+  safe, but relaunching **destroys the previous run's log**. If you are about to
+  re-run a plan and will need the failed run's output to diagnose it, copy `.out`
+  aside first; nothing else keeps it.
+- **The detached `screen`/`tmux` pattern in §3a** redirects with `>>`, so that
+  file **accumulates** every run's history. Here a grep over the whole file is
+  the trap.
+
+In the accumulating case, two failures follow, and both bit a real supervision
+session:
 
 - A grep over the whole file matches a stall line from a *dead* run and reports it
   as current.
 - A monitor that dedupes by message text records that string once, then goes
   **deaf** to the next genuine occurrence of it.
 
-Baseline the match count before you launch and report only the increase, with line
-numbers so you can tell which run a hit belongs to:
+So in the accumulating case, baseline the match count before you launch and report
+only the increase, with line numbers so you can tell which run a hit belongs to:
 
 ```
 prevn=$(grep -cE 'No progress detected|RUN ABORTED' docs/<name>_plan.out)
@@ -1681,6 +1745,49 @@ Count the banners before trusting that conclusion.
 
 `.log` is the timing record: its `phase2-validate-N-fix-M` entries give wall clock
 per phase, which is how you find out where a run actually spent its time.
+
+### 3d. Relaunching: the pidfile race that looks exactly like success
+
+**Never relaunch a plan in the same breath as killing it.** `wiggum watch` ends
+with an unguarded `rm -f "$pidfile"` (`lib/wiggum.sh:2846`), and it deletes
+whatever pidfile sits at that path *at that moment* — it does not check that the
+pid inside is still the run it was watching. So this ordering silently breaks the
+new run's bookkeeping:
+
+1. `wiggum kill <plan>` — removes the pidfile, the old run dies.
+2. A `watch` that was following the old run notices it died, drains output, and
+   runs its own `rm -f "$pidfile"`.
+3. Meanwhile you relaunched, and step 2's cleanup deletes the **new** run's
+   pidfile.
+
+`launch_execute_background`'s "a run is already active" guard (`lib/wiggum.sh:2725`)
+cannot catch this: it only refuses when a *live* pidfile exists at launch, and the
+kill had already removed it.
+
+**The symptom is indistinguishable from a clean finish.** `wiggum watch` returns
+**exit 0** with `No background run found for <plan> (no pidfile)`, and
+`wiggum status` drops its `State:` line — while the run is happily working. Read
+that as "the run finished" and you will report a completed job that is still going.
+
+**So confirm with the kernel, not the sidecar.** The run is detached and
+reparented to init, so `ps` finds it:
+
+```
+ps -o pid,ppid,etime,command -ww | grep "[w]iggum execute <plan>"
+```
+
+If it is alive, restore the sidecar rather than restarting hours of work — but
+only after confirming the pid really is that plan's run:
+
+```
+if ps -o command= -p "$pid" -ww | grep -q "wiggum execute <plan>"; then
+    printf '%s\n' "$pid" > docs/<name>_plan.pid
+fi
+```
+
+`wiggum status` then reports `State: running (pid …)` again and `watch`/`kill`
+work. **Avoid the whole problem** by letting the old `watch` return *before* you
+relaunch, or by not running a `watch` you intend to kill out from under.
 
 ### 4. If the run didn't finish `complete` — remediate and re-run
 
@@ -1807,6 +1914,11 @@ can inspect and fix between stages.
 - **Always pass `--max-iterations`, sized to the plan's open checkboxes** (step 3).
   The 3-iteration default is a floor for toy plans, not a budget for a real
   workplan, and under-sizing it turns a working run into a false `incomplete`.
+  Check any human-suggested number against the box count before using it.
+- **Size the watch timeout too, and separately** (step 3): `--max-iterations`
+  bounds tasks, `watch --timeout` bounds your wall clock. Drop
+  `--kill-on-timeout` unless you are confident in the estimate — it destroys a
+  healthy long run to enforce a guess.
 - **Kill scope:** only ever stop the run you started (`wiggum kill <plan>`), never
   a blanket process kill.
 - **Don't edit `.wiggumrc`** to make verification pass — it's the user's config. If
@@ -1823,8 +1935,15 @@ can inspect and fix between stages.
 - **Rule out a false stall before remediating** (step 4): if a job the task spawned
   is still alive and its output still growing, wait and relaunch — don't rewrite a
   task that was working.
-- **Read the sidecars as append-only history** (step 3c): baseline your grep counts,
-  or you will report a dead run's stall as current and then miss the live one.
+- **Know how `.out` was opened before grepping it** (step 3c): `--background`
+  truncates it per run (so relaunching destroys the old log — copy it aside if you
+  need it), while the §3a `screen` pattern appends. In the appending case, baseline
+  your grep counts, or you will report a dead run's stall as current and then miss
+  the live one.
+- **Never relaunch in the same breath as a kill** (step 3d): a lingering `watch`
+  deletes the *new* run's pidfile, and the symptom — `watch` exiting 0 with "no
+  pidfile" — is indistinguishable from a clean finish. Confirm with `ps` before
+  believing a run ended.
 - **Don't trust a green report over the artifact.** Read the numbers an agent writes
   into a report against the files that produced them; check that a "parity" or
   "unchanged" claim was tested against the previous commit and not against the new
