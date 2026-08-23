@@ -4252,3 +4252,134 @@ EOF
     [[ "$output" == *"Reminder:"* ]] || return 1
     [[ "$output" == *"environment"* ]] || return 1
 }
+
+# ── current_run_slice / .out appends across runs ──────────────────────────────
+
+@test "current_run_slice: returns only the last run's section" {
+    printf '--- wiggum run 2026-01-01 00:00:00 ---\nold noise\nStatus: stalled\n' > run.out
+    printf '--- wiggum run 2026-01-02 00:00:00 ---\nfresh\n' >> run.out
+    run current_run_slice run.out
+    [[ "$output" == *"fresh"* ]] || return 1
+    [[ "$output" != *"old noise"* ]] || return 1
+}
+
+@test "current_run_slice: whole file when no separator is present" {
+    printf 'legacy line\nStatus: complete\n' > run.out
+    run current_run_slice run.out
+    [[ "$output" == *"legacy line"* ]] || return 1
+}
+
+@test "current_run_slice: empty for a missing file" {
+    run current_run_slice missing.out
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "read_run_status: ignores a previous run's status" {
+    printf '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: stalled\n' > run.out
+    printf '--- wiggum run 2026-01-02 00:00:00 ---\nStatus: complete\n' >> run.out
+    [ "$(read_run_status run.out)" = "complete" ]
+}
+
+@test "read_run_status: empty while the current run has recorded no status" {
+    printf '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: complete\n' > run.out
+    printf '--- wiggum run 2026-01-02 00:00:00 ---\nstill working\n' >> run.out
+    [ -z "$(read_run_status run.out)" ]
+}
+
+@test "detect_blocked: a dead run's stall does not flag the current run" {
+    printf '--- wiggum run 2026-01-01 00:00:00 ---\nNo progress detected\n' > run.out
+    printf '--- wiggum run 2026-01-02 00:00:00 ---\nworking fine\n' >> run.out
+    ! detect_blocked run.out
+}
+
+@test "detect_blocked: still true for a stall in the current run" {
+    printf '--- wiggum run 2026-01-01 00:00:00 ---\nfine\n' > run.out
+    printf '--- wiggum run 2026-01-02 00:00:00 ---\nStalled for 300s\n' >> run.out
+    detect_blocked run.out
+}
+
+@test "launch_execute_background: appends to .out and separates the runs" {
+    cat > plan.md <<'EOF'
+- [x] done
+EOF
+    printf 'output from an earlier run\n' > plan.out
+    FILES=(plan.md)
+    MODE=execute
+    SUMMARY_FILE=plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    BACKGROUND=true
+    launch_execute_background >/dev/null 2>&1
+    wait || true
+    grep -q 'output from an earlier run' plan.out
+    grep -q '^--- wiggum run ' plan.out
+}
+
+# ── release_pidfile: the kill-then-relaunch race ──────────────────────────────
+
+@test "release_pidfile: removes the pidfile it was given" {
+    echo 111 > plan.pid
+    release_pidfile plan.pid 111
+    [ ! -f plan.pid ]
+}
+
+@test "release_pidfile: keeps a pidfile a relaunch has already replaced" {
+    echo 222 > plan.pid
+    release_pidfile plan.pid 111
+    [ -f plan.pid ]
+    [ "$(cat plan.pid)" = "222" ]
+}
+
+@test "release_pidfile: silent no-op when the pidfile is gone" {
+    run release_pidfile missing.pid 111
+    [ "$status" -eq 0 ]
+}
+
+@test "run_watch: does not delete a newer run's pidfile when its own run ends" {
+    cat > plan.md <<'EOF'
+- [x] one
+EOF
+    printf '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: complete\n' > plan.out
+    # The run being watched stays alive long enough for a relaunch to land
+    # mid-watch, which is where the race lives.
+    ( sleep 3 ) &
+    local watched=$!
+    echo "$watched" > plan.pid
+    # A relaunch replaces the pidfile while watch is still polling.
+    ( sleep 1; echo 999999 > plan.pid ) &
+    FILES=(plan.md)
+    WATCH_POLL=1
+    run run_watch
+    [ -f plan.pid ]
+    [ "$(cat plan.pid)" = "999999" ]
+}
+
+@test "run_watch: streams only the current run, not the whole history" {
+    cat > plan.md <<'EOF'
+- [x] one
+EOF
+    printf '--- wiggum run 2026-01-01 00:00:00 ---\nANCIENT_MARKER\nStatus: stalled\n' > plan.out
+    # launch_execute_background writes this run's separator synchronously, before
+    # any watch can attach; model that rather than withholding it.
+    printf '--- wiggum run 2026-01-02 00:00:00 ---\n' >> plan.out
+    ( sleep 1; printf 'CURRENT_MARKER\nStatus: complete\n' >> plan.out ) &
+    local pid=$!
+    echo "$pid" > plan.pid
+    FILES=(plan.md)
+    WATCH_POLL=1
+    run run_watch
+    [[ "$output" != *"ANCIENT_MARKER"* ]] || return 1
+    [[ "$output" == *"CURRENT_MARKER"* ]] || return 1
+}
+
+@test "current_run_slice: the ABORTED banner is not a run separator" {
+    # report_unfinished_run writes "=== WIGGUM RUN ABORTED ===" into .out just
+    # BELOW the status line it is reporting. A separator prefix that matches that
+    # banner slices the status away and read_run_status goes blind.
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\n' > run.out
+    printf 'Status: aborted (exit 3)\n=== WIGGUM RUN ABORTED ===\n' >> run.out
+    run current_run_slice run.out
+    [[ "$output" == *"Status: aborted"* ]] || return 1
+    [ "$(read_run_status run.out)" = "aborted (exit 3)" ]
+}

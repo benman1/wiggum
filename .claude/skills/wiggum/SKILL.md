@@ -399,66 +399,61 @@ Handle it from both sides:
 
 ### 3c. Reading the sidecars without fooling yourself
 
-**How `.out` is opened depends on how you launched, and the two behave
-oppositely.** Check which you are in before drawing any conclusion from a grep:
+**Both sidecars append across runs, each run separated by a marker.** `.out`
+carries `--- wiggum run <timestamp> ---` at the top of every run's output, and
+`.log` carries the same marker on every run's entries. So relaunching a plan no longer
+destroys the log of the run you are relaunching *because of* — the output you
+need to diagnose it is still there, above the separator.
 
-- **`wiggum execute --background`** redirects with `>` (`lib/wiggum.sh:2738`), so
-  each run **truncates** `.out`. The file holds only the current run — a grep is
-  safe, but relaunching **destroys the previous run's log**. If you are about to
-  re-run a plan and will need the failed run's output to diagnose it, copy `.out`
-  aside first; nothing else keeps it.
-- **The detached `screen`/`tmux` pattern in §3a** redirects with `>>`, so that
-  file **accumulates** every run's history. Here a grep over the whole file is
-  the trap.
+**Wiggum's own readers already scope themselves to the current run**, so
+`wiggum status` will not report a dead run's stall as a live one, and
+`wiggum watch` streams from this run's separator instead of replaying history.
 
-In the accumulating case, two failures follow, and both bit a real supervision
-session:
+**Your greps do not scope themselves.** A `grep` over the whole `.out` reads
+every run at once, and two failures follow — both bit a real supervision session
+before the separators existed:
 
-- A grep over the whole file matches a stall line from a *dead* run and reports it
-  as current.
+- A match on a stall line from a *dead* run gets reported as current.
 - A monitor that dedupes by message text records that string once, then goes
   **deaf** to the next genuine occurrence of it.
 
-So in the accumulating case, baseline the match count before you launch and report
-only the increase, with line numbers so you can tell which run a hit belongs to:
+So scope the read to the current run, the same way wiggum does — everything from
+the last separator on:
 
 ```
-prevn=$(grep -cE 'No progress detected|RUN ABORTED' docs/<name>_plan.out)
+awk '/^--- wiggum run /{buf=""} {buf=buf $0 ORS} END{printf "%s", buf}' docs/<name>_plan.out \
+  | grep -nE 'No progress detected|Stalled for|Validation failed'
 ```
 
-Filtering to "just this run" has its own trap: if the new run hasn't flushed its
-`=== WIGGUM EXECUTE MODE ===` banner yet, a check that scans only after the last
-banner finds an empty section, and "no stalls in this run" is then trivially true.
-Count the banners before trusting that conclusion.
+Do not anchor on `=== WIGGUM RUN` — that is the *aborted-run* banner, and it
+sits below the status line it reports, so slicing from it hides the status.
+
+If you would rather count, baseline the match over the whole file before you
+launch and report only the increase — but prefer scoping, because a baseline is
+one more piece of state to get wrong.
 
 `.log` is the timing record: its `phase2-validate-N-fix-M` entries give wall clock
 per phase, which is how you find out where a run actually spent its time.
 
-### 3d. Relaunching: the pidfile race that looks exactly like success
+### 3d. Relaunching, and the pidfile race (fixed — recognise it on older installs)
 
-**Never relaunch a plan in the same breath as killing it.** `wiggum watch` ends
-with an unguarded `rm -f "$pidfile"` (`lib/wiggum.sh:2846`), and it deletes
-whatever pidfile sits at that path *at that moment* — it does not check that the
-pid inside is still the run it was watching. So this ordering silently breaks the
-new run's bookkeeping:
+**Current wiggum guards this.** `watch` and `kill` release a run's pidfile only
+when it still names the pid they were supervising (`release_pidfile`), so a
+relaunch that lands while an old run is winding down keeps its sidecar.
 
-1. `wiggum kill <plan>` — removes the pidfile, the old run dies.
-2. A `watch` that was following the old run notices it died, drains output, and
-   runs its own `rm -f "$pidfile"`.
-3. Meanwhile you relaunched, and step 2's cleanup deletes the **new** run's
-   pidfile.
+**On an older wiggum, the cleanup was unguarded** (`rm -f "$pidfile"` at the end
+of `run_watch`) and deleted whatever pidfile was at that path. Kill a run and
+relaunch in the same breath, and the lingering watch deletes the **new** run's
+pidfile. Worth recognising, because the symptom reads as success:
 
-`launch_execute_background`'s "a run is already active" guard (`lib/wiggum.sh:2725`)
-cannot catch this: it only refuses when a *live* pidfile exists at launch, and the
-kill had already removed it.
+- `wiggum watch` returns **exit 0** with `No background run found for <plan> (no
+  pidfile)`.
+- `wiggum status` drops its `State:` line.
+- The run is meanwhile working perfectly.
 
-**The symptom is indistinguishable from a clean finish.** `wiggum watch` returns
-**exit 0** with `No background run found for <plan> (no pidfile)`, and
-`wiggum status` drops its `State:` line — while the run is happily working. Read
-that as "the run finished" and you will report a completed job that is still going.
-
-**So confirm with the kernel, not the sidecar.** The run is detached and
-reparented to init, so `ps` finds it:
+Read that as "the run finished" and you will report a completed job that is
+still going. **Confirm with the kernel, not the sidecar** — the run is detached
+and reparented to init, so `ps` finds it:
 
 ```
 ps -o pid,ppid,etime,command -ww | grep "[w]iggum execute <plan>"
@@ -473,9 +468,8 @@ if ps -o command= -p "$pid" -ww | grep -q "wiggum execute <plan>"; then
 fi
 ```
 
-`wiggum status` then reports `State: running (pid …)` again and `watch`/`kill`
-work. **Avoid the whole problem** by letting the old `watch` return *before* you
-relaunch, or by not running a `watch` you intend to kill out from under.
+Either way, letting the old `watch` return before you relaunch costs nothing and
+avoids the question.
 
 ### 4. If the run didn't finish `complete` — remediate and re-run
 
@@ -623,15 +617,14 @@ can inspect and fix between stages.
 - **Rule out a false stall before remediating** (step 4): if a job the task spawned
   is still alive and its output still growing, wait and relaunch — don't rewrite a
   task that was working.
-- **Know how `.out` was opened before grepping it** (step 3c): `--background`
-  truncates it per run (so relaunching destroys the old log — copy it aside if you
-  need it), while the §3a `screen` pattern appends. In the appending case, baseline
-  your grep counts, or you will report a dead run's stall as current and then miss
-  the live one.
-- **Never relaunch in the same breath as a kill** (step 3d): a lingering `watch`
-  deletes the *new* run's pidfile, and the symptom — `watch` exiting 0 with "no
-  pidfile" — is indistinguishable from a clean finish. Confirm with `ps` before
-  believing a run ended.
+- **Scope your own greps of `.out` to the current run** (step 3c): both sidecars
+  append across runs behind a separator. Wiggum's readers scope themselves; your
+  `grep` does not, and an unscoped one reports a dead run's stall as current and
+  then goes deaf to the live one.
+- **Confirm a run ended with `ps`, not with the sidecar** (step 3d): on older
+  wiggum a lingering `watch` could delete a newer run's pidfile, and the symptom
+  — `watch` exiting 0 with "no pidfile" — is indistinguishable from a clean
+  finish.
 - **Don't trust a green report over the artifact.** Read the numbers an agent writes
   into a report against the files that produced them; check that a "parity" or
   "unchanged" claim was tested against the previous commit and not against the new
