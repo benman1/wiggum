@@ -471,6 +471,48 @@ fi
 Either way, letting the old `watch` return before you relaunch costs nothing and
 avoids the question.
 
+### 3e. Watches are yours to tear down, and status counts are not activity
+
+Two ways a supervisor reports progress that is not happening. Both were observed
+in a real session, and in both the user was the one who noticed.
+
+**Stop the watch when the run stops.** A persistent tail on a run's sidecar
+(`Monitor`, a backgrounded `tail -f`, any long-lived poll) does not end when
+wiggum does; it goes quiet, which is indistinguishable from a run that is simply
+between iterations. Worse, the harness keeps advertising it: the user's status
+line reads `1 monitor still running` for as long as it lives. In the observed
+case that ran for sixteen hours after the run had finished, tailing a file
+nothing was writing to, while the user waited for it to "do something".
+
+So the moment `wiggum status` reports `finished: <reason>`, tear the watch down
+in the same turn you report the outcome. A watch outliving its run is not
+harmless bookkeeping; it is a false progress indicator you put on the user's
+screen. Take the same care with a `tail -f` that greps for a completion banner:
+if the log goes quiet the pipeline hangs rather than exiting.
+
+**`wiggum status` counts checkboxes in a file, not work in flight.** `remaining`
+is a `grep -c` over the plan, so it moves whenever the *plan* changes, with or
+without a process. Add a phase to a finished plan and `remaining` climbs from 0
+to 16 while nothing whatsoever is executing. That reads exactly like a stalled
+run to anyone watching the number.
+
+Two consequences:
+
+- **Always read `State:` beside the counts, and quote both.** `finished: complete`
+  with 16 remaining means "somebody edited the plan since the run"; `running but
+  appears blocked` with 16 remaining means something is wrong. The counts alone
+  cannot tell them apart.
+- **If you scope new tasks without launching, say so in plain words.** "I have
+  added 16 tasks and nothing is running" is the honest sentence. Silence after
+  writing a phase, while the counter climbs, invites the user to assume a run is
+  chewing on it.
+
+**Never infer liveness from a watch.** A monitor that has emitted nothing for an
+hour tells you nothing: the run may be mid-build, finished, or dead. Confirm with
+`kill -0 "$pid"` on a PID you captured at launch (step 3a), or `screen -ls` /
+`tmux ls`. Then confirm *completion* by the artifact, per step 3a: the summary
+file exists, the plan's boxes moved.
+
 ### 4. If the run didn't finish `complete` — remediate and re-run
 
 A finished run is not necessarily a done one. Read its stop reason from
@@ -625,6 +667,11 @@ can inspect and fix between stages.
   wiggum a lingering `watch` could delete a newer run's pidfile, and the symptom
   — `watch` exiting 0 with "no pidfile" — is indistinguishable from a clean
   finish.
+- **Tear down your watch when the run ends, and never read counts as activity**
+  (step 3e): a monitor outliving its run shows the user `1 monitor still running`
+  and reads as work in progress; `wiggum status` counts checkboxes, so `remaining`
+  climbs when you *edit* the plan. Quote `State:` beside the counts, and say
+  plainly when you have scoped tasks without launching.
 - **Don't trust a green report over the artifact.** Read the numbers an agent writes
   into a report against the files that produced them; check that a "parity" or
   "unchanged" claim was tested against the previous commit and not against the new
