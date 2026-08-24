@@ -864,20 +864,29 @@ Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs 
 ### Nightly plan-then-execute
 
 `wiggum run` suits a single recurring prompt. For the fuller loop — plan a sweep,
-then execute the plan it produced — a second pair of examples ships ready to use:
+then execute the plan it produced — two examples ship ready to use.
+
+Run the setup once **per project**:
 
 ```bash
 ./examples/wiggum-nightly-setup.sh
 ```
 
-It asks for the project directories, the start time and the iteration limit,
-writes a configured copy of [`examples/wiggum-nightly.sh`](examples/wiggum-nightly.sh)
-to `~/bin/`, and installs the crontab entry. Each night the runner picks one of
-the directories at random, writes a planning brief into `docs/`, runs
-`wiggum plan` on it, and then `wiggum execute`s the resulting plan.
+It asks for the project directory, the start time, the days and the iteration
+limit, then installs one crontab entry for that project. Run it again for the
+next project: each gets its own schedule, and re-running it for a project you
+have already scheduled replaces just that entry.
 
-Edit the copy directly to change the brief or the projects — it is a plain
-script with its settings in a block at the top, not a config format.
+```cron
+0  1 * * *   ~/bin/wiggum-nightly.sh /Users/you/api      25   # wiggum-nightly:/Users/you/api
+30 2 * * 1-5 ~/bin/wiggum-nightly.sh /Users/you/frontend 15   # wiggum-nightly:/Users/you/frontend
+```
+
+The runner itself is [`examples/wiggum-nightly.sh`](examples/wiggum-nightly.sh),
+a plain script taking `<project-directory> [max-iterations]`. It writes a
+planning brief into `docs/`, runs `wiggum plan` on it, and executes the result.
+Edit the copy in `~/bin/` to change the brief — the setup script never
+overwrites an installed runner, so your credential and edits survive.
 
 One detail worth knowing if you write your own: **pass `--plan-file`**. Under
 cron, stdout is a redirected log rather than a terminal, so `wiggum plan` treats

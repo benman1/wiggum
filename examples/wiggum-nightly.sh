@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 #
-# Nightly wiggum: plan a maintenance sweep in one project, then execute it.
-# Edit the settings below, or generate a configured copy with
-# wiggum-nightly-setup.sh.
+# Plan a maintenance sweep in one project, then execute it.
+# Usage: wiggum-nightly.sh <project-directory> [max-iterations]
+#
+# Schedule it with wiggum-nightly-setup.sh, which installs one crontab entry per
+# project so each can run on its own day and time.
 
 set -euo pipefail
 
-# ---------------------------------------------------------------- settings --
-
-PROJECTS=("$HOME/my-project")
-MAX_ITERATIONS=25
+PROJECT="${1:?usage: wiggum-nightly.sh <project-directory> [max-iterations]}"
+MAX_ITERATIONS="${2:-25}"
 
 # cron starts with a bare PATH and no shell rc, so name everything.
 export PATH="/usr/local/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin"
-# node, if it comes from nvm rather than a fixed directory
+# node, when it comes from nvm rather than a fixed directory
 if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
     # shellcheck source=/dev/null
     . "$HOME/.nvm/nvm.sh" >/dev/null 2>&1 || true
@@ -23,14 +23,12 @@ if [[ -d "$HOME/anaconda3/bin" ]]; then
     PATH="$PATH:$HOME/anaconda3/bin"
 fi
 
-# cron cannot read the Keychain, so an interactive `claude` login does not
-# carry over. Uncomment and fill in ONE of these:
+# cron cannot read the Keychain, so an interactive `claude` login does not carry
+# over. Uncomment and fill in ONE of these:
 # export CLAUDE_CODE_OAUTH_TOKEN="..."   # from: claude setup-token
 # export ANTHROPIC_API_KEY="sk-ant-..."
 
-# -------------------------------------------------------------------- run --
-
-cd "${PROJECTS[$((RANDOM % ${#PROJECTS[@]}))]}"
+cd "$PROJECT"
 STAMP="$(date '+%Y-%m-%d')"
 SEED="docs/nightly-$STAMP.md"
 PLAN="docs/nightly-${STAMP}_plan.md"
