@@ -872,6 +872,8 @@ This file is per-machine (not committed to git). See the [Claude Code permission
 
 `wiggum run` is built for unattended use: feed it prompts, point `--session-file` at a stable path, and a scheduled job can pick up the same Claude session each time. The catch is the environment — cron runs your job with a **minimal, non-login shell**, so the three things below trip up almost every first attempt.
 
+**Initialize each project first.** Run `wiggum init` in every repository you intend to schedule, before you schedule it. `init` is the only interactive command, so it cannot run from cron, and a project without verification steps is the worst thing to run unattended: wiggum reads `./.wiggumrc` if it exists and `~/.wiggumrc` otherwise — never both — so if neither defines `verify` or `autofix` commands, a scheduled run will plan, implement and **commit without ever running your tests, type checker or linter**. `init` also sets up the Claude Code permissions an unattended run needs, and installs the `/wiggum` skill.
+
 ### The three gotchas
 
 1. **`PATH` is bare.** Cron's `PATH` is typically just `/usr/bin:/bin`. Neither `wiggum` (`/usr/local/bin`) nor `claude` (`~/.local/bin`) is on it, and `node` (used by Claude Code plugin hooks) usually isn't either. Set `PATH` explicitly in the job.
