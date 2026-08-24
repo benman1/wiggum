@@ -861,6 +861,29 @@ Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs 
 0 9 * * * /Users/you/bin/wiggum-cron.sh >> /Users/you/wiggum-cron.log 2>&1
 ```
 
+### Nightly plan-then-execute
+
+`wiggum run` suits a single recurring prompt. For the fuller loop — plan a sweep,
+then execute the plan it produced — a second pair of examples ships ready to use:
+
+```bash
+./examples/wiggum-nightly-setup.sh
+```
+
+It asks for the project directories, the start time and the iteration limit,
+writes a configured copy of [`examples/wiggum-nightly.sh`](examples/wiggum-nightly.sh)
+to `~/bin/`, and installs the crontab entry. Each night the runner picks one of
+the directories at random, writes a planning brief into `docs/`, runs
+`wiggum plan` on it, and then `wiggum execute`s the resulting plan.
+
+Edit the copy directly to change the brief or the projects — it is a plain
+script with its settings in a block at the top, not a config format.
+
+One detail worth knowing if you write your own: **pass `--plan-file`**. Under
+cron, stdout is a redirected log rather than a terminal, so `wiggum plan` treats
+the run as piped — it prints the plan to stdout and deletes the file. Naming the
+plan file explicitly keeps it on disk for `execute` to pick up.
+
 ### Session patterns
 
 - **Continue one session over time** (the follow-up workflow): reuse the same `--session-file` on every run so each job builds on the last. Reset occasionally with `--new-session` so the conversation doesn't grow without bound.
