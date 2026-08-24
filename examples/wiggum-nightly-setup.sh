@@ -67,28 +67,16 @@ PROJECT="${PROJECT/#\~/$HOME}"
     exit 1
 }
 PROJECT="$(cd "$PROJECT" && pwd)"
-# wiggum uses ./.wiggumrc if it exists, otherwise ~/.wiggumrc -- never both. A
-# project with no verification steps in whichever one applies will plan,
-# implement and COMMIT unverified, which is not something to discover at 01:00.
+# wiggum reads ./.wiggumrc if it exists, otherwise ~/.wiggumrc -- never both.
 RC="$PROJECT/.wiggumrc"
 [[ -f $RC ]] || RC="$HOME/.wiggumrc"
 if ! grep -qE '^[[:space:]]*(verify|autofix)[[:space:]]*=' "$RC" 2>/dev/null; then
     cat >&2 <<MSG
-Error: no verification steps apply to $PROJECT.
+Warning: $RC defines no verify or autofix commands,
+so scheduled runs will commit without running tests, type checks or lint.
+Run 'wiggum init' in the project first if you want verification.
 
-wiggum would read $RC, which defines no verify or autofix
-commands, so an unattended run would commit code without ever running your
-tests, type checker or linter.
-
-Initialize the project first -- it is interactive, so do it now rather than
-letting cron find out:
-
-    cd $PROJECT && wiggum init
-
-That writes a .wiggumrc with verify commands for the project type, sets up
-Claude Code permissions, and installs the /wiggum skill. Then re-run this.
 MSG
-    exit 1
 fi
 
 read -r -p "Start time, 24h HH:MM [01:00]: " TIME
