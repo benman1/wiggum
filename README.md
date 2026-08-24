@@ -915,16 +915,29 @@ Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs 
 `wiggum run` suits a single recurring prompt. For the fuller loop — plan a sweep,
 then execute the plan it produced — two examples ship ready to use.
 
-Run the setup once **per project**:
+**First run, in order:**
 
-```bash
-./examples/wiggum-nightly-setup.sh
-```
+1. **`wiggum init`** in each project you intend to schedule. It is interactive,
+   so it cannot run from cron — see the note at the top of this section for what
+   a project without verification steps does when left unattended.
+2. **`./examples/wiggum-nightly-setup.sh`**, once per project. It asks for the
+   directory, start time, days and iteration limit, copies the runner to
+   `~/bin/wiggum-nightly.sh`, and installs that project's crontab entry.
+3. **Add a credential** to `~/bin/wiggum-nightly.sh`: uncomment the
+   `CLAUDE_CODE_OAUTH_TOKEN` line and paste a token from `claude setup-token`.
+   Cron cannot read the Keychain, so nothing runs without this.
+4. **Grant Full Disk Access to `/usr/sbin/cron`** on macOS, or the job fires and
+   silently does nothing.
+5. **Run it once by hand** before trusting the schedule, with a low iteration
+   count to keep the trial short:
+   `~/bin/wiggum-nightly.sh /path/to/project 3`.
 
-It asks for the project directory, the start time, the days and the iteration
-limit, then installs one crontab entry for that project. Run it again for the
-next project: each gets its own schedule, and re-running it for a project you
-have already scheduled replaces just that entry.
+Run step 2 again for the next project: each gets its own schedule, and
+re-running it for a project you have already scheduled replaces just that entry.
+Steps 3 and 4 are once per machine, not once per project.
+
+Cron does not wake a sleeping machine. If it is asleep at the scheduled time
+that run is skipped — no run, no catch-up, no error.
 
 ```cron
 0  1 * * *   ~/bin/wiggum-nightly.sh /Users/you/api      25   # wiggum-nightly:/Users/you/api
