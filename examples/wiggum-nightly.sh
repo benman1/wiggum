@@ -39,6 +39,21 @@ esac
 PROJECT="$1"
 MAX_ITERATIONS="${2:-25}"
 
+# launchd runs a job it missed as soon as the machine next wakes. That is not
+# wanted here: a run is for its slot, not for whenever the lid opens. If we are
+# firing well after the scheduled time, this is a catch-up, so stand down.
+# WIGGUM_NIGHTLY_AT is set by the LaunchAgent; unset it to always run.
+if [[ -n ${WIGGUM_NIGHTLY_AT:-} ]]; then
+    scheduled=$((10#${WIGGUM_NIGHTLY_AT%%:*} * 60 + 10#${WIGGUM_NIGHTLY_AT##*:}))
+    now=$((10#$(date +%H) * 60 + 10#$(date +%M)))
+    late=$(((now - scheduled + 1440) % 1440))
+    if ((late > ${WIGGUM_NIGHTLY_WINDOW:-10})); then
+        printf '[%s] missed the %s slot by %dm -- skipping\n' \
+            "$(date '+%Y-%m-%d %H:%M:%S')" "$WIGGUM_NIGHTLY_AT" "$late"
+        exit 0
+    fi
+fi
+
 # cron starts with a bare PATH and no shell rc, so name everything.
 export PATH="/usr/local/bin:$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin"
 # node, when it comes from nvm rather than a fixed directory
