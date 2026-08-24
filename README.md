@@ -49,7 +49,7 @@ docs/onboarding-ui_plan.md               621      running (blocked)    2/7 done,
 - [Permissions](#permissions)
   - [Setting up permissions with init](#setting-up-permissions-with-init)
   - [Manual permission setup](#manual-permission-setup)
-- [Scheduling with cron](#scheduling-with-cron)
+- [Scheduling unattended runs](#scheduling-unattended-runs)
   - [The three gotchas](#the-three-gotchas)
   - [Recommended setup: a wrapper script](#recommended-setup-a-wrapper-script)
   - [Nightly plan-then-execute](#nightly-plan-then-execute)
@@ -299,7 +299,7 @@ wiggum run --session-file .wiggum-session "Now add auth to the API you built"
 
 The id is rewritten after every prompt, so a follow-up resumes from the latest completed step even if a later prompt failed mid-chain. Pass `--new-session` to ignore an existing session file and start over. Pair it with `permission_mode = auto` (or `--permission-mode auto`) so unattended runs let Claude's auto-mode classifier decide each action.
 
-For a complete, copy-pasteable cron setup — wrapper script, environment, and the gotchas that bite unattended jobs — see [Scheduling with cron](#scheduling-with-cron).
+For a complete, copy-pasteable cron setup — wrapper script, environment, and the gotchas that bite unattended jobs — see [Scheduling unattended runs](#scheduling-unattended-runs).
 
 ### Background runs & supervision
 
@@ -868,7 +868,7 @@ If you prefer to set permissions manually or already have a `.claude/settings.lo
 
 This file is per-machine (not committed to git). See the [Claude Code permissions docs](https://docs.anthropic.com/en/docs/claude-code/permissions) for the full rule syntax.
 
-## Scheduling with cron
+## Scheduling unattended runs
 
 `wiggum run` is built for unattended use: feed it prompts, point `--session-file` at a stable path, and a scheduled job can pick up the same Claude session each time. The catch is the environment — cron runs your job with a **minimal, non-login shell**, so the three things below trip up almost every first attempt.
 
@@ -877,7 +877,7 @@ This file is per-machine (not committed to git). See the [Claude Code permission
 ### The three gotchas
 
 1. **`PATH` is bare.** Cron's `PATH` is typically just `/usr/bin:/bin`. Neither `wiggum` (`/usr/local/bin`) nor `claude` (`~/.local/bin`) is on it, and `node` (used by Claude Code plugin hooks) usually isn't either. Set `PATH` explicitly in the job.
-2. **Authentication does not carry over.** An interactive `claude` login is stored in the macOS **Keychain**, which a cron process generally cannot read — `claude` will print `Not logged in · Please run /login` and exit. Provide credentials through the environment instead: either `ANTHROPIC_API_KEY` (API billing), or a long-lived token from `claude setup-token` (Claude subscription) exported in the job.
+2. **Authentication does not carry over — on macOS.** An interactive `claude` login is stored in the macOS **Keychain**, and a cron job has no security session: its default keychain is the *System* keychain, your login keychain reports "User interaction is not allowed", and reading the credential fails even when the item is named explicitly. `claude auth status` from cron returns `loggedIn: false`. Unlocking it non-interactively would mean putting your **macOS account password** in a file, which is a far worse trade than any token — don't. Either schedule via launchd (which runs in your login session, where it just works), or supply a credential through the environment: `ANTHROPIC_API_KEY` (API billing) or a long-lived token from `claude setup-token` (billed to your Claude subscription, not API rates). **On Linux none of this applies** — the credential is a plain file at `~/.claude/.credentials.json`, which your cron job reads directly.
 3. **macOS needs Full Disk Access for cron.** If the job silently does nothing, grant Full Disk Access to `/usr/sbin/cron` under *System Settings → Privacy & Security → Full Disk Access*.
 
 ### Recommended setup: a wrapper script
@@ -915,45 +915,75 @@ Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs 
 `wiggum run` suits a single recurring prompt. For the fuller loop — plan a sweep,
 then execute the plan it produced — two examples ship ready to use.
 
+Run the setup once **per project**:
+
+```bash
+./examples/wiggum-nightly-setup.sh
+```
+
+It asks for the directory, start time, days and iteration limit, copies the
+runner to `~/bin/wiggum-nightly.sh`, and installs the schedule using whatever the
+platform provides:
+
+| | scheduler it installs | how the run is signed in |
+|---|---|---|
+| **Linux** | a crontab entry | reads `~/.claude/.credentials.json` directly |
+| **macOS** | a LaunchAgent | runs inside your desktop session, using the browser login |
+| **Windows** | **not implemented** | — |
+
+Run it again for the next project: each gets its own schedule, and re-running it
+for a project you have already scheduled replaces just that entry.
+
+**Why macOS gets a LaunchAgent instead of a cron job.** Not preference —
+measurement. The same script, run as the same user in the same minute:
+
+| | cron | LaunchAgent |
+|---|---|---|
+| session manager | `Background` | `Aqua` |
+| default keychain | `/Library/Keychains/System.keychain` | your login keychain |
+| read the credential | **fails** | succeeds |
+| `claude auth status` | `loggedIn: false` | `loggedIn: true` |
+
+A cron job runs as you, but outside your desktop login session, so the login
+keychain is not unlocked for it. The only way to unlock it non-interactively is
+to put your macOS account password in a file — much worse than any token, so the
+setup does not offer it. A LaunchAgent runs *in* that session, so your existing
+browser login just works with nothing to paste. It does need you logged in to the
+desktop: asleep and screen-locked are both fine, fully logged out is not.
+
+If you would rather keep cron on macOS, that works too — but it needs a
+credential in the environment (`claude setup-token`, billed to your subscription).
+This setup script does not do that; write the crontab line yourself.
+
 **First run, in order:**
 
 1. **`wiggum init`** in each project you intend to schedule. It is interactive,
-   so it cannot run from cron — see the note at the top of this section for what
-   a project without verification steps does when left unattended.
-2. **`./examples/wiggum-nightly-setup.sh`**, once per project. It asks for the
-   directory, start time, days and iteration limit, copies the runner to
-   `~/bin/wiggum-nightly.sh`, and installs that project's crontab entry.
-3. **Add a credential** to `~/bin/wiggum-nightly.sh`: uncomment the
-   `CLAUDE_CODE_OAUTH_TOKEN` line and paste a token from `claude setup-token`.
-   Cron cannot read the Keychain, so nothing runs without this.
-4. **Grant Full Disk Access to `/usr/sbin/cron`** on macOS, or the job fires and
-   silently does nothing.
-5. **Run it once by hand** before trusting the schedule, with a low iteration
-   count to keep the trial short:
-   `~/bin/wiggum-nightly.sh /path/to/project 3`.
+   so it cannot run from a scheduled job.
+2. **`./examples/wiggum-nightly-setup.sh`**, once per project.
+3. **Run it once by hand** before trusting the schedule, with a low iteration
+   count to keep the trial short: `~/bin/wiggum-nightly.sh /path/to/project 3`.
 
-Run step 2 again for the next project: each gets its own schedule, and
-re-running it for a project you have already scheduled replaces just that entry.
-Steps 3 and 4 are once per machine, not once per project.
+There is no credential step, on either platform, and nothing to grant in System
+Settings.
 
-Cron does not wake a sleeping machine. If it is asleep at the scheduled time
-that run is skipped — no run, no catch-up, no error.
-
-```cron
-0  1 * * *   ~/bin/wiggum-nightly.sh /Users/you/api      25   # wiggum-nightly:/Users/you/api
-30 2 * * 1-5 ~/bin/wiggum-nightly.sh /Users/you/frontend 15   # wiggum-nightly:/Users/you/frontend
-```
+**Missed runs stay missed.** launchd starts a job it missed as soon as the
+machine wakes, which is rarely what you want from an overnight sweep. The runner
+therefore checks the clock against `WIGGUM_NIGHTLY_AT` (set by the schedule) and
+stands down if the slot has passed — so a 01:00 run does not begin at 09:00 when
+you open the lid. Widen the tolerance with `WIGGUM_NIGHTLY_WINDOW` (minutes,
+default 10), or unset `WIGGUM_NIGHTLY_AT` to always run.
 
 The runner itself is [`examples/wiggum-nightly.sh`](examples/wiggum-nightly.sh),
 a plain script taking `<project-directory> [max-iterations]`. It writes a
 planning brief into `docs/`, runs `wiggum plan` on it, and executes the result.
-Edit the copy in `~/bin/` to change the brief — the setup script never
-overwrites an installed runner, so your credential and edits survive.
+Nothing in it is platform-specific, so the same file is what both schedulers
+call. Edit the copy in `~/bin/` to change the brief — the setup script never
+overwrites an installed runner, so your edits survive.
 
-One detail worth knowing if you write your own: **pass `--plan-file`**. Under
-cron, stdout is a redirected log rather than a terminal, so `wiggum plan` treats
-the run as piped — it prints the plan to stdout and deletes the file. Naming the
-plan file explicitly keeps it on disk for `execute` to pick up.
+One detail worth knowing if you write your own: **pass `--plan-file`**. When
+stdout is a redirected log rather than a terminal, `wiggum plan` treats the run
+as piped — it prints the plan to stdout and deletes the file. Naming the plan
+file explicitly keeps it on disk for `execute` to pick up.
 
 ### Session patterns
 

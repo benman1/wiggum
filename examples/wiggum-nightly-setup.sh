@@ -1,34 +1,40 @@
 #!/usr/bin/env bash
 #
-# Schedule wiggum-nightly.sh for ONE project. Run it once per project; each gets
-# its own crontab entry, so they can run on different days and at different
-# times. Re-running it for the same project replaces that project's entry and
-# leaves the others alone.
+# Schedule wiggum-nightly.sh for ONE project, using whichever scheduler the
+# platform provides: cron on Linux, a LaunchAgent on macOS. Run it once per
+# project; re-running it for the same project replaces that project's entry.
 
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")" && pwd)/wiggum-nightly.sh"
 DEST="$HOME/bin/wiggum-nightly.sh"
 LOG="$HOME/.wiggum-nightly.log"
+AGENT_DIR="$HOME/Library/LaunchAgents"
+OS="$(uname -s)"
 
 usage() {
     cat <<'USAGE'
 Usage: wiggum-nightly-setup.sh [-h|--help]
 
 Schedule wiggum-nightly.sh for ONE project, interactively. Asks for the project
-directory, start time, days and iteration limit, then installs a crontab entry
-for it and copies the runner to ~/bin if it is not already there.
+directory, start time, days and iteration limit, installs the schedule, and
+copies the runner to ~/bin if it is not already there.
 
-Run it once per project. Each gets its own entry, so projects can run on
-different days and times; re-running it for a project you have already
-scheduled replaces just that entry and leaves the others alone.
+  Linux   a crontab entry.
+  macOS   a LaunchAgent, NOT a cron job. Claude Code keeps its login in the
+          Keychain, and a cron job has no security session, so it cannot unlock
+          it -- `claude` reports "not logged in" and the run dies. A LaunchAgent
+          runs inside your desktop session and uses the browser login you
+          already have. No token, no API key, no environment variables.
+  Windows not implemented.
 
-  crontab -l | grep wiggum-nightly           see everything it has scheduled
-  crontab -l | grep -v '<project>' | crontab -   remove one project
+Run it once per project. Each gets its own schedule, so projects can run on
+different days and times.
 
-Takes no arguments -- it asks. See the "Scheduling with cron" section of the
-README for the cron caveats (a sleeping machine skips the run; macOS wants Full
-Disk Access for /usr/sbin/cron; cron cannot read the Keychain).
+  Linux:  crontab -l | grep wiggum-nightly
+  macOS:  ls ~/Library/LaunchAgents/com.wiggum.nightly.*
+
+Takes no arguments -- it asks.
 USAGE
 }
 
@@ -45,28 +51,28 @@ case "${1:-}" in
     ;;
 esac
 
-[[ -t 0 ]] || {
-    echo "Run this from a terminal -- it asks questions." >&2
+die() {
+    printf 'Error: %s\n' "$1" >&2
     exit 1
 }
-[[ -f $SRC ]] || {
-    echo "Error: $SRC not found." >&2
-    exit 1
-}
-command -v wiggum >/dev/null || {
-    echo "Error: wiggum is not on PATH. Run ./install.sh first." >&2
-    exit 1
-}
+
+case "$OS" in
+Darwin | Linux) ;;
+*) die "$OS is not supported. Windows is not implemented -- see the README." ;;
+esac
+
+[[ -t 0 ]] || die "run this from a terminal -- it asks questions."
+[[ -f $SRC ]] || die "$SRC not found."
+command -v wiggum >/dev/null || die "wiggum is not on PATH. Run ./install.sh first."
+[[ $OS == Linux ]] && { command -v crontab >/dev/null || die "crontab not found."; }
 
 # ---------------------------------------------------------------- questions --
 
 read -r -p "Project directory: " PROJECT
 PROJECT="${PROJECT/#\~/$HOME}"
-[[ -d "$PROJECT/.git" ]] || {
-    echo "Error: not a git repository: $PROJECT" >&2
-    exit 1
-}
+[[ -d "$PROJECT/.git" ]] || die "not a git repository: $PROJECT"
 PROJECT="$(cd "$PROJECT" && pwd)"
+
 # wiggum reads ./.wiggumrc if it exists, otherwise ~/.wiggumrc -- never both.
 RC="$PROJECT/.wiggumrc"
 [[ -f $RC ]] || RC="$HOME/.wiggumrc"
@@ -81,37 +87,45 @@ fi
 
 read -r -p "Start time, 24h HH:MM [01:00]: " TIME
 TIME="${TIME:-01:00}"
-[[ $TIME =~ ^([0-9]{1,2}):([0-9]{2})$ ]] || {
-    echo "Error: give a time like 01:00." >&2
-    exit 1
-}
+[[ $TIME =~ ^([0-9]{1,2}):([0-9]{2})$ ]] || die "give a time like 01:00."
 HOUR=$((10#${BASH_REMATCH[1]}))
 MIN=$((10#${BASH_REMATCH[2]}))
-((HOUR <= 23 && MIN <= 59)) || {
-    echo "Error: $TIME is not a real time." >&2
-    exit 1
-}
+((HOUR <= 23 && MIN <= 59)) || die "$TIME is not a real time."
+TIME="$(printf '%02d:%02d' "$HOUR" "$MIN")"
 
-echo "Which days? 'daily', 'weekdays', 'weekends', or a cron day list like mon,wed,fri"
+echo "Which days? 'daily', 'weekdays', 'weekends', or a list like mon,wed,fri"
 read -r -p "Days [daily]: " DAYS
-case "$(printf '%s' "${DAYS:-daily}" | tr '[:upper:]' '[:lower:]')" in
-daily | every | all) DOW='*' ;;
-weekdays) DOW='1-5' ;;
-weekends) DOW='0,6' ;;
-*) DOW="$DAYS" ;; # cron takes mon,wed,fri and 1,3,5 as-is
+DAYS="$(printf '%s' "${DAYS:-daily}" | tr '[:upper:]' '[:lower:]')"
+WEEKDAYS=()
+case "$DAYS" in
+daily | every | all) ;;
+weekdays) WEEKDAYS=(1 2 3 4 5) ;;
+weekends) WEEKDAYS=(0 6) ;;
+*)
+    IFS=', ' read -r -a parts <<<"$DAYS"
+    for d in ${parts[@]+"${parts[@]}"}; do
+        case "$d" in
+        sun | sunday | 0 | 7) WEEKDAYS+=(0) ;;
+        mon | monday | 1) WEEKDAYS+=(1) ;;
+        tue | tues | tuesday | 2) WEEKDAYS+=(2) ;;
+        wed | weds | wednesday | 3) WEEKDAYS+=(3) ;;
+        thu | thur | thurs | thursday | 4) WEEKDAYS+=(4) ;;
+        fri | friday | 5) WEEKDAYS+=(5) ;;
+        sat | saturday | 6) WEEKDAYS+=(6) ;;
+        *) die "unrecognised day '$d' -- use names like mon,wed,fri or 0-6." ;;
+        esac
+    done
+    ;;
 esac
 
 read -r -p "Max iterations [25]: " ITERS
 ITERS="${ITERS:-25}"
-[[ $ITERS =~ ^[0-9]+$ ]] || {
-    echo "Error: iterations must be a number." >&2
-    exit 1
-}
+[[ $ITERS =~ ^[0-9]+$ ]] || die "iterations must be a number."
 
-# ------------------------------------------------------------------ install --
+# ------------------------------------------------------------- the runner ----
 
 if [[ -f $DEST ]]; then
-    echo "Using the runner already at $DEST (not overwriting -- it may hold your credential)."
+    echo "Using the runner already at $DEST (not overwriting your edits)."
 else
     mkdir -p "$(dirname "$DEST")"
     cp "$SRC" "$DEST"
@@ -119,44 +133,121 @@ else
     echo "Installed $DEST"
 fi
 
-MARKER="# wiggum-nightly:$PROJECT"
-LINE="$MIN $HOUR * * $DOW $DEST $(printf '%q' "$PROJECT") $ITERS >> $LOG 2>&1 $MARKER"
+# --------------------------------------------------------------- schedule ----
 
-# Drop this project's previous entry (exact suffix match, so a project whose
-# path is a prefix of another's is left alone), then add the new one.
-{
+install_cron() {
+    local dow tmp marker line
+    if [[ ${#WEEKDAYS[@]} -eq 0 ]]; then
+        dow='*'
+    else
+        dow="$(
+            IFS=,
+            echo "${WEEKDAYS[*]}"
+        )"
+    fi
+    marker="# wiggum-nightly:$PROJECT"
+    line="$MIN $HOUR * * $dow WIGGUM_NIGHTLY_AT=$TIME $DEST $(printf '%q' "$PROJECT") $ITERS >> $LOG 2>&1 $marker"
+    tmp="$(mktemp)"
+    # Drop this project's previous entry (exact suffix match, so a project whose
+    # path is a prefix of another's is left alone), then add the new one.
     while IFS= read -r l; do
-        [[ $l == *"$MARKER" ]] && continue
+        [[ $l == *"$marker" ]] && continue
         printf '%s\n' "$l"
-    done < <(crontab -l 2>/dev/null || true)
-    printf '%s\n' "$LINE"
-} | crontab -
+    done < <(crontab -l 2>/dev/null || true) >"$tmp"
+    printf '%s\n' "$line" >>"$tmp"
+    crontab "$tmp"
+    rm -f "$tmp"
+    WHERE="crontab entry"
+    REMOVE="crontab -l | grep -v 'wiggum-nightly:$PROJECT' | crontab -"
+}
 
-# ------------------------------------------------------------------- report --
+install_launchagent() {
+    local slug label plist w
+    # Escape the characters that are not legal as XML text.
+    xml() { printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g'; }
+    slug="$(basename "$PROJECT")"
+    slug="${slug//[^A-Za-z0-9._-]/-}"
+    label="com.wiggum.nightly.$slug"
+    plist="$AGENT_DIR/$label.plist"
+    mkdir -p "$AGENT_DIR"
+    {
+        cat <<PLIST_HEAD
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$(xml "$label")</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$(xml "$DEST")</string>
+    <string>$(xml "$PROJECT")</string>
+    <string>$ITERS</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict><key>WIGGUM_NIGHTLY_AT</key><string>$TIME</string></dict>
+  <key>StandardOutPath</key><string>$(xml "$LOG")</string>
+  <key>StandardErrorPath</key><string>$(xml "$LOG")</string>
+  <key>StartCalendarInterval</key>
+PLIST_HEAD
+        if [[ ${#WEEKDAYS[@]} -eq 0 ]]; then
+            printf '  <dict><key>Hour</key><integer>%d</integer><key>Minute</key><integer>%d</integer></dict>\n' "$HOUR" "$MIN"
+        else
+            printf '  <array>\n'
+            for w in "${WEEKDAYS[@]}"; do
+                printf '    <dict><key>Weekday</key><integer>%d</integer><key>Hour</key><integer>%d</integer><key>Minute</key><integer>%d</integer></dict>\n' "$w" "$HOUR" "$MIN"
+            done
+            printf '  </array>\n'
+        fi
+        printf '</dict>\n</plist>\n'
+    } >"$plist"
+    plutil -lint "$plist" >/dev/null || die "generated plist is invalid: $plist"
+    launchctl unload "$plist" 2>/dev/null || true
+    launchctl load "$plist" || die "launchctl could not load $plist"
+    WHERE="LaunchAgent at $plist"
+    REMOVE="launchctl unload $plist && rm $plist"
+}
+
+if [[ $OS == Darwin ]]; then
+    install_launchagent
+else
+    install_cron
+fi
+
+# ----------------------------------------------------------------- report ----
 
 cat <<EOF
 
-Scheduled $(basename "$PROJECT"): $TIME, days=$DOW, $ITERS iterations max.
-
-Your wiggum-nightly schedule now:
+Scheduled $(basename "$PROJECT") at $TIME ($DAYS), $ITERS iterations max.
+  via:  $WHERE
+  log:  $LOG
 EOF
-crontab -l 2>/dev/null | grep -F "# wiggum-nightly:" | sed 's/^/  /' || echo "  (none)"
+
+if [[ $OS == Darwin ]]; then
+    cat <<EOF
+
+This is a LaunchAgent rather than a cron job because Claude Code keeps its login
+in the Keychain, and a cron job has no security session to unlock it with. The
+agent runs in your desktop session, so the browser login you already have just
+works -- nothing to paste, no secret on disk. It does need you logged in to the
+desktop; asleep and screen-locked are both fine, fully logged out is not.
+
+If the Mac is asleep at $TIME, launchd runs the job when it next wakes -- but the
+runner checks the clock and stands down if the slot has passed, so a missed run
+stays missed. Widen that with WIGGUM_NIGHTLY_WINDOW (minutes, default 10).
+EOF
+else
+    cat <<EOF
+
+On Linux the credential is a plain file (~/.claude/.credentials.json) that your
+cron job can read directly, so a normal crontab entry is all this needs.
+
+If you set CLAUDE_CONFIG_DIR in your shell rc, add it to the crontab too -- cron
+does not read your rc, and the job would look in the default location.
+EOF
+fi
 
 cat <<EOF
 
-Before the first run:
-  * Put a credential in $DEST -- cron cannot read the Keychain, so an
-    interactive 'claude' login does not carry over. Run 'claude setup-token'
-    and uncomment the CLAUDE_CODE_OAUTH_TOKEN line.
-  * On macOS, add /usr/sbin/cron under System Settings -> Privacy & Security ->
-    Full Disk Access, or the job fires and silently does nothing.
-
-Worth knowing:
-  * cron does not wake a sleeping machine. If it is asleep at $TIME, that run is
-    skipped -- no run, no catch-up, no error.
-  * wiggum commits to the local branch as it goes. Nothing is pushed or deployed.
-
-Try it now:  $DEST $PROJECT $ITERS
-Remove one:  crontab -l | grep -v 'wiggum-nightly:$PROJECT' | crontab -
-Logs:        $LOG, and docs/nightly-<date>_plan.log inside the project.
+Try it now:  $DEST $PROJECT 3
+Remove this: $REMOVE
 EOF
