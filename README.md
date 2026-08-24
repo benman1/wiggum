@@ -14,6 +14,53 @@ docs/api-rate-limit_plan.md              -        finished: complete   9/9 done
 docs/onboarding-ui_plan.md               621      running (blocked)    2/7 done, 5 left
 ```
 
+## Contents
+
+- [Why](#why)
+- [How it works](#how-it-works)
+  - [Init mode](#init-mode)
+  - [Plan mode](#plan-mode)
+  - [Execute mode](#execute-mode)
+  - [Docs mode](#docs-mode)
+  - [Check mode](#check-mode)
+  - [Run mode](#run-mode)
+  - [Background runs & supervision](#background-runs--supervision)
+  - [Chaining workplans](#chaining-workplans)
+  - [Claude Code skill](#claude-code-skill)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [Initializing a project](#initializing-a-project)
+  - [Creating a plan](#creating-a-plan)
+  - [Executing a plan](#executing-a-plan)
+  - [Batch workflows](#batch-workflows)
+  - [Command reference](#command-reference)
+  - [Verbose mode](#verbose-mode)
+- [Configuration](#configuration)
+  - [Config keys](#config-keys)
+  - [Skipping verification or commits](#skipping-verification-or-commits)
+  - [Effort and permission mode](#effort-and-permission-mode)
+  - [Verify vs autofix](#verify-vs-autofix)
+  - [Verification waterfall](#verification-waterfall)
+  - [Smoke tests](#smoke-tests)
+  - [Benchmarks](#benchmarks)
+  - [Example configs](#example-configs)
+  - [Config search order](#config-search-order)
+- [Permissions](#permissions)
+  - [Setting up permissions with init](#setting-up-permissions-with-init)
+  - [Manual permission setup](#manual-permission-setup)
+- [Scheduling with cron](#scheduling-with-cron)
+  - [The three gotchas](#the-three-gotchas)
+  - [Recommended setup: a wrapper script](#recommended-setup-a-wrapper-script)
+  - [Nightly plan-then-execute](#nightly-plan-then-execute)
+  - [Session patterns](#session-patterns)
+  - [macOS: launchd alternative](#macos-launchd-alternative)
+- [Output files](#output-files)
+- [Project structure](#project-structure)
+- [Development](#development)
+- [Tips](#tips)
+- [Long runs](#long-runs)
+
 ## Why
 
 AI coding assistants are powerful in single-turn interactions, but real implementation work is multi-step: read the spec, write code, run the linter, fix type errors, run tests, fix regressions, commit, repeat. Each of those handoffs is a place where momentum stalls.
