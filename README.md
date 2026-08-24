@@ -938,7 +938,9 @@ wiggum/
   install.sh             macOS installer
   completions/           Bash and zsh shell completions
   examples/
-    wiggum-cron.sh       Wrapper template for running `wiggum run` from cron
+    wiggum-cron.sh           Wrapper template for running `wiggum run` from cron
+    wiggum-nightly.sh        Plan a sweep in one project, then execute it
+    wiggum-nightly-setup.sh  Schedule wiggum-nightly.sh per project (cron)
   test/
     wiggum.bats          Bats test suite
     run.sh               Test runner (shellcheck lint + bats)
