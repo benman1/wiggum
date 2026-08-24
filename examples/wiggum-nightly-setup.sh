@@ -11,6 +11,40 @@ SRC="$(cd "$(dirname "$0")" && pwd)/wiggum-nightly.sh"
 DEST="$HOME/bin/wiggum-nightly.sh"
 LOG="$HOME/.wiggum-nightly.log"
 
+usage() {
+    cat <<'USAGE'
+Usage: wiggum-nightly-setup.sh [-h|--help]
+
+Schedule wiggum-nightly.sh for ONE project, interactively. Asks for the project
+directory, start time, days and iteration limit, then installs a crontab entry
+for it and copies the runner to ~/bin if it is not already there.
+
+Run it once per project. Each gets its own entry, so projects can run on
+different days and times; re-running it for a project you have already
+scheduled replaces just that entry and leaves the others alone.
+
+  crontab -l | grep wiggum-nightly           see everything it has scheduled
+  crontab -l | grep -v '<project>' | crontab -   remove one project
+
+Takes no arguments -- it asks. See the "Scheduling with cron" section of the
+README for the cron caveats (a sleeping machine skips the run; macOS wants Full
+Disk Access for /usr/sbin/cron; cron cannot read the Keychain).
+USAGE
+}
+
+case "${1:-}" in
+-h | --help)
+    usage
+    exit 0
+    ;;
+"") ;;
+*)
+    printf 'Error: unknown argument %s\n\n' "$1" >&2
+    usage >&2
+    exit 1
+    ;;
+esac
+
 [[ -t 0 ]] || {
     echo "Run this from a terminal -- it asks questions." >&2
     exit 1

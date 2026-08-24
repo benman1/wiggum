@@ -8,7 +8,35 @@
 
 set -euo pipefail
 
-PROJECT="${1:?usage: wiggum-nightly.sh <project-directory> [max-iterations]}"
+usage() {
+    cat <<'USAGE'
+Usage: wiggum-nightly.sh <project-directory> [max-iterations]
+
+Plan a maintenance sweep in one project, then execute the plan it produced.
+Writes docs/nightly-<date>.md (the brief it plans from) and
+docs/nightly-<date>_plan.md (the plan), then runs it.
+
+  <project-directory>   git repository to work in
+  [max-iterations]      implementation iterations wiggum may use (default 25)
+
+Schedule it with wiggum-nightly-setup.sh, which installs one crontab entry per
+project so each runs on its own days and time. Edit this script to change the
+planning brief or the credential.
+USAGE
+}
+
+case "${1:-}" in
+-h | --help)
+    usage
+    exit 0
+    ;;
+"")
+    usage >&2
+    exit 1
+    ;;
+esac
+
+PROJECT="$1"
 MAX_ITERATIONS="${2:-25}"
 
 # cron starts with a bare PATH and no shell rc, so name everything.
