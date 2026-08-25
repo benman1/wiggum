@@ -59,11 +59,42 @@ roughly the suspend duration. A loop that re-reads the wall clock
 (`while [ "$(date +%s)" -lt "$target" ]; do sleep 30; done`) self-corrects across
 suspend and is the only version that is correct on a laptop.
 
-**Date arithmetic is new to this codebase and is not portable.** There is no
-`date +%s`, `date -d` or `date -j` anywhere in `lib/wiggum.sh` today, so nothing
-here can be copied. BSD `date` (macOS) has `-j -f`, GNU `date` (Linux) has `-d`,
-and neither accepts the other's syntax. Detect once and branch, which is what
-`examples/wiggum-nightly-setup.sh` already does for cron versus LaunchAgent.
+**Do not write a date parser. Choose a syntax that does not need one.** The
+first draft of this plan had a `date_flavour()` probe branching between BSD
+`date -j -f` and GNU `date -d`, because those are the only ways to turn a
+calendar string into an epoch and neither accepts the other's syntax. That whole
+problem comes from one of the three accepted forms. Drop it and the rest is
+arithmetic:
+
+| form | how it resolves | prior art |
+|---|---|---|
+| `+90m`, `+6h`, `+2d` | `now + N × unit` | `sleep` and `at` durations |
+| `01:07` | seconds-to-midnight arithmetic on `%H`, `%M`, `%S`; rolls to tomorrow when the time has passed | `at 01:07` |
+| `@1756180020` | used as-is | GNU `date` and systemd both take `@epoch` |
+
+`date +%s`, `date +%H`, `date +%M` and `date +%S` take no flags and behave
+identically on BSD, GNU and busybox, so there is no branch and no probe. The
+`@epoch` form is the escape hatch for anybody who wants a specific calendar date:
+they produce the epoch with whatever their platform gives them (`date -d`,
+`gdate`, python) and hand it over, which keeps platform-specific date parsing
+outside wiggum entirely.
+
+Prototyped against a fixed clock of 2026-08-25 22:00 before writing this:
+`+90m`→23:30 same day, `+6h`→04:00 next day, `+2d`→22:00 two days on,
+`01:07`→next day, `23:30`→same day, `22:00`→next day (a time equal to now means
+tomorrow), and `25:00`, `1am`, `tomorrow` and the empty string all rejected.
+
+**Read the clock through two stubbable accessors.** `wiggum_now_epoch()` is
+`date +%s` and `wiggum_now_hms()` is `date +%H:%M:%S`. Tests override those two
+functions to inject a clock, which is why the production path needs no
+`date -r`/`-d`/`-j` at all. Overriding a function is already how `test/wiggum.bats`
+stubs `claude` (`test/wiggum.bats:19-21`).
+
+**One accepted inaccuracy: DST.** `HH:MM` resolves to "now plus the number of
+seconds until that clock time", so on the two nights a year when a transition
+falls inside the wait, the run starts an hour early or late. Handling it properly
+requires the calendar parsing this design exists to avoid. Document it in the
+README rather than branching for it.
 
 **A scheduled run needs its own sidecar.** Writing the pidfile at schedule time
 would make `wiggum status` report a run as active while it is only sleeping, and
@@ -71,25 +102,21 @@ would make `wiggum status` report a run as active while it is only sleeping, and
 `.scheduled` file, via the existing `run_sidecar_file "$base" scheduled`, keeps
 the two states distinguishable.
 
-## Phase 1: Parse `<WHEN>` into an epoch, portably
+## Phase 1: Resolve `<WHEN>` with arithmetic, not a parser
 
-- [ ] Add `date_flavour()` to `lib/wiggum.sh`, returning `bsd` or `gnu` by probing once (`date -j -f %s 0 +%s` succeeding means BSD). Cache the result in a global cleared by `wiggum_reset()`, per the state rule in CLAUDE.md section 1.
-  Acceptance: `bats test/wiggum.bats -f date_flavour` passes on this machine, and a test that stubs `date` to fail the BSD probe returns `gnu`.
+- [ ] Add `wiggum_now_epoch()` (`date +%s`) and `wiggum_now_hms()` (`date +%H:%M:%S`) to `lib/wiggum.sh`. Two lines each, no flags, so the same code runs on BSD, GNU and busybox `date`. They exist to be overridden by tests, the way `claude` already is at `test/wiggum.bats:19-21`.
+  Acceptance: `bats test/wiggum.bats -f wiggum_now` passes, asserting each returns the expected shape and that overriding them in a test changes what a caller sees.
   Files: lib/wiggum.sh, test/wiggum.bats
-- [ ] Add `parse_at_time <spec> [now_epoch]` returning epoch seconds on stdout, non-zero on a spec it cannot parse. Accept exactly three forms and reject everything else: `HH:MM` (the next occurrence, today if still ahead, otherwise tomorrow), `+<N>[mhd]` (relative), and `YYYY-MM-DD HH:MM` (absolute). The optional second argument injects "now" so the function is testable without a clock, in the spirit of `wiggum_reset()` and the pure-function rule.
-  Acceptance: `bats test/wiggum.bats -f parse_at_time` passes with a case per form, plus `25:00`, `+5x`, `tomorrow`, an empty string, and `2026-02-30 01:00` all returning non-zero.
-  Files: lib/wiggum.sh, test/wiggum.bats
-  Depends on: previous task
-- [ ] Make `HH:MM` roll to tomorrow correctly across a day boundary, and make a `YYYY-MM-DD HH:MM` in the past a parse success but a scheduling failure, so the two errors can be reported differently ("I cannot read that time" versus "that time has passed").
-  Acceptance: tests injecting `now` at 23:59 assert `00:05` resolves to the next day, and a past absolute timestamp parses to its real epoch rather than erroring.
+- [ ] Add `parse_at_time <spec>` writing an epoch to stdout, non-zero on anything it does not recognise. Accept exactly `+<N>[m|h|d]`, `HH:MM` and `@<epoch>`, using only the two accessors and shell arithmetic. Force base 10 on the hour and minute (`10#`), or `08` and `09` are parsed as invalid octal under `set -e` and the whole run dies on a valid input.
+  Acceptance: `bats test/wiggum.bats -f parse_at_time` passes with the eleven cases prototyped in the design note above, including `08:30` and `09:00` resolving correctly, and `25:00`, `1am`, `tomorrow`, `+5x` and the empty string each returning non-zero with nothing on stdout.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
 
 ### Acceptance Criteria
-**Happy Path** — Given `--at 01:07` at 22:00, When parsed, Then the epoch is 01:07 the following day.
-**Edge Cases** — A time later today versus earlier today. Midnight rollover. `+90m` crossing an hour and `+2d` crossing a month end. Leap-day and month-end absolute dates.
-**Error States** — Unparseable specs return non-zero and write nothing to stdout. A past absolute time parses successfully so the caller can report it as past rather than as malformed.
-**Non-Functional** — `shellcheck -s bash lib/wiggum.sh` passes with zero warnings. No GNU-only or BSD-only `date` invocation runs on the wrong platform.
+**Happy Path** — Given `01:07` at 22:00, When resolved, Then the epoch is 01:07 the following day.
+**Edge Cases** — A time later today versus earlier today. A time exactly equal to now, which means tomorrow. Midnight rollover. `08:30` and `09:00`, which are the octal trap. `+2d` crossing a month end. `@<epoch>` in the past, which resolves rather than erroring so the caller can report it as past.
+**Error States** — Unrecognised specs return non-zero and write nothing to stdout, so a caller substituting the output cannot silently get an empty string.
+**Non-Functional** — `shellcheck -s bash lib/wiggum.sh` passes with zero warnings. No `date` invocation anywhere in the path uses a flag beyond `+FORMAT`, verified by the guard in Phase 5.
 
 ## Phase 2: Wait, then run once
 
@@ -139,11 +166,11 @@ the two states distinguishable.
 
 ## Phase 4: Document it in all four places
 
-- [ ] Add `--at <WHEN>` to the `execute` block of `usage()` (`lib/wiggum.sh:283-320`, beside `-b, --background` at `:296`), naming the three accepted forms and stating that it implies detachment and runs once.
+- [ ] Add `--at <WHEN>` to the `execute` block of `usage()` (`lib/wiggum.sh:283-320`, beside `-b, --background` at `:296`), naming the three accepted forms (`+90m`, `01:07`, `@<epoch>`) and stating that it implies detachment and runs once.
   Acceptance: `wiggum execute --help` shows the flag and the three forms; `wiggum --help` still exits 0.
   Files: lib/wiggum.sh
   Depends on: Phase 3
-- [ ] Add a `### Delayed runs` section to `README.md` next to `### Background runs & supervision` (`README.md:304`). Cover the three time forms, that it runs once and creates nothing recurring, how `status` and `kill` behave, and the sleep interaction: on a laptop that sleeps, the wait resumes on wake and the run starts late, and wiggum will not keep the machine awake for you because that is your call. Point at `examples/wiggum-nightly-setup.sh` for genuinely recurring schedules.
+- [ ] Add a `### Delayed runs` section to `README.md` next to `### Background runs & supervision` (`README.md:304`). Cover the three time forms with an example of each, why there is no calendar-date form and that `@<epoch>` is the escape hatch, the DST caveat on `HH:MM`, that it runs once and creates nothing recurring, how `status` and `kill` behave, and the sleep interaction: on a laptop that sleeps, the wait resumes on wake and the run starts late, and wiggum will not keep the machine awake for you because that is your call. Point at `examples/wiggum-nightly-setup.sh` for genuinely recurring schedules.
   Acceptance: the section exists, names the three forms, states the run-once guarantee, and says wiggum does not prevent sleep.
   Files: README.md
   Depends on: previous task
@@ -170,6 +197,10 @@ the two states distinguishable.
   Depends on: Phase 4
 - [ ] Add a bats test asserting nothing in the `--at` code path invokes `caffeinate`, `pmset`, `crontab` or `launchctl`. The first two would take a decision about the user's hardware that is not wiggum's to take; the second two would make a one-shot flag leave recurring state behind. Both are stated in Constraints and neither is otherwise enforced.
   Acceptance: a source-reading test over `lib/wiggum.sh` passes now and fails when any of those four commands is added.
+  Files: test/wiggum.bats
+  Depends on: previous task
+- [ ] Add a bats test asserting no `date` call in the `--at` code path uses a flag other than `+FORMAT`. `date -d` is GNU-only, `date -j` and `date -r <epoch>` are BSD-only, and a well-meaning later edit reaching for one of them would break the other platform silently, since this repo's CI runs on one of them at a time. This is the invariant the whole design rests on.
+  Acceptance: passes on the current tree; fails when `date -d` or `date -j` is added to `parse_at_time` or the waiter.
   Files: test/wiggum.bats
   Depends on: previous task
 - [ ] Run the full verify waterfall and fix anything this plan broke.
@@ -226,4 +257,6 @@ when it fails; kill it in the test body rather than relying on `teardown`.
 - `completions/wiggum.bash:76` — the `execute` option list.
 - `test/wiggum.bats:19-21` — the global `claude` stub and per-test temp dir.
 - `.wiggumrc` — verify is `shellcheck -s bash wiggum.sh lib/wiggum.sh install.sh` then `bats test/wiggum.bats`.
+- `test/wiggum.bats:19-21` — overriding a function to stub it, the pattern the two clock accessors are designed for.
+- POSIX `date`: `%H`, `%M`, `%S` are specified; `%s` is not in POSIX but is present in BSD, GNU and busybox. This is the only portability assumption the design makes.
 - `CLAUDE.md` sections 1 and 2 — pure functions in `lib/wiggum.sh`, state cleared by `wiggum_reset()`, `set -euo pipefail`, zero shellcheck warnings, quote every expansion.
