@@ -17,10 +17,27 @@ export EXIT_VALIDATION_FAILED=3
 export EXIT_CLAUDE_FAILED=4
 export EXIT_PLAN_FAILED=5
 
+# ── Own location ────────────────────────────────────────────────────────────
+
+# Where this library and the CLI that fronts it live. install.sh lays them out
+# as <root>/wiggum.sh and <root>/lib/wiggum.sh, and the repo has the same
+# shape, so one hop up from the library directory finds the entry point.
+#
+# The delayed waiter needs both: it is a fresh process in a session of its own,
+# so it inherits no shell functions and has to re-source the library and
+# re-invoke the CLI rather than calling either in place.
+WIGGUM_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WIGGUM_LIB_PATH="$WIGGUM_LIB_DIR/$(basename "${BASH_SOURCE[0]}")"
+WIGGUM_CLI="${WIGGUM_CLI:-$(cd "$WIGGUM_LIB_DIR/.." && pwd)/wiggum.sh}"
+
 # ── State (reset by wiggum_reset for testing) ───────────────────────────────
 
 wiggum_reset() {
     MODE=""
+    # The argv this process was invoked with, captured by parse_args. A
+    # delayed run replays it in a detached process, so it has to outlive the
+    # parse that produced it.
+    WIGGUM_ARGV=()
     FILES=()
     PLAN_FILE=""
     SUMMARY_FILE=""
@@ -720,6 +737,12 @@ EOF
 }
 
 parse_args() {
+    # Snapshot the invocation before it is consumed. `--at` replays this in a
+    # detached process later; reconstructing the command from the globals it
+    # set would silently stop carrying every option added after this was
+    # written.
+    WIGGUM_ARGV=("$@")
+
     if [[ $# -eq 0 ]]; then
         usage
         return "$EXIT_BAD_ARGS"
@@ -3185,6 +3208,131 @@ wait_until_epoch() {
     done
 }
 
+# How long to wait for a detached waiter to claim its schedule, in seconds.
+# The waiter writes the sidecar as its first statement, before it can block on
+# anything, so this is a guard against a launch that never happened rather than
+# an allowance for a slow one.
+WIGGUM_AT_CLAIM_TIMEOUT="${WIGGUM_AT_CLAIM_TIMEOUT:-10}"
+
+# Rebuild the command line a delayed run should replay: exactly what the user
+# typed, minus the two flags that describe the hand-off rather than the run.
+#
+# Replaying argv is what keeps `--at` faithful. The alternative -- snapshotting
+# the globals parse_args set and restoring them in the waiter -- means naming
+# every execute option, and the next option added is one nobody remembers to
+# add to the list, so `--at` quietly stops honouring it. Here the run at 01:07
+# is the command that was typed, re-parsed against the config as it stands then.
+#
+# `--at` goes because the waiter would otherwise schedule another waiter.
+# `--background` goes because the waiter runs the CLI in the foreground of its
+# own session: a daemonizing child would let that session exit immediately and
+# take the run down with it.
+#
+# Emitted NUL-separated so an argument containing whitespace survives the trip.
+# Falls back to `execute <files>` when nothing was captured, which is the case
+# when the library is driven directly rather than through the CLI.
+at_replay_argv() {
+    local arg skip=false emitted=false
+    for arg in ${WIGGUM_ARGV[@]+"${WIGGUM_ARGV[@]}"}; do
+        if [[ "$skip" == true ]]; then
+            skip=false
+            continue
+        fi
+        case "$arg" in
+            --at)
+                skip=true
+                ;;
+            -b|--background)
+                ;;
+            *)
+                printf '%s\0' "$arg"
+                emitted=true
+                ;;
+        esac
+    done
+
+    if [[ "$emitted" != true ]]; then
+        printf '%s\0' execute ${FILES[@]+"${FILES[@]}"}
+    fi
+}
+
+# The body of the detached waiter, run by a fresh bash under `screen` or
+# `nohup`.
+#
+# It re-sources the library for `wait_until_epoch` and re-invokes the CLI for
+# the run itself, because a detached process inherits no shell functions.
+# Everything it varies on arrives through the environment; the command line
+# carries only the argv to replay, so no quoting has to survive being flattened
+# into a string.
+at_waiter_script() {
+    cat <<'WAITER'
+set -uo pipefail
+cd "$WIGGUM_AT_CWD" || exit 1
+
+# Claim the schedule first, and with this process's own pid. `screen -dmS`
+# forks and tells the caller nothing about what it started, so this sidecar is
+# how the launcher learns which single process `status` should report and
+# `kill` should stop -- the alternative being a pattern match over the process
+# table, which is the liveness guess this repo avoids everywhere else. Written
+# to a temp file and moved into place so a concurrent reader never sees half a
+# sidecar.
+#
+# A failed claim is a hard exit, not a warning. The launcher reports an
+# unclaimed schedule as nothing having been scheduled, and a waiter that
+# outlived that message would start a run hours later that the user was told
+# would never happen.
+printf 'target=%s\ntarget_human=%s\nspec=%s\npid=%s\n' \
+    "$WIGGUM_AT_TARGET" "$WIGGUM_AT_HUMAN" "$WIGGUM_AT_SPEC" "$$" \
+    > "$WIGGUM_AT_SCHEDULED.$$" \
+    && mv "$WIGGUM_AT_SCHEDULED.$$" "$WIGGUM_AT_SCHEDULED" \
+    || { rm -f "$WIGGUM_AT_SCHEDULED.$$"; exit 1; }
+
+source "$WIGGUM_AT_LIB"
+wait_until_epoch "$WIGGUM_AT_TARGET"
+
+# Swap scheduled for running. The sidecar goes before the pidfile arrives, so
+# no reader is ever left holding both and having to guess which one is true.
+rm -f "$WIGGUM_AT_SCHEDULED"
+printf '%s %s ---\n' "$WIGGUM_RUN_SEPARATOR_PREFIX" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$WIGGUM_AT_OUT"
+"$WIGGUM_AT_CLI" "$@" >> "$WIGGUM_AT_OUT" 2>&1 &
+wiggum_run_pid=$!
+echo "$wiggum_run_pid" > "$WIGGUM_AT_PIDFILE"
+# Stay alive for the run rather than exiting into it, so the run has a parent
+# to be torn down with instead of being orphaned mid-flight.
+wait "$wiggum_run_pid"
+WAITER
+}
+
+# Start the waiter somewhere it can outlive the shell that scheduled it.
+#
+# `screen -dmS` first, because it puts the waiter in a session of its own. That
+# is the property that matters: a backgrounded subshell stays in the calling
+# shell's process group and dies with the terminal, and the wait here is
+# measured in hours. `nohup` is the fallback when screen is absent or refuses
+# to start -- it buys immunity to SIGHUP and nothing more, which is weaker, but
+# macOS has no `setsid` so it is what is left.
+#
+# No wake lock on either path: nothing here calls `caffeinate` or `pmset`.
+# Whether the machine is awake at the target time is the user's decision about
+# their own hardware, and taking it silently from a shell is worse than a run
+# that starts late.
+start_at_waiter() {
+    local session="$1"
+    shift
+
+    if command -v screen >/dev/null 2>&1; then
+        if screen -dmS "$session" "$@"; then
+            return 0
+        fi
+        echo "Warning: screen could not start the waiter; falling back to nohup." >&2
+    else
+        echo "Note: screen is not installed; detaching the waiter with nohup." >&2
+    fi
+
+    nohup "$@" </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+}
+
 # Read one `key=value` field out of a run's `.scheduled` sidecar. Echoes
 # nothing when the file or the field is missing, so a truncated sidecar reads
 # as absent rather than crashing its caller.
@@ -3253,36 +3401,76 @@ launch_execute_delayed() {
     local human
     human="$(describe_at_target "$target")"
 
-    # Clear both flags so the waiter runs the real loop instead of recursing
-    # back into a launcher: BACKGROUND for --background, AT_TIME for this one.
+    # Work out what the waiter will run before clearing anything, so the
+    # replay describes the command as it was typed.
+    local arg
+    local -a replay=()
+    while IFS= read -r -d '' arg; do
+        replay+=("$arg")
+    done < <(at_replay_argv)
+
+    # Clear both flags for anything that keeps going in this process: BACKGROUND
+    # for --background, AT_TIME for this one. Neither reaches the waiter -- it
+    # is a separate process replaying a command line both flags were stripped
+    # from -- but a caller that carries on in-process must not re-enter a
+    # launcher on the way out.
     BACKGROUND=false
     AT_TIME=""
 
-    # The waiter writes the pidfile and the run separator itself, at the moment
-    # the run starts rather than now -- the separator marks where this run's
-    # output begins, and dating it at schedule time would put it hours early.
-    # It stays alive for the run (`wait`) so the run has a parent to be torn
-    # down with rather than being orphaned mid-flight.
-    #
-    # Its own stdio goes to /dev/null: a waiter holding the caller's stdout
-    # open for six hours hangs anything reading that stream -- a pipe, a
-    # command substitution, `bats run` -- long after the launcher returned.
-    (
-        wait_until_epoch "$target"
-        rm -f "$schedfile"
-        printf '%s %s ---\n' "$WIGGUM_RUN_SEPARATOR_PREFIX" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$outfile"
-        ( run_execute ) >>"$outfile" 2>&1 &
-        echo $! > "$pidfile"
-        wait
-    ) </dev/null >/dev/null 2>&1 &
-    local waiter=$!
+    # The waiter writes the sidecar, the pidfile and the run separator itself.
+    # The separator marks where this run's output begins, so dating it now
+    # would put it hours early; the sidecar is written there because that is
+    # the only place the waiter's own pid is known.
+    local session
+    session="wiggum-$(slugify "$base")"
 
-    {
-        echo "target=$target"
-        echo "target_human=$human"
-        echo "pid=$waiter"
-        echo "spec=$spec"
-    } > "$schedfile"
+    local -a waiter_env=(
+        "WIGGUM_AT_CWD=$PWD"
+        "WIGGUM_AT_LIB=$WIGGUM_LIB_PATH"
+        "WIGGUM_AT_CLI=$WIGGUM_CLI"
+        "WIGGUM_AT_TARGET=$target"
+        "WIGGUM_AT_HUMAN=$human"
+        "WIGGUM_AT_SPEC=$spec"
+        "WIGGUM_AT_SCHEDULED=$schedfile"
+        "WIGGUM_AT_OUT=$outfile"
+        "WIGGUM_AT_PIDFILE=$pidfile"
+        "WIGGUM_AT_POLL_INTERVAL=$WIGGUM_AT_POLL_INTERVAL"
+    )
+
+    # Drop any stale sidecar first. Every refusal is behind us, so whatever is
+    # here names a waiter that is already dead -- and leaving it would make the
+    # claim below read the dead pid back as if it were the new waiter's.
+    rm -f "$schedfile"
+
+    if ! start_at_waiter "$session" \
+            env "${waiter_env[@]}" \
+            bash -c "$(at_waiter_script)" "$session" ${replay[@]+"${replay[@]}"}; then
+        echo "Error: could not detach a waiter for $base; nothing was scheduled." >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+
+    # Learn the waiter's pid from the sidecar it claims the schedule with.
+    # `screen -dmS` reports nothing about what it forked, so there is no `$!`
+    # worth capturing on that path, and guessing from the process table is the
+    # pattern match this repo refuses everywhere else.
+    local waiter="" tries=$((WIGGUM_AT_CLAIM_TIMEOUT * 10))
+    while [ "$tries" -gt 0 ]; do
+        waiter="$(read_schedule_field "$schedfile" pid)"
+        if [[ -n "$waiter" ]]; then
+            break
+        fi
+        sleep 0.1
+        tries=$((tries - 1))
+    done
+
+    if [[ -z "$waiter" ]]; then
+        # Nothing to clean up. The waiter claims the schedule before it can
+        # block on anything, so an unclaimed one never started rather than
+        # running silently somewhere.
+        echo "Error: the waiter for $base did not start within ${WIGGUM_AT_CLAIM_TIMEOUT}s;" \
+             "nothing was scheduled." >&2
+        return "$EXIT_BAD_ARGS"
+    fi
 
     echo "Scheduled wiggum execute for $human (in $(format_duration $((target - now))))." >&2
     echo "  plan:    $base" >&2

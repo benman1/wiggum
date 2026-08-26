@@ -128,7 +128,7 @@ the two states distinguishable.
   Acceptance: a bats test with a stubbed clock asserts the sidecar is created with the right epoch, that a past time exits `EXIT_BAD_ARGS` and writes no sidecar, and that a live pidfile blocks scheduling.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
-- [ ] Detach the waiter. Prefer `screen -dmS wiggum-<slug>`; fall back to `nohup` with a subshell when `screen` is absent. Do not use `setsid`, which macOS does not have (the skill text embedded at `lib/wiggum.sh:~1660` already records this). The waiter polls the wall clock in a loop rather than sleeping the whole interval, then clears the `.scheduled` file and calls `run_execute` with `BACKGROUND=false`, writing the pidfile and the run separator exactly as the background launcher does.
+- [x] Detach the waiter. Prefer `screen -dmS wiggum-<slug>`; fall back to `nohup` with a subshell when `screen` is absent. Do not use `setsid`, which macOS does not have (the skill text embedded at `lib/wiggum.sh:~1660` already records this). The waiter polls the wall clock in a loop rather than sleeping the whole interval, then clears the `.scheduled` file and calls `run_execute` with `BACKGROUND=false`, writing the pidfile and the run separator exactly as the background launcher does.
   Acceptance: an integration test schedules a run two seconds out with `claude` stubbed, waits, and asserts the `.scheduled` file is gone, the pidfile appeared, and the `.out` file gained one run separator.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
