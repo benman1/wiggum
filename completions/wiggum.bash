@@ -71,9 +71,13 @@ _wiggum() {
                     _filedir md
                     return
                     ;;
+                --at)
+                    # A time is free text; there is nothing to complete.
+                    return
+                    ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--max-iterations --summary-file --update-docs --background --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--max-iterations --summary-file --update-docs --background --at --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi

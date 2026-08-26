@@ -5530,3 +5530,19 @@ EOF
     [ ! -f docs/plan.pid ] || return 1
     [ ! -f docs/plan.out ] || return 1
 }
+
+# ── Shell completions ────────────────────────────────────────────────────────
+
+@test "completions: execute offers --at in both bash and zsh" {
+    local root block
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    [ -f "$root/completions/wiggum.bash" ]
+    [ -f "$root/completions/wiggum.zsh" ]
+    # Scoped to the execute block in each file: a --at mentioned anywhere else
+    # would not complete on the command that actually takes it.
+    for shell in bash zsh; do
+        block="$(awk '/^        execute\)/,/^            ;;$/' "$root/completions/wiggum.$shell")"
+        [ -n "$block" ] || return 1
+        [[ "$block" == *"--at"* ]] || return 1
+    done
+}
