@@ -5136,3 +5136,72 @@ EOF
     [ ! -f docs/plan.out ] || return 1
     [ "$strays" -eq 0 ]
 }
+
+# ── run_execute: --at and --background compose ───────────────────────────────
+
+@test "run_execute: --at hands off to the delayed launcher instead of running" {
+    freeze_clock_now "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    AT_TIME="+90m"
+    run run_execute
+    kill_waiter "$(sidecar_field pid)"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Scheduled wiggum execute"* ]] || return 1
+    [ -f docs/plan.scheduled ] || return 1
+    [[ "$output" != *"WIGGUM EXECUTE MODE"* ]] || return 1
+}
+
+@test "run_execute: --background alongside --at is accepted and ignored" {
+    # --at always detaches, so --background is redundant rather than an error.
+    # One hand-off, one run -- and one line of output so nobody is left
+    # wondering which of the two flags won.
+    freeze_clock_now "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    AT_TIME="+90m"
+    BACKGROUND=true
+    run run_execute
+    local waiter
+    waiter="$(sidecar_field pid)"
+    kill_waiter "$waiter"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--background"* ]] || return 1
+    [[ "$output" == *"ignored"* ]] || return 1
+    [ "$(find docs -name '*.scheduled' | wc -l | tr -d '[:space:]')" -eq 1 ]
+    [ -n "$waiter" ] || return 1
+    # launch_execute_background writes the pidfile and the run separator
+    # synchronously before it forks, so the absence of both is what proves no
+    # second detached process was started alongside the waiter.
+    [ ! -f docs/plan.pid ] || return 1
+    [ ! -f docs/plan.out ] || return 1
+}
+
+@test "run_execute: a refused --at does not fall through to a background run" {
+    # The dangerous shape of "accepted and ignored": if --at returned instead of
+    # handing off, --background would pick the run up and start it now -- the
+    # opposite of what asking for a later time meant.
+    freeze_clock_now "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    AT_TIME="@$((WIGGUM_TEST_NOW - 3600))"
+    BACKGROUND=true
+    run run_execute
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"in the past"* ]] || return 1
+    [ ! -f docs/plan.scheduled ] || return 1
+    [ ! -f docs/plan.pid ] || return 1
+    [ ! -f docs/plan.out ] || return 1
+}

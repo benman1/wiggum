@@ -2833,6 +2833,23 @@ run_execute() {
     # the person launching the run sees it, not just the .out log.
     env_reminder
 
+    # A delayed run is handed off first, because --at already detaches: it
+    # takes precedence over --background rather than competing with it, so
+    # passing both is redundant rather than an error. Say which one took
+    # effect -- a flag silently doing nothing is worse than one that is
+    # refused, since nobody goes looking for the run that never started.
+    #
+    # Returning here rather than falling through is the point: --background
+    # would otherwise pick the run up and start it now, which is the opposite
+    # of what asking for a later time meant.
+    if [[ -n "$AT_TIME" ]]; then
+        if [[ "$BACKGROUND" == true ]]; then
+            echo "Note: --at already detaches; --background is redundant and was ignored." >&2
+        fi
+        launch_execute_delayed
+        return $?
+    fi
+
     # In background mode, hand off to the launcher, which re-enters this
     # function (with BACKGROUND cleared) inside a detached subshell.
     if [[ "$BACKGROUND" == true ]]; then

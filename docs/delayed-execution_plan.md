@@ -132,7 +132,7 @@ the two states distinguishable.
   Acceptance: an integration test schedules a run two seconds out with `claude` stubbed, waits, and asserts the `.scheduled` file is gone, the pidfile appeared, and the `.out` file gained one run separator.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
-- [ ] Make `--at` and `--background` compose without surprise: `--at` always detaches, and `--background` alongside it is accepted and ignored rather than rejected. Say so in one line of output so nobody wonders which won.
+- [x] Make `--at` and `--background` compose without surprise: `--at` always detaches, and `--background` alongside it is accepted and ignored rather than rejected. Say so in one line of output so nobody wonders which won.
   Acceptance: a test passing both asserts exit 0, one `.scheduled` sidecar, and no second detached process.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
