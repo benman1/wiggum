@@ -149,7 +149,7 @@ the two states distinguishable.
   Acceptance: a bats test writes a `.scheduled` sidecar and asserts `status` prints `scheduled` and the target time, and that with no sidecar the existing states are unchanged.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: Phase 2
-- [ ] Teach `run_kill` to cancel a scheduled run: kill the waiter by the pid in the sidecar, remove the sidecar, and say it cancelled a schedule rather than stopped a run. Killing only that pid, never a pattern match, per the existing `process_alive` discipline (`lib/wiggum.sh:2793`).
+- [x] Teach `run_kill` to cancel a scheduled run: kill the waiter by the pid in the sidecar, remove the sidecar, and say it cancelled a schedule rather than stopped a run. Killing only that pid, never a pattern match, per the existing `process_alive` discipline (`lib/wiggum.sh:2793`).
   Acceptance: a test schedules a run far in the future, kills it, and asserts the waiter is gone, the sidecar is gone, no pidfile was created, and the message says cancelled.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
