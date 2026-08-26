@@ -166,7 +166,7 @@ the two states distinguishable.
 
 ## Phase 4: Document it in all four places
 
-- [ ] Add `--at <WHEN>` to the `execute` block of `usage()` (`lib/wiggum.sh:283-320`, beside `-b, --background` at `:296`), naming the three accepted forms (`+90m`, `01:07`, `@<epoch>`) and stating that it implies detachment and runs once.
+- [x] Add `--at <WHEN>` to the `execute` block of `usage()` (`lib/wiggum.sh:283-320`, beside `-b, --background` at `:296`), naming the three accepted forms (`+90m`, `01:07`, `@<epoch>`) and stating that it implies detachment and runs once.
   Acceptance: `wiggum execute --help` shows the flag and the three forms; `wiggum --help` still exits 0.
   Files: lib/wiggum.sh
   Depends on: Phase 3

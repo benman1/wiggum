@@ -487,6 +487,9 @@ Options:
   --update-docs <files>         Comma-separated doc files to update after execution
   -b, --background              Run detached; write a pidfile and capture output
                                 so 'wiggum status/watch/kill <plan>' can supervise it
+  --at <WHEN>                   Wait until WHEN, then run once, detached; accepts
+                                +90m (relative), 01:07 (the next such clock time)
+                                or @1756180020 (epoch). Implies --background.
   --no-verify                   Skip wiggum's verification waterfall (Claude may
                                 still run tests during implementation)
   --no-commit                   Skip every wiggum-issued git commit
@@ -511,6 +514,7 @@ Examples:
   wiggum execute docs/plan.md
   wiggum execute docs/plan.md --max-iterations 5 --update-docs README.md
   wiggum execute docs/plan.md --background    # then: wiggum watch docs/plan.md
+  wiggum execute docs/plan.md --at 01:07      # run once tonight at 01:07
   wiggum plan issue.md | wiggum execute
   echo "Add dark mode" | wiggum plan | wiggum execute
 EOF
