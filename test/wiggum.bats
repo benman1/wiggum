@@ -4383,3 +4383,47 @@ EOF
     [[ "$output" == *"Status: aborted"* ]] || return 1
     [ "$(read_run_status run.out)" = "aborted (exit 3)" ]
 }
+
+# ── wiggum_now_epoch / wiggum_now_hms ────────────────────────────────────────
+
+@test "wiggum_now_epoch: returns a bare epoch in seconds" {
+    local now
+    now="$(wiggum_now_epoch)"
+    [[ "$now" =~ ^[0-9]+$ ]] || return 1
+    # Bracketed by 2020 and 2100, so a date string, a stray label or an empty
+    # result cannot pass as an epoch.
+    [ "$now" -gt 1577836800 ]
+    [ "$now" -lt 4102444800 ]
+}
+
+@test "wiggum_now_hms: returns HH:MM:SS on a zero-padded 24-hour clock" {
+    local hms
+    hms="$(wiggum_now_hms)"
+    [[ "$hms" =~ ^[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$ ]] || return 1
+    # Zero-padded fields are what lets the caller do 10# arithmetic on them.
+    [ "$((10#${hms%%:*}))" -le 23 ]
+    [ "$((10#$(echo "$hms" | cut -d: -f2)))" -le 59 ]
+}
+
+@test "wiggum_now: two reads of the epoch never go backwards" {
+    local first second
+    first="$(wiggum_now_epoch)"
+    second="$(wiggum_now_epoch)"
+    [ "$second" -ge "$first" ]
+}
+
+@test "wiggum_now: overriding the accessors injects a clock into a caller" {
+    # The accessors exist to be stubbed the way claude is stubbed in setup().
+    # A caller reading the clock through them sees the injected time.
+    #
+    # Assert the library defines both before overriding them: without this the
+    # test passes vacuously when they do not exist, since a caller that fails
+    # with 127 also does not print the injected time.
+    declare -F wiggum_now_epoch >/dev/null
+    declare -F wiggum_now_hms >/dev/null
+    clock_reader() { echo "$(wiggum_now_epoch) $(wiggum_now_hms)"; }
+    [ "$(clock_reader)" != "1756180020 22:00:00" ]
+    wiggum_now_epoch() { echo 1756180020; }
+    wiggum_now_hms() { echo "22:00:00"; }
+    [ "$(clock_reader)" = "1756180020 22:00:00" ]
+}

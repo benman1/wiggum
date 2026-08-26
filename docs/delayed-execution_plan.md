@@ -1,6 +1,6 @@
 # Delayed execution: `wiggum execute --at <WHEN>`
 
-Status: not started
+Status: in progress
 Slug: delayed-execution
 Target files:
 - lib/wiggum.sh
@@ -104,7 +104,7 @@ the two states distinguishable.
 
 ## Phase 1: Resolve `<WHEN>` with arithmetic, not a parser
 
-- [ ] Add `wiggum_now_epoch()` (`date +%s`) and `wiggum_now_hms()` (`date +%H:%M:%S`) to `lib/wiggum.sh`. Two lines each, no flags, so the same code runs on BSD, GNU and busybox `date`. They exist to be overridden by tests, the way `claude` already is at `test/wiggum.bats:19-21`.
+- [x] Add `wiggum_now_epoch()` (`date +%s`) and `wiggum_now_hms()` (`date +%H:%M:%S`) to `lib/wiggum.sh`. Two lines each, no flags, so the same code runs on BSD, GNU and busybox `date`. They exist to be overridden by tests, the way `claude` already is at `test/wiggum.bats:19-21`.
   Acceptance: `bats test/wiggum.bats -f wiggum_now` passes, asserting each returns the expected shape and that overriding them in a test changes what a caller sees.
   Files: lib/wiggum.sh, test/wiggum.bats
 - [ ] Add `parse_at_time <spec>` writing an epoch to stdout, non-zero on anything it does not recognise. Accept exactly `+<N>[m|h|d]`, `HH:MM` and `@<epoch>`, using only the two accessors and shell arithmetic. Force base 10 on the hour and minute (`10#`), or `08` and `09` are parsed as invalid octal under `set -e` and the whole run dies on a valid input.
