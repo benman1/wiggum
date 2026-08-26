@@ -145,7 +145,7 @@ the two states distinguishable.
 
 ## Phase 3: `status` and `kill` know about a scheduled run
 
-- [ ] Teach `run_status` to read the `.scheduled` sidecar and report `State: scheduled for <time> (in <duration>)` when a run is waiting, keeping the existing task counts alongside it. A scheduled run must never read as `running`, because the distinction is what tells somebody whether to expect output.
+- [x] Teach `run_status` to read the `.scheduled` sidecar and report `State: scheduled for <time> (in <duration>)` when a run is waiting, keeping the existing task counts alongside it. A scheduled run must never read as `running`, because the distinction is what tells somebody whether to expect output.
   Acceptance: a bats test writes a `.scheduled` sidecar and asserts `status` prints `scheduled` and the target time, and that with no sidecar the existing states are unchanged.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: Phase 2

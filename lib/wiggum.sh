@@ -3498,14 +3498,40 @@ launch_execute_delayed() {
     echo "Runs once. Nothing recurring was created; wiggum will not keep this machine awake." >&2
 }
 
-# Print task progress and run state for a plan. Reads the pid/out sidecars to
-# distinguish: not started, running, running-but-blocked, or finished (with the
-# recorded stop reason). Read-only -- never starts or stops anything.
+# Describe a `.scheduled` sidecar as a single state phrase for `status`.
+#
+# The wording is recomputed from the target epoch rather than read back from
+# the `target_human` the launcher stored, because that string was rendered
+# relative to schedule time: a run scheduled last night for "01:00:00
+# tomorrow" is not tomorrow any more when somebody reads it this morning. The
+# epoch is the fact; the phrasing is a view of it.
+#
+# A sidecar whose target will not parse is reported as unreadable rather than
+# guessed at or allowed to abort the caller -- `status` is the command you run
+# when something is already confusing, so it must survive a truncated file.
+describe_schedule_state() {
+    local schedfile="$1" target
+    target="$(read_schedule_field "$schedfile" target)"
+
+    local human
+    if [[ -z "$target" ]] || ! human="$(describe_at_target "$target")"; then
+        echo "scheduled (unreadable schedule file: $schedfile)"
+        return 0
+    fi
+
+    echo "scheduled for $human (in $(format_duration $((target - $(wiggum_now_epoch)))))"
+}
+
+# Print task progress and run state for a plan. Reads the pid/scheduled/out
+# sidecars to distinguish: not started, scheduled, running, running-but-blocked,
+# or finished (with the recorded stop reason). Read-only -- never starts or
+# stops anything.
 run_status() {
     local base="${FILES[0]}"
-    local pidfile outfile total remaining dropped done_count
+    local pidfile outfile schedfile total remaining dropped done_count
     pidfile="$(run_sidecar_file "$base" pid)"
     outfile="$(run_sidecar_file "$base" out)"
+    schedfile="$(run_sidecar_file "$base" scheduled)"
 
     total="$(count_total_tasks "$base")"
     remaining="$(count_unchecked "$base")"
@@ -3515,24 +3541,30 @@ run_status() {
     echo "Plan: $base"
     format_progress "$total" "$done_count" "$remaining" "$dropped"
 
-    local state="not started"
+    local state="not started" pid=""
     if [[ -f "$pidfile" ]]; then
-        local pid
         pid="$(tr -d '[:space:]' < "$pidfile")"
-        if process_alive "$pid"; then
-            if detect_blocked "$outfile"; then
-                state="running but appears blocked (pid $pid)"
-            else
-                state="running (pid $pid)"
-            fi
+    fi
+
+    # A live pidfile outranks a schedule: both present means the waiter fired
+    # between the two reads, and the pidfile is the newer fact. A dead one does
+    # not, because scheduling is allowed over a finished run's pidfile and the
+    # leftover must not shadow the schedule that replaced it.
+    if process_alive "$pid"; then
+        if detect_blocked "$outfile"; then
+            state="running but appears blocked (pid $pid)"
         else
-            local final
-            final="$(read_run_status "$outfile")"
-            if [[ -n "$final" ]]; then
-                state="finished: $final"
-            else
-                state="not running (no status recorded)"
-            fi
+            state="running (pid $pid)"
+        fi
+    elif [[ -f "$schedfile" ]]; then
+        state="$(describe_schedule_state "$schedfile")"
+    elif [[ -f "$pidfile" ]]; then
+        local final
+        final="$(read_run_status "$outfile")"
+        if [[ -n "$final" ]]; then
+            state="finished: $final"
+        else
+            state="not running (no status recorded)"
         fi
     elif [[ -f "$outfile" ]]; then
         local final
