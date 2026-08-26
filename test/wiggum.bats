@@ -85,6 +85,15 @@ make_file() {
     [[ "$output" == *"Phases"* ]] || return 1
 }
 
+@test "parse_args: help execute documents --at and its three time forms" {
+    run parse_args help execute
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--at <WHEN>"* ]] || return 1
+    [[ "$output" == *"+90m"* ]] || return 1
+    [[ "$output" == *"01:07"* ]] || return 1
+    [[ "$output" == *"@1756180020"* ]] || return 1
+}
+
 @test "parse_args: help status/watch/kill/chain show their details" {
     run parse_args help status
     [ "$status" -eq 0 ]
