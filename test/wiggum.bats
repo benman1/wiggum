@@ -4533,6 +4533,17 @@ freeze_clock() {
 # The design note's prototype clock: 2026-08-25 22:00:00.
 PROTO_EPOCH=1756180020
 
+# Freeze the injected clock at the *real* epoch, wearing an arbitrary
+# wall-clock face. Anything that starts a waiter needs this rather than
+# PROTO_EPOCH: the waiter is a separate process reading the real clock, so a
+# target resolved from a fixed past epoch is already due the moment it starts.
+# The HH:MM:SS stays fixed because describe_at_target builds its summary from
+# that, not from the epoch. The chosen epoch lands in WIGGUM_TEST_NOW.
+freeze_clock_now() {
+    WIGGUM_TEST_NOW="$(date +%s)"
+    freeze_clock "$WIGGUM_TEST_NOW" "${1:-22:00:00}"
+}
+
 @test "parse_at_time: +90m resolves to ninety minutes from now" {
     freeze_clock "$PROTO_EPOCH" "22:00:00"
     run parse_at_time "+90m"
@@ -4788,20 +4799,20 @@ kill_waiter() {
 }
 
 @test "launch_execute_delayed: writes a .scheduled sidecar with the resolved epoch" {
-    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    freeze_clock_now "22:00:00"
     schedule_far_future "+90m"
     local waiter
     waiter="$(sidecar_field pid)"
     kill_waiter "$waiter"
     [ -f docs/plan.scheduled ]
-    [ "$(sidecar_field target)" = "$((PROTO_EPOCH + 5400))" ]
+    [ "$(sidecar_field target)" = "$((WIGGUM_TEST_NOW + 5400))" ]
     [ "$(sidecar_field target_human)" = "23:30:00 today" ]
     [ "$(sidecar_field spec)" = "+90m" ]
     [ -n "$waiter" ]
 }
 
 @test "launch_execute_delayed: records a live waiter pid" {
-    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    freeze_clock_now "22:00:00"
     schedule_far_future "+6h"
     local waiter
     waiter="$(sidecar_field pid)"
@@ -4814,7 +4825,7 @@ kill_waiter() {
 @test "launch_execute_delayed: writes no pidfile at schedule time" {
     # A scheduled run must never read as running -- the distinction is what
     # tells somebody whether to expect output.
-    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    freeze_clock_now "22:00:00"
     schedule_far_future "+90m"
     local waiter
     waiter="$(sidecar_field pid)"
@@ -4823,7 +4834,7 @@ kill_waiter() {
 }
 
 @test "launch_execute_delayed: reports the target and the managing commands" {
-    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    freeze_clock_now "22:00:00"
     mkdir -p docs
     cat > docs/plan.md <<'EOF'
 - [ ] one
@@ -4902,7 +4913,7 @@ EOF
 }
 
 @test "launch_execute_delayed: refuses a second schedule over a live waiter" {
-    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    freeze_clock_now "22:00:00"
     schedule_far_future "+90m"
     local waiter
     waiter="$(sidecar_field pid)"
@@ -4912,13 +4923,13 @@ EOF
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"already scheduled"* ]] || return 1
     # The original schedule survives the refusal.
-    [ "$(sidecar_field target)" = "$((PROTO_EPOCH + 5400))" ]
+    [ "$(sidecar_field target)" = "$((WIGGUM_TEST_NOW + 5400))" ]
 }
 
 @test "launch_execute_delayed: overwrites a stale schedule whose waiter has died" {
     # A machine that was off at the target time is the ordinary case, not an
     # error state, so a dead waiter must not block a fresh schedule.
-    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    freeze_clock_now "22:00:00"
     mkdir -p docs
     cat > docs/plan.md <<'EOF'
 - [ ] one
@@ -4926,18 +4937,18 @@ EOF
     sleep 30 &
     local dead=$!
     kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
-    printf 'target=%s\ntarget_human=old\npid=%s\nspec=01:07\n' "$((PROTO_EPOCH - 86400))" "$dead" \
+    printf 'target=%s\ntarget_human=old\npid=%s\nspec=01:07\n' "$((WIGGUM_TEST_NOW - 86400))" "$dead" \
         > docs/plan.scheduled
     FILES=(docs/plan.md)
     AT_TIME="+6h"
     run launch_execute_delayed
     kill_waiter "$(sidecar_field pid)"
     [ "$status" -eq 0 ]
-    [ "$(sidecar_field target)" = "$((PROTO_EPOCH + 21600))" ]
+    [ "$(sidecar_field target)" = "$((WIGGUM_TEST_NOW + 21600))" ]
 }
 
 @test "launch_execute_delayed: leaves a dead pidfile alone and schedules anyway" {
-    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    freeze_clock_now "22:00:00"
     mkdir -p docs
     cat > docs/plan.md <<'EOF'
 - [ ] one
@@ -4957,10 +4968,171 @@ EOF
 @test "launch_execute_delayed: clears AT_TIME and BACKGROUND for the detached run" {
     # The waiter re-enters run_execute; if either flag survived it would recurse
     # straight back into a launcher instead of running the loop.
-    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    freeze_clock_now "22:00:00"
     BACKGROUND=true
     schedule_far_future "+90m"
     kill_waiter "$(sidecar_field pid)"
     [ -z "$AT_TIME" ]
     [ "$BACKGROUND" = false ]
+}
+
+# ── the detached waiter ──────────────────────────────────────────────────────
+
+# Build a project the waiter can really run in. The waiter is a separate
+# process, so it inherits none of this file's shell functions: `claude` has to
+# be a real executable on PATH and the config a real .wiggumrc, or the run it
+# starts is not the run these assertions describe.
+make_runnable_project() {
+    mkdir -p docs bin
+    cat > docs/plan.md <<'EOF'
+# Waiter plan
+
+- [ ] one
+EOF
+    cat > bin/claude <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x bin/claude
+    cat > .wiggumrc <<'EOF'
+max_iterations = 0
+skip_verify = true
+skip_commit = true
+EOF
+    PATH="$PWD/bin:$PATH"
+}
+
+@test "launch_execute_delayed: the detached waiter starts the run at the target time" {
+    make_runnable_project
+    FILES=(docs/plan.md)
+    AT_TIME="@$(( $(date +%s) + 2 ))"
+    WIGGUM_AT_POLL_INTERVAL=1
+    launch_execute_delayed >/dev/null 2>&1
+
+    local waiter
+    waiter="$(sidecar_field pid)"
+
+    # Bounded wait for the swap from scheduled to running, then tear down
+    # whatever is still alive before asserting -- a failing assertion must not
+    # leave a detached waiter or a real run behind.
+    local tries=60
+    while [ "$tries" -gt 0 ] && [ ! -f docs/plan.pid ]; do
+        sleep 0.5
+        tries=$((tries - 1))
+    done
+    local runner
+    runner="$(cat docs/plan.pid 2>/dev/null || true)"
+    kill "$waiter" 2>/dev/null || true
+    kill "$runner" 2>/dev/null || true
+
+    [ -n "$waiter" ] || return 1
+    [ ! -f docs/plan.scheduled ] || return 1
+    [ -f docs/plan.pid ] || return 1
+    [ -n "$runner" ] || return 1
+    [ "$(grep -c -- '--- wiggum run' docs/plan.out)" -eq 1 ]
+}
+
+@test "launch_execute_delayed: the waiter runs outside the scheduling shell's process group" {
+    # The whole point of detaching: a six-hour wait outlives the terminal that
+    # started it. A backgrounded subshell shares this shell's process group and
+    # goes down with it; `screen -dmS` puts the waiter in a session of its own.
+    freeze_clock_now "22:00:00"
+    schedule_far_future "+90m"
+    local waiter
+    waiter="$(sidecar_field pid)"
+    local waiter_pgid mine
+    waiter_pgid="$(ps -o pgid= -p "$waiter" 2>/dev/null | tr -d '[:space:]')"
+    mine="$(ps -o pgid= -p $$ 2>/dev/null | tr -d '[:space:]')"
+    kill_waiter "$waiter"
+    [ -n "$waiter_pgid" ] || return 1
+    [ -n "$mine" ] || return 1
+    [ "$waiter_pgid" != "$mine" ] || return 1
+}
+
+@test "launch_execute_delayed: falls back to nohup when screen cannot start the waiter" {
+    # Not every box has a working screen. The fallback buys SIGHUP immunity
+    # rather than a new session, which is weaker but is what macOS leaves us --
+    # there is no setsid.
+    screen() { return 1; }
+    freeze_clock_now "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    AT_TIME="+90m"
+    run launch_execute_delayed
+    local waiter
+    waiter="$(sidecar_field pid)"
+    kill -HUP "$waiter" 2>/dev/null || true
+    sleep 0.3
+    local survived=1
+    process_alive "$waiter" && survived=0
+    kill_waiter "$waiter"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"nohup"* ]] || return 1
+    [ "$survived" -eq 0 ]
+}
+
+# ── at_replay_argv ───────────────────────────────────────────────────────────
+
+@test "at_replay_argv: replays the captured invocation without --at" {
+    WIGGUM_ARGV=(execute docs/plan.md --at 01:07 --max-iterations 5)
+    local out
+    out="$(at_replay_argv | tr '\0' '\n')"
+    [ "$out" = "$(printf 'execute\ndocs/plan.md\n--max-iterations\n5')" ]
+}
+
+@test "at_replay_argv: drops --background, which the waiter must not re-enter" {
+    # The waiter runs the CLI in the foreground inside its own session. A
+    # replayed --background would daemonize and let that session exit, taking
+    # the tree with it.
+    WIGGUM_ARGV=(execute docs/plan.md --background --at +90m)
+    local out
+    out="$(at_replay_argv | tr '\0' '\n')"
+    [ "$out" = "$(printf 'execute\ndocs/plan.md')" ]
+}
+
+@test "at_replay_argv: falls back to the file list when no argv was captured" {
+    WIGGUM_ARGV=()
+    FILES=(docs/plan.md docs/other.md)
+    local out
+    out="$(at_replay_argv | tr '\0' '\n')"
+    [ "$out" = "$(printf 'execute\ndocs/plan.md\ndocs/other.md')" ]
+}
+
+@test "parse_args: records the invocation for a delayed run to replay" {
+    make_file "docs/plan.md"
+    parse_args execute docs/plan.md --at +90m
+    [ "${WIGGUM_ARGV[0]}" = "execute" ]
+    [ "${WIGGUM_ARGV[1]}" = "docs/plan.md" ]
+    [ "${WIGGUM_ARGV[2]}" = "--at" ]
+    [ "${WIGGUM_ARGV[3]}" = "+90m" ]
+}
+
+@test "launch_execute_delayed: a waiter that cannot claim its schedule starts nothing" {
+    # The launcher reports an unclaimed schedule as nothing scheduled. A waiter
+    # that outlived that message would start a run hours later that the user was
+    # told would never happen, so it has to exit instead.
+    [ "$(id -u)" -ne 0 ] || skip "root ignores the directory permissions this relies on"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    AT_TIME="@$(( $(date +%s) + 2 ))"
+    WIGGUM_AT_POLL_INTERVAL=1
+    WIGGUM_AT_CLAIM_TIMEOUT=1
+    chmod 500 docs
+    run launch_execute_delayed
+    sleep 3
+    local strays
+    strays="$(pgrep -f "WIGGUM_AT_SCHEDULED=docs/plan.scheduled" | wc -l | tr -d '[:space:]')"
+    chmod 700 docs
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"nothing was scheduled"* ]] || return 1
+    [ ! -f docs/plan.scheduled ] || return 1
+    [ ! -f docs/plan.pid ] || return 1
+    [ ! -f docs/plan.out ] || return 1
+    [ "$strays" -eq 0 ]
 }
