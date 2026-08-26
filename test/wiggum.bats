@@ -3365,6 +3365,17 @@ S
     [ "$last" = 'main "$@"' ]
 }
 
+@test "CLI: execute --help shows the execute help and exits 0" {
+    # `--help` after a subcommand used to print the top-level overview and then
+    # fall through into running the command, dying on an unbound FILES[0].
+    local cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
+    run bash "$cli" execute --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum execute - Implement a workplan"* ]] || return 1
+    [[ "$output" == *"--at <WHEN>"* ]] || return 1
+    [[ "$output" != *"unbound variable"* ]] || return 1
+}
+
 @test "CLI: execute bails out with EXIT_BAD_ARGS when stdin is not a plan" {
     # Reproduces the exact failure mode that caused the original bug: an
     # upstream `wiggum plan` leaked chatter into the pipe, and execute

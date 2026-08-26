@@ -912,7 +912,12 @@ parse_args() {
                 done
                 ;;
             -h|--help)
-                usage
+                # Show the help for the command actually being asked about, and
+                # switch MODE so main() stops here. Without the switch, `wiggum
+                # execute --help` printed help and then ran execute with no
+                # files, dying on an unbound FILES[0].
+                usage "$MODE"
+                MODE="help"
                 return 0
                 ;;
             --)
