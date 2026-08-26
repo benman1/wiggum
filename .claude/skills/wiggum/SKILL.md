@@ -333,6 +333,18 @@ ending mid-phase: no error, no summary file. Don't go hunting for a bug in the
 plan; it was killed from outside. `nohup … &` buys immunity to SIGHUP only, so it
 delays this rather than fixing it.
 
+**A detached run still dies if the machine sleeps.** `screen` survives your session; it
+does not survive the Mac suspending. On a laptop, a multi-hour run left overnight is
+exactly the run that gets cut in half by a sleep nobody noticed, and the signature is
+identical to the one above: a clean `.out` ending mid-phase.
+
+**Never touch the power settings yourself.** Not Caffeine, Amphetamine or
+KeepingYouAwake; not `caffeinate` or `pmset`; not System Settings. Whether the machine
+stays awake is the user's decision, it has real battery and heat costs, and silently
+changing it in either direction is worse than a run that stops. If a long run is being
+launched and staying awake matters, **say so and let the user decide** — one sentence,
+then launch anyway.
+
 For any run you expect to outlive your own session, launch it inside a detached
 multiplexer instead:
 
