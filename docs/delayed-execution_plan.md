@@ -178,7 +178,7 @@ the two states distinguishable.
   Acceptance: `grep -c -- '--at' completions/wiggum.bash completions/wiggum.zsh` returns at least 1 for each.
   Files: completions/wiggum.bash, completions/wiggum.zsh
   Depends on: previous task
-- [ ] Update the CLI reference table embedded in the skill text at `lib/wiggum.sh:1364-1369`, which lists `wiggum execute <plan> --background` and is what an agent reads when driving wiggum. A flag documented in `--help` but absent there is a flag agents will not use.
+- [x] Update the CLI reference table embedded in the skill text at `lib/wiggum.sh:1364-1369`, which lists `wiggum execute <plan> --background` and is what an agent reads when driving wiggum. A flag documented in `--help` but absent there is a flag agents will not use.
   Acceptance: the table has a `--at` row; `grep -n 'at <WHEN>' lib/wiggum.sh` returns both the usage entry and the table row.
   Files: lib/wiggum.sh
   Depends on: previous task

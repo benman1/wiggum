@@ -2121,6 +2121,15 @@ EOF
     [[ "$output" == *"mark a gate whose trigger is absent"* ]] || return 1
 }
 
+@test "wiggum_skill_content: documents --at in the CLI reference table" {
+    run wiggum_skill_content
+    # Agents drive wiggum from this table; a flag missing here is a flag unused.
+    [[ "$output" == *"wiggum execute <plan> --at <WHEN>"* ]] || return 1
+    [[ "$output" == *"+90m"* ]] || return 1
+    [[ "$output" == *"01:07"* ]] || return 1
+    [[ "$output" == *"@1756180020"* ]] || return 1
+}
+
 @test "wiggum_skill_content: committed SKILL.md stays in sync with the heredoc" {
     local committed
     committed="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/.claude/skills/wiggum/SKILL.md"
