@@ -25,6 +25,7 @@ docs/onboarding-ui_plan.md               621      running (blocked)    2/7 done,
   - [Check mode](#check-mode)
   - [Run mode](#run-mode)
   - [Background runs & supervision](#background-runs--supervision)
+  - [Delayed runs](#delayed-runs)
   - [Chaining workplans](#chaining-workplans)
   - [Claude Code skill](#claude-code-skill)
 - [Prerequisites](#prerequisites)
@@ -344,6 +345,75 @@ wiggum watch docs/plan.md --poll-interval 2                   # poll for new out
 ```
 
 **Detecting a blocked run.** `status` reports `running but appears blocked` (or a finished run as `stalled`) when the output shows wiggum spinning without progress — repeated `No progress detected`, `Stalled for ...`, or a verification waterfall that gave up (`Validation failed N times`). When that happens, read the tail of `docs/plan.out` / `docs/plan.log` to find the cause: usually a failing verify command or a task whose acceptance can't be met. Fix the plan or the source (not `.wiggumrc`) and re-run.
+
+### Delayed runs
+
+`--at <WHEN>` waits until a wall-clock time and then runs the plan **once**, detached. It is for the "start this at 1am, I'm going to bed" case — not for a recurring schedule.
+
+```
+wiggum execute docs/plan.md --at 01:07     # tonight at 01:07
+wiggum execute docs/plan.md --at +90m      # 90 minutes from now
+wiggum execute docs/plan.md --at @1756180020   # at that epoch second
+```
+
+Three time forms, and no others:
+
+| Form | Means | Notes |
+|---|---|---|
+| `+<N>m`, `+<N>h`, `+<N>d` | now plus N minutes / hours / days | the unit is required — a bare `+90` means seconds to `sleep` and minutes to `at`, and guessing between them is a sixtyfold error made silently |
+| `HH:MM` | the next time the clock reads that | rolls to tomorrow when the time has already passed today; a time equal to right now means tomorrow |
+| `@<epoch>` | that epoch second, as-is | the escape hatch for a specific calendar date |
+
+**One accepted inaccuracy on `HH:MM`.** It resolves to "now plus the number of seconds until the clock reads that", so on the two nights a year a daylight-saving transition falls inside the wait, the run starts an hour early or late. Handling that properly needs the calendar parsing this design exists to avoid; use `@<epoch>` on those two nights if the hour matters.
+
+**Why no calendar-date form.** Turning `Aug 30 01:07` into an epoch needs `date -d` (GNU) or `date -j -f` (BSD), and neither accepts the other's syntax — so supporting it would put a platform branch in the middle of the feature. `@<epoch>` keeps that outside wiggum: produce the epoch with whatever your platform gives you and hand it over.
+
+```
+wiggum execute docs/plan.md --at "@$(date -d '2026-08-30 01:07' +%s)"   # GNU date
+wiggum execute docs/plan.md --at "@$(date -j -f '%Y-%m-%d %H:%M' '2026-08-30 01:07' +%s)"   # BSD date
+```
+
+Anything else is refused before anything is scheduled, with a message naming the same three forms:
+
+```
+$ wiggum execute docs/plan.md --at 1am
+Error: invalid --at '1am' (expected +<N>m|h|d, HH:MM or @<epoch>; e.g. +90m, 01:07, @1756180020).
+```
+
+A time already in the past is refused too, rather than firing immediately.
+
+**`--at` implies detachment.** Waiting six hours in the foreground blocks the terminal for no benefit, so `--at` hands off exactly the way `--background` does — same pidfile, same `.out` and `.log` sidecars once it starts. Passing `--background` as well is accepted and ignored (wiggum says so, so nobody has to wonder which won).
+
+**Supervising a scheduled run.** Between scheduling and firing, the run is *waiting*, not running, and `status` says so — the distinction is what tells you whether to expect output yet:
+
+```
+$ wiggum execute docs/plan.md --at 01:07
+Scheduled wiggum execute for 01:07:00 tomorrow (in 3h 7m).
+  plan:    docs/plan.md
+  pid:     41207
+  output:  docs/plan.out
+  status:  wiggum status docs/plan.md
+  kill:    wiggum kill docs/plan.md
+Runs once. Nothing recurring was created; wiggum will not keep this machine awake.
+
+$ wiggum status docs/plan.md
+Plan: docs/plan.md
+Tasks: 0/12 done, 12 remaining, 0 dropped
+State: scheduled for 01:07:00 tomorrow (in 3h 6m)
+
+$ wiggum kill docs/plan.md
+Cancelling the wiggum run scheduled for 01:07:00 tomorrow (waiter pid 41207)...
+```
+
+- `wiggum status <plan>` reports `scheduled for <time> (in <duration>)` while it waits, then the ordinary `running` / `finished: <reason>` states once it fires. A scheduled run never reads as `running`.
+- `wiggum kill <plan>` **cancels** the schedule — it says "cancelled", not "killed", because nothing ran and there is no output to go looking for. It signals only the waiter's recorded pid, never a pattern match.
+- `wiggum top` and `wiggum watch` only know about runs that have started (they key off the `.pid` sidecar), so a run that is still waiting shows up in `status`, not in those.
+
+The pending schedule lives in one sidecar, `docs/plan.scheduled`, next to the plan; it is removed when the run fires or is cancelled.
+
+**If the machine sleeps.** The wait polls the clock rather than sleeping the whole interval, so it self-corrects across a suspend instead of firing late by the suspend duration — but a machine that is asleep at 01:07 runs nothing at 01:07. It picks up on wake and starts late, and a machine that is off or asleep straight through simply misses the run; `status` then reports it as `missed: was scheduled for <time>`, and scheduling a fresh `--at` for that plan is allowed rather than blocked. **Wiggum will not keep your machine awake for you** — no `caffeinate`, no `pmset`, not for the wait and not for the run. Whether the lid-shut Mac stays up is your call about your own hardware, not a tool's to take from a shell. If you want the run to happen, keep the machine awake yourself.
+
+**One invocation, one run.** `--at` never writes a crontab line, a LaunchAgent plist, or anything else that outlives the run. For a genuinely recurring schedule — nightly, weekly — use cron or launchd, which do it better; see [Scheduling unattended runs](#scheduling-unattended-runs) and [`examples/wiggum-nightly-setup.sh`](examples/wiggum-nightly-setup.sh).
 
 ### Chaining workplans
 
