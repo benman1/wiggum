@@ -82,6 +82,27 @@ validate_permission_mode() {
     esac
 }
 
+# ── Clock ────────────────────────────────────────────────────────────────────
+
+# The wall clock, read through two accessors so a test can inject a fixed time
+# by overriding them -- the same trick test/wiggum.bats uses to stub `claude`.
+#
+# Both call `date` with nothing but a `+FORMAT` argument. `date -d` is GNU-only
+# and `date -j` and `date -r` are BSD-only, so any of them would break the other
+# platform silently. Keeping every clock read flagless is what lets the delayed
+# execution path resolve a time with plain arithmetic instead of a date parser.
+#
+# `%s` is the one portability assumption: it is absent from POSIX but present in
+# BSD, GNU and busybox `date`. `%H`, `%M` and `%S` are specified by POSIX.
+
+wiggum_now_epoch() {
+    date +%s
+}
+
+wiggum_now_hms() {
+    date +%H:%M:%S
+}
+
 # ── Config loading ───────────────────────────────────────────────────────────
 
 # Strip leading and trailing whitespace, leaving the value otherwise intact.
