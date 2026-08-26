@@ -4712,3 +4712,255 @@ PROTO_EPOCH=1756180020
     [ "$first" = "$((PROTO_EPOCH + 3600))" ]
     [ "$second" = "1000003600" ]
 }
+
+# ── format_duration / describe_at_target ─────────────────────────────────────
+
+@test "format_duration: renders seconds, minutes, hours and days" {
+    [ "$(format_duration 45)" = "45s" ]
+    [ "$(format_duration 90)" = "1m 30s" ]
+    [ "$(format_duration 11220)" = "3h 7m" ]
+    [ "$(format_duration 194400)" = "2d 6h" ]
+}
+
+@test "format_duration: zero and negative spans render as 0s" {
+    [ "$(format_duration 0)" = "0s" ]
+    [ "$(format_duration -5)" = "0s" ]
+}
+
+@test "describe_at_target: renders a target later today" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    [ "$(describe_at_target "$((PROTO_EPOCH + 5400))")" = "23:30:00 today" ]
+}
+
+@test "describe_at_target: renders a target that has rolled to tomorrow" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    local target
+    target="$(parse_at_time "01:07")"
+    [ "$(describe_at_target "$target")" = "01:07:00 tomorrow" ]
+}
+
+@test "describe_at_target: renders a target several days out" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    [ "$(describe_at_target "$((PROTO_EPOCH + 2 * 86400))")" = "22:00:00 in 2 days" ]
+}
+
+@test "describe_at_target: renders a target in the past" {
+    # Phase 3 reports a missed schedule; flooring the day arithmetic rather
+    # than truncating is what keeps a past target from reading as `today`.
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    [ "$(describe_at_target "$((PROTO_EPOCH - 86400))")" = "22:00:00 yesterday" ]
+}
+
+@test "describe_at_target: reads the clock only through the accessors" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    local first
+    first="$(describe_at_target "$((PROTO_EPOCH + 3600))")"
+    freeze_clock 1000000000 "06:00:00"
+    [ "$first" = "23:00:00 today" ]
+    [ "$(describe_at_target 1000003600)" = "07:00:00 today" ]
+}
+
+# ── launch_execute_delayed ───────────────────────────────────────────────────
+
+# Schedule a run far enough out that the waiter is still sleeping when the
+# assertions run, and hand back its pid so the test body can kill it. The plan
+# is explicit that a failing test must not leave a detached waiter behind.
+schedule_far_future() {
+    local spec="${1:-+90m}"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    AT_TIME="$spec"
+    launch_execute_delayed >/dev/null 2>&1
+}
+
+sidecar_field() {
+    sed -n "s/^$1=//p" docs/plan.scheduled
+}
+
+kill_waiter() {
+    local pid="$1"
+    [ -n "$pid" ] || return 0
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+}
+
+@test "launch_execute_delayed: writes a .scheduled sidecar with the resolved epoch" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    schedule_far_future "+90m"
+    local waiter
+    waiter="$(sidecar_field pid)"
+    kill_waiter "$waiter"
+    [ -f docs/plan.scheduled ]
+    [ "$(sidecar_field target)" = "$((PROTO_EPOCH + 5400))" ]
+    [ "$(sidecar_field target_human)" = "23:30:00 today" ]
+    [ "$(sidecar_field spec)" = "+90m" ]
+    [ -n "$waiter" ]
+}
+
+@test "launch_execute_delayed: records a live waiter pid" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    schedule_far_future "+6h"
+    local waiter
+    waiter="$(sidecar_field pid)"
+    local alive=1
+    process_alive "$waiter" && alive=0
+    kill_waiter "$waiter"
+    [ "$alive" -eq 0 ]
+}
+
+@test "launch_execute_delayed: writes no pidfile at schedule time" {
+    # A scheduled run must never read as running -- the distinction is what
+    # tells somebody whether to expect output.
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    schedule_far_future "+90m"
+    local waiter
+    waiter="$(sidecar_field pid)"
+    kill_waiter "$waiter"
+    [ ! -f docs/plan.pid ]
+}
+
+@test "launch_execute_delayed: reports the target and the managing commands" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    AT_TIME="+90m"
+    run launch_execute_delayed
+    kill_waiter "$(sidecar_field pid)"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"23:30:00 today"* ]] || return 1
+    [[ "$output" == *"1h 30m"* ]] || return 1
+    [[ "$output" == *"wiggum status docs/plan.md"* ]] || return 1
+    [[ "$output" == *"wiggum kill docs/plan.md"* ]] || return 1
+}
+
+@test "launch_execute_delayed: a past time exits EXIT_BAD_ARGS and writes no sidecar" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    AT_TIME="@$((PROTO_EPOCH - 3600))"
+    run launch_execute_delayed
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [ ! -f docs/plan.scheduled ]
+    [ ! -f docs/plan.pid ]
+    [[ "$output" == *"past"* ]] || return 1
+}
+
+@test "launch_execute_delayed: a target equal to now is in the past" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    AT_TIME="@$PROTO_EPOCH"
+    run launch_execute_delayed
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [ ! -f docs/plan.scheduled ]
+}
+
+@test "launch_execute_delayed: an unparseable time exits EXIT_BAD_ARGS naming the three forms" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(docs/plan.md)
+    AT_TIME="tomorrow"
+    run launch_execute_delayed
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [ ! -f docs/plan.scheduled ]
+    [[ "$output" == *"+90m"* ]] || return 1
+    [[ "$output" == *"01:07"* ]] || return 1
+    [[ "$output" == *"@"* ]] || return 1
+}
+
+@test "launch_execute_delayed: refuses to schedule over a live run" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > docs/plan.pid
+    FILES=(docs/plan.md)
+    AT_TIME="+90m"
+    run launch_execute_delayed
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [ ! -f docs/plan.scheduled ]
+    [[ "$output" == *"already active"* ]] || return 1
+}
+
+@test "launch_execute_delayed: refuses a second schedule over a live waiter" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    schedule_far_future "+90m"
+    local waiter
+    waiter="$(sidecar_field pid)"
+    AT_TIME="+6h"
+    run launch_execute_delayed
+    kill_waiter "$waiter"
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"already scheduled"* ]] || return 1
+    # The original schedule survives the refusal.
+    [ "$(sidecar_field target)" = "$((PROTO_EPOCH + 5400))" ]
+}
+
+@test "launch_execute_delayed: overwrites a stale schedule whose waiter has died" {
+    # A machine that was off at the target time is the ordinary case, not an
+    # error state, so a dead waiter must not block a fresh schedule.
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 30 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    printf 'target=%s\ntarget_human=old\npid=%s\nspec=01:07\n' "$((PROTO_EPOCH - 86400))" "$dead" \
+        > docs/plan.scheduled
+    FILES=(docs/plan.md)
+    AT_TIME="+6h"
+    run launch_execute_delayed
+    kill_waiter "$(sidecar_field pid)"
+    [ "$status" -eq 0 ]
+    [ "$(sidecar_field target)" = "$((PROTO_EPOCH + 21600))" ]
+}
+
+@test "launch_execute_delayed: leaves a dead pidfile alone and schedules anyway" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 30 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    echo "$dead" > docs/plan.pid
+    FILES=(docs/plan.md)
+    AT_TIME="+90m"
+    run launch_execute_delayed
+    kill_waiter "$(sidecar_field pid)"
+    [ "$status" -eq 0 ]
+    [ -f docs/plan.scheduled ]
+}
+
+@test "launch_execute_delayed: clears AT_TIME and BACKGROUND for the detached run" {
+    # The waiter re-enters run_execute; if either flag survived it would recurse
+    # straight back into a launcher instead of running the loop.
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    BACKGROUND=true
+    schedule_far_future "+90m"
+    kill_waiter "$(sidecar_field pid)"
+    [ -z "$AT_TIME" ]
+    [ "$BACKGROUND" = false ]
+}
