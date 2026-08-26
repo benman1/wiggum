@@ -3962,6 +3962,101 @@ EOF
     [[ "$output" == *"State: finished: stalled"* ]] || return 1
 }
 
+# A scheduled run is a fourth state, distinct from running: the difference is
+# what tells somebody whether to expect output for the next few hours.
+
+# Write a .scheduled sidecar by hand, the shape at_waiter_script claims one
+# with, and hand back the pid it names so the test body can tear it down.
+write_schedule_sidecar() {
+    local target="$1" human="$2" pid="$3" spec="${4:-+90m}"
+    printf 'target=%s\ntarget_human=%s\nspec=%s\npid=%s\n' \
+        "$target" "$human" "$spec" "$pid" > plan.scheduled
+}
+
+@test "run_status: reports a scheduled run with its target time" {
+    cat > plan.md <<'EOF'
+- [ ] one
+- [x] two
+EOF
+    sleep 5 &
+    local waiter=$!
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    write_schedule_sidecar "$((PROTO_EPOCH + 5400))" "23:30:00 today" "$waiter"
+    FILES=(plan.md)
+    run run_status
+    kill_waiter "$waiter"
+    # The task counts stay alongside the schedule -- a scheduled run still has
+    # a plan worth reporting progress on.
+    [[ "$output" == *"Tasks: 1/2 done, 1 remaining, 0 dropped"* ]] || return 1
+    [[ "$output" == *"State: scheduled for 23:30:00 today (in 1h 30m)"* ]] || return 1
+    [[ "$output" != *"running"* ]] || return 1
+}
+
+@test "run_status: a live pidfile wins over a scheduled sidecar" {
+    # Both present means the waiter fired between the two reads. The pidfile is
+    # the newer fact, so it wins.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 5 &
+    local pid=$!
+    echo "$pid" > plan.pid
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    write_schedule_sidecar "$((PROTO_EPOCH + 5400))" "23:30:00 today" "$pid"
+    FILES=(plan.md)
+    run run_status
+    kill_waiter "$pid"
+    [[ "$output" == *"State: running (pid $pid)"* ]] || return 1
+    [[ "$output" != *"scheduled"* ]] || return 1
+}
+
+@test "run_status: a schedule outlives a finished run's pidfile" {
+    # Scheduling is allowed over a pidfile whose process is gone, so the dead
+    # pidfile must not shadow the schedule that replaced it.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 5 &
+    local waiter=$!
+    echo 999999 > plan.pid
+    printf 'Status: complete\n' > plan.out
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    write_schedule_sidecar "$((PROTO_EPOCH + 60))" "22:01:00 today" "$waiter"
+    FILES=(plan.md)
+    run run_status
+    kill_waiter "$waiter"
+    [[ "$output" == *"State: scheduled for 22:01:00 today (in 1m 0s)"* ]] || return 1
+}
+
+@test "run_status: renders the target from the epoch, not the stored wording" {
+    # target_human was written when the run was scheduled; read a day later
+    # "tomorrow" is wrong. The epoch is the fact, so the wording is recomputed.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 5 &
+    local waiter=$!
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    write_schedule_sidecar "$((PROTO_EPOCH + 10800))" "01:00:00 tomorrow" "$waiter" "01:00"
+    FILES=(plan.md)
+    run run_status
+    kill_waiter "$waiter"
+    [[ "$output" == *"State: scheduled for 01:00:00 tomorrow (in 3h 0m)"* ]] || return 1
+}
+
+@test "run_status: a truncated schedule sidecar reads as unreadable, not a crash" {
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    printf 'targ' > plan.scheduled
+    FILES=(plan.md)
+    run run_status
+    [ "$status" -eq 0 ]
+    # The path comes from run_sidecar_file, so it wears whatever ./ prefix
+    # that gives a bare filename.
+    [[ "$output" == *"State: scheduled (unreadable schedule file: "*"plan.scheduled)"* ]] || return 1
+}
+
 # ── kill_run / run_kill ──────────────────────────────────────────────────────
 
 @test "kill_run: terminates a live process and removes the pidfile" {
