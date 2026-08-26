@@ -4057,6 +4057,100 @@ EOF
     [[ "$output" == *"State: scheduled (unreadable schedule file: "*"plan.scheduled)"* ]] || return 1
 }
 
+# A machine that was off at 01:07 is the ordinary case, not an error state. The
+# sidecar outlives the waiter that wrote it, so the pair -- dead pid, past
+# target -- is what "missed" means, and reporting it as still pending would
+# have somebody waiting all morning for output that is never coming.
+
+# A pid that is certainly not alive. Reaping a killed child leaves its pid free
+# for the kernel to hand out again; this one is above the default pid_max on
+# both Linux and macOS, so nothing can be wearing it.
+DEAD_PID=999999
+
+@test "run_status: a dead waiter with a past target reads as missed" {
+    cat > plan.md <<'EOF'
+- [ ] one
+- [x] two
+EOF
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    # 01:07 this morning, twenty-one hours before the frozen 22:00.
+    write_schedule_sidecar "$((PROTO_EPOCH - 75180))" "01:07:00 today" "$DEAD_PID" "01:07"
+    FILES=(plan.md)
+    run run_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"State: missed: was scheduled for 01:07:00 today (20h 53m ago)"* ]] || return 1
+    # Pending and missed are opposite claims about whether to expect output.
+    [[ "$output" != *"State: scheduled for"* ]] || return 1
+    # Task counts survive the missed state, as they do the scheduled one.
+    [[ "$output" == *"Tasks: 1/2 done, 1 remaining, 0 dropped"* ]] || return 1
+}
+
+@test "run_status: status is read-only -- a missed schedule keeps its sidecar" {
+    # run_status never starts or stops anything, and that includes tidying up
+    # after a waiter. The healing is that a stale sidecar stops blocking, not
+    # that reading the state deletes it.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    write_schedule_sidecar "$((PROTO_EPOCH - 3600))" "21:00:00 today" "$DEAD_PID"
+    FILES=(plan.md)
+    run run_status
+    [ "$status" -eq 0 ]
+    [ -f plan.scheduled ]
+}
+
+@test "run_status: a dead waiter with a future target will not fire either" {
+    # A reboot before the target kills the waiter without the target passing.
+    # Nothing will start, so reporting it as pending would be a false promise
+    # -- but it is not "missed" while the time is still ahead.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    write_schedule_sidecar "$((PROTO_EPOCH + 5400))" "23:30:00 today" "$DEAD_PID"
+    FILES=(plan.md)
+    run run_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"State: not waiting: was scheduled for 23:30:00 today (in 1h 30m), but its waiter is gone"* ]] || return 1
+}
+
+@test "run_status: a live waiter with a past target is still pending, not missed" {
+    # The waiter polls the wall clock, so between the target passing and the
+    # loop's next tick it is alive and about to fire. Only a dead waiter is
+    # evidence the run will not happen.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 5 &
+    local waiter=$!
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    write_schedule_sidecar "$((PROTO_EPOCH - 5))" "21:59:55 today" "$waiter"
+    FILES=(plan.md)
+    run run_status
+    kill_waiter "$waiter"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"State: scheduled for 21:59:55 today"* ]] || return 1
+    [[ "$output" != *"missed"* ]] || return 1
+}
+
+@test "run_status: a schedule sidecar with no pid reads as missed once past" {
+    # A sidecar truncated after `target=` but before `pid=` names no waiter, so
+    # there is nothing alive to wait for. process_alive on an empty pid is
+    # false, which lands it in the same state as a dead one.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    printf 'target=%s
+target_human=21:00:00 today
+' "$((PROTO_EPOCH - 3600))" > plan.scheduled
+    FILES=(plan.md)
+    run run_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"State: missed: was scheduled for 21:00:00 today (1h 0m ago)"* ]] || return 1
+}
+
 # ── kill_run / run_kill ──────────────────────────────────────────────────────
 
 @test "kill_run: terminates a live process and removes the pidfile" {
@@ -5127,6 +5221,30 @@ EOF
     printf 'target=%s\ntarget_human=old\npid=%s\nspec=01:07\n' "$((WIGGUM_TEST_NOW - 86400))" "$dead" \
         > docs/plan.scheduled
     FILES=(docs/plan.md)
+    AT_TIME="+6h"
+    run launch_execute_delayed
+    kill_waiter "$(sidecar_field pid)"
+    [ "$status" -eq 0 ]
+    [ "$(sidecar_field target)" = "$((WIGGUM_TEST_NOW + 21600))" ]
+}
+
+@test "launch_execute_delayed: a missed schedule reports missed, then reschedules" {
+    # The whole of the self-healing path in one go: the machine was off at
+    # 01:07, so status says missed rather than pending, and the next --at is
+    # accepted over the leftover instead of refused as a conflict.
+    freeze_clock_now "22:00:00"
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    printf 'target=%s\ntarget_human=01:07:00 tomorrow\npid=%s\nspec=01:07\n' \
+        "$((WIGGUM_TEST_NOW - 75180))" "$DEAD_PID" > docs/plan.scheduled
+
+    FILES=(docs/plan.md)
+    run run_status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"State: missed: was scheduled for 01:07:00 today (20h 53m ago)"* ]] || return 1
+
     AT_TIME="+6h"
     run launch_execute_delayed
     kill_waiter "$(sidecar_field pid)"
