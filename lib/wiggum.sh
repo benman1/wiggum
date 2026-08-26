@@ -103,6 +103,90 @@ wiggum_now_hms() {
     date +%H:%M:%S
 }
 
+# Resolve a `--at <WHEN>` spec to an absolute epoch on stdout.  Returns
+# non-zero and writes nothing at all on anything it does not recognise, so a
+# caller substituting the output cannot silently end up with an empty string.
+#
+# Three forms, chosen so that none of them needs a date parser:
+#
+#   +<N>m|h|d   now plus N minutes, hours or days -- `sleep` and `at` durations
+#   HH:MM       the next time the wall clock reads that, rolling to tomorrow
+#               when it has already passed today -- `at 01:07`
+#   @<epoch>    taken as-is
+#
+# The unit on the duration form is required.  A bare `+90` means seconds to
+# `sleep` and minutes to `at`, and guessing between them is a sixtyfold error
+# made silently; an error naming the three forms is cheaper.
+#
+# There is deliberately no calendar-date form.  Turning "Aug 30 01:07" into an
+# epoch needs `date -d` (GNU) or `date -j -f` (BSD) and neither accepts the
+# other's syntax, which is the platform branch this design exists to avoid.
+# `@<epoch>` is the escape hatch: produce the epoch with whatever your own
+# platform gives you and hand that over, keeping date parsing outside wiggum.
+#
+# One accepted inaccuracy: HH:MM resolves to "now plus the seconds until that
+# clock time", so on the two nights a year a DST transition falls inside the
+# wait, the target lands an hour early or late.  Fixing that needs the calendar
+# parsing above, so it is documented rather than branched for.
+#
+# Every field is forced to base 10.  `08` and `09` are invalid octal, and an
+# unprefixed `$((08))` under `set -e` would kill the run on a valid input --
+# for the *current* time as much as the requested one, since wiggum_now_hms
+# zero-pads as well.
+parse_at_time() {
+    local spec="${1:-}"
+    local now
+    now="$(wiggum_now_epoch)"
+
+    case "$spec" in
+        @*)
+            local epoch="${spec#@}"
+            [[ "$epoch" =~ ^[0-9]+$ ]] || return 1
+            # An epoch in the past resolves rather than erroring, so the caller
+            # can report "that time has passed" instead of "unrecognised".
+            printf '%s\n' "$((10#$epoch))"
+            return 0
+            ;;
+        +*)
+            local rest="${spec#+}"
+            [[ "$rest" =~ ^([0-9]+)([mhd])$ ]] || return 1
+            local amount="${BASH_REMATCH[1]}" unit="${BASH_REMATCH[2]}"
+            local seconds
+            case "$unit" in
+                m) seconds=60 ;;
+                h) seconds=3600 ;;
+                d) seconds=86400 ;;
+            esac
+            printf '%s\n' "$((now + 10#$amount * seconds))"
+            return 0
+            ;;
+        *:*)
+            [[ "$spec" =~ ^([0-9][0-9]):([0-9][0-9])$ ]] || return 1
+            local hh="${BASH_REMATCH[1]}" mm="${BASH_REMATCH[2]}"
+            [ "$((10#$hh))" -le 23 ] || return 1
+            [ "$((10#$mm))" -le 59 ] || return 1
+
+            local now_hms
+            now_hms="$(wiggum_now_hms)"
+            [[ "$now_hms" =~ ^([0-9][0-9]):([0-9][0-9]):([0-9][0-9])$ ]] || return 1
+            local now_h="${BASH_REMATCH[1]}" now_m="${BASH_REMATCH[2]}" now_s="${BASH_REMATCH[3]}"
+
+            local delta
+            delta=$(( (10#$hh * 3600 + 10#$mm * 60)
+                      - (10#$now_h * 3600 + 10#$now_m * 60 + 10#$now_s) ))
+            # At or before the current second means tomorrow: somebody typing
+            # the time it already is means tonight, not this instant.
+            if [ "$delta" -le 0 ]; then
+                delta=$((delta + 86400))
+            fi
+            printf '%s\n' "$((now + delta))"
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
 # ── Config loading ───────────────────────────────────────────────────────────
 
 # Strip leading and trailing whitespace, leaving the value otherwise intact.
