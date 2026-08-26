@@ -282,6 +282,95 @@ EOF
     [ "$BACKGROUND" = "true" ]
 }
 
+@test "parse_args: --at sets AT_TIME to an HH:MM spec" {
+    make_file plan.md
+    parse_args execute plan.md --at 01:07
+    [ "$MODE" = "execute" ]
+    [ "$AT_TIME" = "01:07" ]
+}
+
+@test "parse_args: --at accepts a duration spec" {
+    make_file plan.md
+    parse_args execute plan.md --at +90m
+    [ "$AT_TIME" = "+90m" ]
+}
+
+@test "parse_args: --at accepts an @epoch spec" {
+    make_file plan.md
+    parse_args execute plan.md --at @1756180020
+    [ "$AT_TIME" = "@1756180020" ]
+}
+
+@test "parse_args: --at defaults to empty and is cleared by wiggum_reset" {
+    make_file plan.md
+    parse_args execute plan.md
+    [ -z "$AT_TIME" ]
+    wiggum_reset
+    make_file plan.md
+    parse_args execute plan.md --at +1h
+    [ "$AT_TIME" = "+1h" ]
+    wiggum_reset
+    [ -z "$AT_TIME" ]
+}
+
+@test "parse_args: --at with no value exits EXIT_BAD_ARGS" {
+    # Must not die on an unbound "$2" under set -u, and must not shift past
+    # the end of the argument list.
+    make_file plan.md
+    run parse_args execute plan.md --at
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"--at"* ]] || return 1
+}
+
+@test "parse_args: --at does not swallow the following option" {
+    # The failure this guards is `--at --verbose` silently consuming the flag
+    # and scheduling for a spec of "--verbose".
+    make_file plan.md
+    run parse_args execute plan.md --at --verbose
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+}
+
+@test "parse_args: --at rejects an unparseable time naming the three forms" {
+    make_file plan.md
+    run parse_args execute plan.md --at tomorrow
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"+90m"* ]] || return 1
+    [[ "$output" == *"01:07"* ]] || return 1
+    [[ "$output" == *"@"* ]] || return 1
+}
+
+@test "parse_args: --at rejects a bare duration with no unit" {
+    make_file plan.md
+    run parse_args execute plan.md --at +90
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+}
+
+@test "parse_args: --at rejects an out-of-range hour" {
+    make_file plan.md
+    run parse_args execute plan.md --at 25:00
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+}
+
+@test "parse_args: --at and --background are both accepted together" {
+    # --at implies detachment, so --background alongside it is redundant
+    # rather than an error.  Phase 2 decides which one wins at launch; here
+    # only the parse has to survive both.
+    make_file plan.md
+    parse_args execute plan.md --at 01:07 --background
+    [ "$AT_TIME" = "01:07" ]
+    [ "$BACKGROUND" = "true" ]
+}
+
+@test "parse_args: --at is validated with the same rules as parse_at_time" {
+    # A spec parse_args accepts must be one parse_at_time can resolve; if the
+    # two ever diverge, --at accepts a time the launcher then cannot use.
+    make_file plan.md
+    parse_args execute plan.md --at 08:30
+    [ "$AT_TIME" = "08:30" ]
+    run parse_at_time "$AT_TIME"
+    [ "$status" -eq 0 ]
+}
+
 @test "parse_args: watch flags set timeout/poll/kill-on-timeout" {
     make_file plan.md
     parse_args watch plan.md --timeout 600 --poll-interval 2 --kill-on-timeout
