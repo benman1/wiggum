@@ -4427,3 +4427,199 @@ EOF
     wiggum_now_hms() { echo "22:00:00"; }
     [ "$(clock_reader)" = "1756180020 22:00:00" ]
 }
+
+# ── parse_at_time ────────────────────────────────────────────────────────────
+
+# Freeze the clock by overriding the two accessors, the way setup() stubs
+# claude.  The stubs read globals rather than locals: a function defined inside
+# another function still resolves its variables when it is *called*, by which
+# point a local of the definer has gone out of scope.
+freeze_clock() {
+    FAKE_EPOCH="$1"
+    FAKE_HMS="$2"
+    wiggum_now_epoch() { echo "$FAKE_EPOCH"; }
+    wiggum_now_hms() { echo "$FAKE_HMS"; }
+}
+
+# The design note's prototype clock: 2026-08-25 22:00:00.
+PROTO_EPOCH=1756180020
+
+@test "parse_at_time: +90m resolves to ninety minutes from now" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "+90m"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$((PROTO_EPOCH + 5400))" ]
+}
+
+@test "parse_at_time: +6h resolves to six hours from now, crossing midnight" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "+6h"
+    [ "$status" -eq 0 ]
+    # 22:00 + 6h is 04:00 the next day; epoch arithmetic needs no calendar.
+    [ "$output" = "$((PROTO_EPOCH + 21600))" ]
+}
+
+@test "parse_at_time: +2d resolves to two days from now" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "+2d"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$((PROTO_EPOCH + 172800))" ]
+}
+
+@test "parse_at_time: +2d crossing a month end is plain addition" {
+    # 2026-08-30 22:00:00 + 2d is 2026-09-01.  There is no calendar in the
+    # path, so a month end is not a special case -- this pins that it stays so.
+    freeze_clock 1756612020 "22:00:00"
+    run parse_at_time "+2d"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$((1756612020 + 172800))" ]
+}
+
+@test "parse_at_time: HH:MM earlier than now rolls to tomorrow" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "01:07"
+    [ "$status" -eq 0 ]
+    # 22:00 -> 01:07 next day is 3h07m = 11220s.
+    [ "$output" = "$((PROTO_EPOCH + 11220))" ]
+}
+
+@test "parse_at_time: HH:MM later than now stays today" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "23:30"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$((PROTO_EPOCH + 5400))" ]
+}
+
+@test "parse_at_time: HH:MM equal to now means tomorrow" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "22:00"
+    [ "$status" -eq 0 ]
+    # Never resolves to now: a zero-second wait is far more likely to be a
+    # user meaning "tonight" than one meaning "immediately".
+    [ "$output" = "$((PROTO_EPOCH + 86400))" ]
+}
+
+@test "parse_at_time: 08:30 is decimal, not invalid octal" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "08:30"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$((PROTO_EPOCH + 37800))" ]
+}
+
+@test "parse_at_time: 09:00 is decimal, not invalid octal" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "09:00"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$((PROTO_EPOCH + 39600))" ]
+}
+
+@test "parse_at_time: a zero-padded current time is decimal too" {
+    # The octal trap is on both sides: the *current* hour and minute come from
+    # wiggum_now_hms and are zero-padded as well.  09:08:07 is three of them.
+    freeze_clock "$PROTO_EPOCH" "09:08:07"
+    run parse_at_time "09:09"
+    [ "$status" -eq 0 ]
+    # 09:08:07 -> 09:09:00 is 53s.
+    [ "$output" = "$((PROTO_EPOCH + 53))" ]
+}
+
+@test "parse_at_time: 00:00 rolls over midnight" {
+    freeze_clock "$PROTO_EPOCH" "23:59:30"
+    run parse_at_time "00:00"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$((PROTO_EPOCH + 30))" ]
+}
+
+@test "parse_at_time: @epoch is used as-is" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "@1756180020"
+    [ "$status" -eq 0 ]
+    [ "$output" = "1756180020" ]
+}
+
+@test "parse_at_time: @epoch in the past resolves rather than erroring" {
+    # Resolving lets the caller report "that time has passed" itself; erroring
+    # here would make a past epoch indistinguishable from a typo.
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "@1000000000"
+    [ "$status" -eq 0 ]
+    [ "$output" = "1000000000" ]
+}
+
+@test "parse_at_time: rejects an out-of-range hour" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "25:00"
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: rejects an out-of-range minute" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "12:60"
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: rejects a twelve-hour clock" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "1am"
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: rejects a calendar word" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "tomorrow"
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: rejects an unknown duration unit" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "+5x"
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: rejects a duration with no unit" {
+    # Bare +90 is ambiguous between sleep's seconds and at's minutes; a silent
+    # sixtyfold error is worse than an error message naming the three forms.
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "+90"
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: rejects a non-numeric epoch" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time "@later"
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: rejects the empty string" {
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time ""
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: rejects a missing argument" {
+    # Must not die on an unbound variable under set -u.
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    run parse_at_time
+    [ "$status" -ne 0 ]
+    [ -z "$output" ]
+}
+
+@test "parse_at_time: reads the clock only through the accessors" {
+    # If the function called `date` directly, a frozen clock would not move it.
+    # Two different frozen clocks must give two different answers.
+    local first second
+    freeze_clock "$PROTO_EPOCH" "22:00:00"
+    first="$(parse_at_time "+1h")"
+    freeze_clock 1000000000 "22:00:00"
+    second="$(parse_at_time "+1h")"
+    [ "$first" = "$((PROTO_EPOCH + 3600))" ]
+    [ "$second" = "1000003600" ]
+}
