@@ -191,6 +191,72 @@ parse_at_time() {
     return 1
 }
 
+# Render a span of seconds compactly -- `45s`, `1m 30s`, `3h 7m`, `2d 6h` --
+# for the "in <duration>" half of a scheduled run's report. Two units is the
+# most anyone reads off a schedule line; the rest is noise at this precision.
+format_duration() {
+    local secs="${1:-0}"
+    if [ "$secs" -lt 0 ]; then
+        secs=0
+    fi
+    local days=$((secs / 86400))
+    local hours=$(((secs % 86400) / 3600))
+    local mins=$(((secs % 3600) / 60))
+    local rest=$((secs % 60))
+
+    if [ "$days" -gt 0 ]; then
+        printf '%dd %dh\n' "$days" "$hours"
+    elif [ "$hours" -gt 0 ]; then
+        printf '%dh %dm\n' "$hours" "$mins"
+    elif [ "$mins" -gt 0 ]; then
+        printf '%dm %ds\n' "$mins" "$rest"
+    else
+        printf '%ds\n' "$rest"
+    fi
+}
+
+# Render a target epoch as a local wall-clock time -- `01:07:00 tomorrow`.
+#
+# Derived by arithmetic from the two clock accessors rather than by formatting
+# the epoch, because turning an epoch back into a calendar time needs `date -r`
+# (BSD) or `date -d @` (GNU) and neither exists on the other platform. Same
+# trade parse_at_time makes, and the same accepted inaccuracy: a DST transition
+# between now and the target shifts the rendering by an hour.
+#
+# The day arithmetic floors rather than truncates, so a target in the past
+# reads as `yesterday` instead of collapsing onto `today` -- which is what lets
+# a missed schedule be reported as missed.
+describe_at_target() {
+    local target="${1:-}"
+    [[ "$target" =~ ^-?[0-9]+$ ]] || return 1
+
+    local now now_hms
+    now="$(wiggum_now_epoch)"
+    now_hms="$(wiggum_now_hms)"
+    [[ "$now_hms" =~ ^([0-9][0-9]):([0-9][0-9]):([0-9][0-9])$ ]] || return 1
+
+    local now_sod
+    now_sod=$(( 10#${BASH_REMATCH[1]} * 3600
+                + 10#${BASH_REMATCH[2]} * 60
+                + 10#${BASH_REMATCH[3]} ))
+
+    local total=$((now_sod + target - now))
+    local sod=$(( (total % 86400 + 86400) % 86400 ))
+    local days=$(( (total - sod) / 86400 ))
+
+    local when
+    case "$days" in
+        0)  when="today" ;;
+        1)  when="tomorrow" ;;
+        -1) when="yesterday" ;;
+        -*) when="${days#-} days ago" ;;
+        *)  when="in $days days" ;;
+    esac
+
+    printf '%02d:%02d:%02d %s\n' \
+        "$((sod / 3600))" "$(((sod % 3600) / 60))" "$((sod % 60))" "$when"
+}
+
 # ── Config loading ───────────────────────────────────────────────────────────
 
 # Strip leading and trailing whitespace, leaving the value otherwise intact.
@@ -3089,6 +3155,142 @@ launch_execute_background() {
     echo "  watch:   wiggum watch $base" >&2
     echo "  status:  wiggum status $base" >&2
     echo "  kill:    wiggum kill $base" >&2
+}
+
+# How often the waiter re-reads the wall clock, in seconds. Overridable from
+# the environment so a test can schedule a run two seconds out without waiting
+# a poll interval for it.
+WIGGUM_AT_POLL_INTERVAL="${WIGGUM_AT_POLL_INTERVAL:-30}"
+
+# Block until the wall clock reaches TARGET.
+#
+# Polls rather than sleeping the whole interval in one go. A single long
+# `sleep` is suspended along with the machine and resumes afterwards, so it
+# fires late by roughly the suspend duration -- on a laptop, that is every
+# overnight schedule. Re-reading the clock self-corrects across a suspend.
+#
+# Deliberately no wake lock: no `caffeinate`, no `pmset`, nothing that decides
+# on the user's behalf whether their machine stays awake. If it was asleep at
+# the target the run starts on wake, late, and says so.
+wait_until_epoch() {
+    local target="$1" now nap
+    while :; do
+        now="$(wiggum_now_epoch)"
+        [ "$now" -lt "$target" ] || break
+        nap=$((target - now))
+        if [ "$nap" -gt "$WIGGUM_AT_POLL_INTERVAL" ]; then
+            nap="$WIGGUM_AT_POLL_INTERVAL"
+        fi
+        sleep "$nap"
+    done
+}
+
+# Read one `key=value` field out of a run's `.scheduled` sidecar. Echoes
+# nothing when the file or the field is missing, so a truncated sidecar reads
+# as absent rather than crashing its caller.
+read_schedule_field() {
+    local schedfile="$1" field="$2"
+    [[ -f "$schedfile" ]] || return 0
+    sed -n "s/^${field}=//p" "$schedfile" | tail -n1
+}
+
+# Schedule a run for a wall-clock time and hand it to a waiter that starts it.
+#
+# Kept separate from launch_execute_background because a scheduled run must not
+# look like a running one. Writing the pidfile now would make `status` report a
+# run as active while it is only sleeping, and `watch` attach to a process that
+# produces nothing for hours; the `.scheduled` sidecar keeps the two states
+# distinguishable, and the waiter swaps one for the other when it fires.
+#
+# Exactly one run results. Nothing recurring is written anywhere -- no crontab
+# line, no LaunchAgent -- because one invocation should mean one run.
+launch_execute_delayed() {
+    local base="${FILES[0]}"
+    local spec="$AT_TIME"
+    local pidfile schedfile outfile target now waiting
+    pidfile="$(run_sidecar_file "$base" pid)"
+    schedfile="$(run_sidecar_file "$base" scheduled)"
+    outfile="$(run_sidecar_file "$base" out)"
+    mkdir -p "$(dirname "$pidfile")"
+
+    # Same refusal as --background, for the same reason: a second run would
+    # clobber the pidfile and orphan the first from watch/kill.
+    if [[ -f "$pidfile" ]]; then
+        local existing
+        existing="$(tr -d '[:space:]' < "$pidfile")"
+        if process_alive "$existing"; then
+            echo "A wiggum run is already active for $base (pid $existing)." >&2
+            echo "Use 'wiggum watch $base' or 'wiggum kill $base' first." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+    fi
+
+    # And refuse a second schedule over a live waiter, which would queue two
+    # runs of the same plan against each other. A sidecar whose waiter has died
+    # is stale rather than a conflict -- a machine that was off at the target
+    # time is the ordinary case -- so it is overwritten below.
+    waiting="$(read_schedule_field "$schedfile" pid)"
+    if process_alive "$waiting"; then
+        echo "A wiggum run is already scheduled for $base (pid $waiting)." >&2
+        echo "  when:   $(read_schedule_field "$schedfile" target_human)" >&2
+        echo "Use 'wiggum status $base' or 'wiggum kill $base' first." >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+
+    # parse_args validated this already; re-resolving here is what turns the
+    # spec into an epoch, and it keeps the launcher usable on its own.
+    if ! target="$(parse_at_time "$spec")"; then
+        echo "Error: invalid --at '$spec' (expected +<N>m|h|d, HH:MM or @<epoch>; e.g. +90m, 01:07, @1756180020)." >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+
+    now="$(wiggum_now_epoch)"
+    if [ "$target" -le "$now" ]; then
+        echo "Error: --at '$spec' resolves to $(format_duration $((now - target))) in the past; nothing was scheduled." >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+
+    local human
+    human="$(describe_at_target "$target")"
+
+    # Clear both flags so the waiter runs the real loop instead of recursing
+    # back into a launcher: BACKGROUND for --background, AT_TIME for this one.
+    BACKGROUND=false
+    AT_TIME=""
+
+    # The waiter writes the pidfile and the run separator itself, at the moment
+    # the run starts rather than now -- the separator marks where this run's
+    # output begins, and dating it at schedule time would put it hours early.
+    # It stays alive for the run (`wait`) so the run has a parent to be torn
+    # down with rather than being orphaned mid-flight.
+    #
+    # Its own stdio goes to /dev/null: a waiter holding the caller's stdout
+    # open for six hours hangs anything reading that stream -- a pipe, a
+    # command substitution, `bats run` -- long after the launcher returned.
+    (
+        wait_until_epoch "$target"
+        rm -f "$schedfile"
+        printf '%s %s ---\n' "$WIGGUM_RUN_SEPARATOR_PREFIX" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$outfile"
+        ( run_execute ) >>"$outfile" 2>&1 &
+        echo $! > "$pidfile"
+        wait
+    ) </dev/null >/dev/null 2>&1 &
+    local waiter=$!
+
+    {
+        echo "target=$target"
+        echo "target_human=$human"
+        echo "pid=$waiter"
+        echo "spec=$spec"
+    } > "$schedfile"
+
+    echo "Scheduled wiggum execute for $human (in $(format_duration $((target - now))))." >&2
+    echo "  plan:    $base" >&2
+    echo "  pid:     $waiter" >&2
+    echo "  output:  $outfile" >&2
+    echo "  status:  wiggum status $base" >&2
+    echo "  kill:    wiggum kill $base" >&2
+    echo "Runs once. Nothing recurring was created; wiggum will not keep this machine awake." >&2
 }
 
 # Print task progress and run state for a plan. Reads the pid/out sidecars to

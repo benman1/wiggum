@@ -124,7 +124,7 @@ the two states distinguishable.
   Acceptance: `bats test/wiggum.bats -f "parse_args: --at"` passes, including `--at` with no value exiting `EXIT_BAD_ARGS`. This test fails on the current commit, where `--at` is an unknown flag.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: Phase 1
-- [ ] Add `launch_execute_delayed()`, modelled on `launch_execute_background()`. It refuses when a live run already holds the pidfile (same check, same message shape), refuses a target time in the past with `EXIT_BAD_ARGS`, writes a `.scheduled` sidecar containing the target epoch, the human-readable target time and the waiter's pid, and prints what was scheduled along with the `status` and `kill` commands to manage it.
+- [x] Add `launch_execute_delayed()`, modelled on `launch_execute_background()`. It refuses when a live run already holds the pidfile (same check, same message shape), refuses a target time in the past with `EXIT_BAD_ARGS`, writes a `.scheduled` sidecar containing the target epoch, the human-readable target time and the waiter's pid, and prints what was scheduled along with the `status` and `kill` commands to manage it.
   Acceptance: a bats test with a stubbed clock asserts the sidecar is created with the right epoch, that a past time exits `EXIT_BAD_ARGS` and writes no sidecar, and that a live pidfile blocks scheduling.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
