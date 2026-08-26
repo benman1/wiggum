@@ -153,7 +153,7 @@ the two states distinguishable.
   Acceptance: a test schedules a run far in the future, kills it, and asserts the waiter is gone, the sidecar is gone, no pidfile was created, and the message says cancelled.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
-- [ ] Make a stale `.scheduled` sidecar self-healing: if the pid it names is not alive and its target time has passed, `status` reports the schedule as missed rather than pending, and any new `--at` for that plan is allowed rather than blocked. A machine that was off at 01:07 is the ordinary case, not an error state.
+- [x] Make a stale `.scheduled` sidecar self-healing: if the pid it names is not alive and its target time has passed, `status` reports the schedule as missed rather than pending, and any new `--at` for that plan is allowed rather than blocked. A machine that was off at 01:07 is the ordinary case, not an error state.
   Acceptance: a test writes a sidecar with a dead pid and a past target, then asserts `status` says missed and a fresh `--at` succeeds.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task

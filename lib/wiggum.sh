@@ -3509,9 +3509,22 @@ launch_execute_delayed() {
 # A sidecar whose target will not parse is reported as unreadable rather than
 # guessed at or allowed to abort the caller -- `status` is the command you run
 # when something is already confusing, so it must survive a truncated file.
+#
+# The sidecar outlives the waiter that wrote it, so its presence alone does not
+# mean a run is still coming. The waiter is the thing that fires; if it is gone
+# the schedule is a leftover, and saying "scheduled" would have somebody wait
+# all morning for output that is never coming. A machine that was off at 01:07
+# is the ordinary case rather than an error state, which is why the leftover is
+# reported and stepped over rather than treated as a fault. Two dead-waiter
+# states, because the tense differs: past the target it was missed, before it
+# nothing is waiting to fire.
+#
+# Only a dead waiter is evidence of that. A live one whose target has just
+# passed is mid-poll and about to start, so it stays pending.
 describe_schedule_state() {
-    local schedfile="$1" target
+    local schedfile="$1" target waiter
     target="$(read_schedule_field "$schedfile" target)"
+    waiter="$(read_schedule_field "$schedfile" pid)"
 
     local human
     if [[ -z "$target" ]] || ! human="$(describe_at_target "$target")"; then
@@ -3519,7 +3532,16 @@ describe_schedule_state() {
         return 0
     fi
 
-    echo "scheduled for $human (in $(format_duration $((target - $(wiggum_now_epoch)))))"
+    local now
+    now="$(wiggum_now_epoch)"
+
+    if process_alive "$waiter"; then
+        echo "scheduled for $human (in $(format_duration $((target - now))))"
+    elif [ "$target" -le "$now" ]; then
+        echo "missed: was scheduled for $human ($(format_duration $((now - target))) ago)"
+    else
+        echo "not waiting: was scheduled for $human (in $(format_duration $((target - now)))), but its waiter is gone"
+    fi
 }
 
 # Print task progress and run state for a plan. Reads the pid/scheduled/out
