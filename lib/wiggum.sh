@@ -57,6 +57,10 @@ wiggum_reset() {
     RUN_NEW_SESSION=false
     RUN_DELIMITER="---"
     BACKGROUND=false
+    # Exported the way VERBOSE is: the run --at schedules is detached
+    # into a child process, so the spec has to cross that boundary to
+    # stay reportable from the waiter.
+    export AT_TIME=""
     WATCH_TIMEOUT=0
     WATCH_POLL=5
     KILL_ON_TIMEOUT=false
@@ -754,6 +758,21 @@ parse_args() {
             -b|--background)
                 BACKGROUND=true
                 shift
+                ;;
+            --at)
+                # Validated here rather than at launch so a typo costs nothing:
+                # the spec is resolved again by the launcher, but a run
+                # scheduled six hours out should not be the thing that
+                # discovers the time was unreadable.  `${2:-}` keeps a missing
+                # value from tripping `set -u`, and rejecting it stops the
+                # shift from swallowing the option that follows.
+                if parse_at_time "${2:-}" >/dev/null; then
+                    AT_TIME="$2"
+                    shift 2
+                else
+                    echo "Error: invalid --at '${2:-}' (expected +<N>m|h|d, HH:MM or @<epoch>; e.g. +90m, 01:07, @1756180020)." >&2
+                    return "$EXIT_BAD_ARGS"
+                fi
                 ;;
             --timeout)
                 WATCH_TIMEOUT="$2"

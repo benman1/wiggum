@@ -107,7 +107,7 @@ the two states distinguishable.
 - [x] Add `wiggum_now_epoch()` (`date +%s`) and `wiggum_now_hms()` (`date +%H:%M:%S`) to `lib/wiggum.sh`. Two lines each, no flags, so the same code runs on BSD, GNU and busybox `date`. They exist to be overridden by tests, the way `claude` already is at `test/wiggum.bats:19-21`.
   Acceptance: `bats test/wiggum.bats -f wiggum_now` passes, asserting each returns the expected shape and that overriding them in a test changes what a caller sees.
   Files: lib/wiggum.sh, test/wiggum.bats
-- [ ] Add `parse_at_time <spec>` writing an epoch to stdout, non-zero on anything it does not recognise. Accept exactly `+<N>[m|h|d]`, `HH:MM` and `@<epoch>`, using only the two accessors and shell arithmetic. Force base 10 on the hour and minute (`10#`), or `08` and `09` are parsed as invalid octal under `set -e` and the whole run dies on a valid input.
+- [x] Add `parse_at_time <spec>` writing an epoch to stdout, non-zero on anything it does not recognise. Accept exactly `+<N>[m|h|d]`, `HH:MM` and `@<epoch>`, using only the two accessors and shell arithmetic. Force base 10 on the hour and minute (`10#`), or `08` and `09` are parsed as invalid octal under `set -e` and the whole run dies on a valid input.
   Acceptance: `bats test/wiggum.bats -f parse_at_time` passes with the eleven cases prototyped in the design note above, including `08:30` and `09:00` resolving correctly, and `25:00`, `1am`, `tomorrow`, `+5x` and the empty string each returning non-zero with nothing on stdout.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: previous task
@@ -120,7 +120,7 @@ the two states distinguishable.
 
 ## Phase 2: Wait, then run once
 
-- [ ] Add `--at <WHEN>` to the `execute` branch of the argument parser, beside `-b|--background` (`lib/wiggum.sh:649`) and `--iterations|--max-iterations` (`:593`). Store it in an `AT_TIME` global cleared by `wiggum_reset()`. A missing value must error rather than swallow the next argument.
+- [x] Add `--at <WHEN>` to the `execute` branch of the argument parser, beside `-b|--background` (`lib/wiggum.sh:649`) and `--iterations|--max-iterations` (`:593`). Store it in an `AT_TIME` global cleared by `wiggum_reset()`. A missing value must error rather than swallow the next argument.
   Acceptance: `bats test/wiggum.bats -f "parse_args: --at"` passes, including `--at` with no value exiting `EXIT_BAD_ARGS`. This test fails on the current commit, where `--at` is an unknown flag.
   Files: lib/wiggum.sh, test/wiggum.bats
   Depends on: Phase 1
