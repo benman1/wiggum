@@ -3668,10 +3668,82 @@ kill_run() {
     return 0
 }
 
-# `wiggum kill <plan>` entry point -- derives the pidfile from the plan path.
+# Cancel a schedule that has not fired yet: stop the waiter its `.scheduled`
+# sidecar names, then drop the sidecar.
+#
+# The pid comes out of the sidecar and nowhere else. The waiter's command line
+# is a long env-and-bash-c string, so a `pgrep -f` over it can match twice or
+# truncate -- the guess this repo refuses everywhere else, and the reason the
+# waiter records its own pid the moment it starts.
+#
+# The waiter naps in a `sleep` child, so signal the child first: killing only
+# the parent leaves that sleep holding a poll interval open. Same shape as
+# kill_run, and the same discipline -- children of one recorded pid, never a
+# pattern.
+#
+# Says "cancelled", not "killed", because nothing ran. The distinction is what
+# tells somebody there is no output to go looking for.
+cancel_schedule() {
+    local schedfile="$1"
+    local waiter human
+    waiter="$(read_schedule_field "$schedfile" pid)"
+    human="$(read_schedule_field "$schedfile" target_human)"
+    [[ -n "$human" ]] || human="an unrecorded time"
+
+    if process_alive "$waiter"; then
+        echo "Cancelling the wiggum run scheduled for $human (waiter pid $waiter)..." >&2
+        pkill -TERM -P "$waiter" 2>/dev/null || true
+        kill -TERM "$waiter" 2>/dev/null || true
+    else
+        # A machine that was off at the target time is the ordinary case, not
+        # an error state: there is nothing to signal, only a sidecar to drop.
+        echo "The run scheduled for $human is no longer waiting; clearing its schedule." >&2
+    fi
+
+    rm -f "$schedfile"
+    return 0
+}
+
+# `wiggum kill <plan>` entry point -- derives the sidecars from the plan path
+# and stops whichever of the two states the plan is actually in.
+#
+# A live pidfile outranks a schedule, the same precedence run_status reads them
+# in: both present means the waiter fired between the two reads, and the run is
+# the newer fact. A dead pidfile does not outrank one, because scheduling is
+# allowed over a finished run's leftovers.
+#
+# With neither present there is nothing to stop, which is a state to report
+# rather than an error. `kill` is what you reach for when you are unsure what
+# is running, and it should not fail for answering "nothing".
 run_kill() {
     local base="${FILES[0]}"
-    kill_run "$(run_sidecar_file "$base" pid)"
+    local pidfile schedfile pid=""
+    pidfile="$(run_sidecar_file "$base" pid)"
+    schedfile="$(run_sidecar_file "$base" scheduled)"
+
+    if [[ -f "$pidfile" ]]; then
+        pid="$(tr -d '[:space:]' < "$pidfile")"
+    fi
+
+    if process_alive "$pid"; then
+        kill_run "$pidfile"
+        return
+    fi
+
+    if [[ -f "$schedfile" ]]; then
+        cancel_schedule "$schedfile"
+        return
+    fi
+
+    # Nothing scheduled, so a leftover pidfile is the only thing left to
+    # report on -- kill_run cleans up a stale one and says so.
+    if [[ -f "$pidfile" ]]; then
+        kill_run "$pidfile"
+        return
+    fi
+
+    echo "Nothing to stop for $base: no run is active or scheduled." >&2
+    return 0
 }
 
 # Collect the pidfiles of known wiggum runs. With no args, scans `docs/` and the

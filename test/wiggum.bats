@@ -4100,6 +4100,98 @@ EOF
     [ ! -f plan.pid ]
 }
 
+# Cancelling a schedule is not the same act as stopping a run: nothing has
+# started, so there is no output to explain and the message has to say so.
+
+@test "run_kill: cancels a scheduled run and removes its sidecar" {
+    freeze_clock_now "22:00:00"
+    schedule_far_future "+6h"
+    local waiter
+    waiter="$(sidecar_field pid)"
+
+    run run_kill
+
+    # The waiter sleeps in a child, so it goes down a moment after the signal
+    # rather than in the same instant. Bounded wait, then tear down whatever
+    # survived -- a failing assertion must not leave a detached waiter behind.
+    local tries=50
+    while [ "$tries" -gt 0 ] && process_alive "$waiter"; do
+        sleep 0.1
+        tries=$((tries - 1))
+    done
+    kill_waiter "$waiter"
+
+    [ "$status" -eq 0 ]
+    [ -n "$waiter" ] || return 1
+    ! process_alive "$waiter"
+    [ ! -f docs/plan.scheduled ] || return 1
+    [ ! -f docs/plan.pid ] || return 1
+    [[ "$output" == *"Cancelling"* ]] || return 1
+    [[ "$output" != *"Killing wiggum run"* ]] || return 1
+}
+
+@test "run_kill: a live run outranks a schedule" {
+    # Both present means the waiter fired between the two reads. The run is the
+    # newer fact, so kill it rather than cancelling a schedule that is over.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 1 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > plan.pid
+    write_schedule_sidecar "$((PROTO_EPOCH + 5400))" "23:30:00 today" "$dead"
+    FILES=(plan.md)
+    run run_kill
+    sleep 0.2
+    kill "$pid" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    ! process_alive "$pid"
+    [ ! -f plan.pid ]
+    [[ "$output" == *"Killing wiggum run"* ]] || return 1
+    [[ "$output" != *"Cancelling"* ]] || return 1
+}
+
+@test "run_kill: clears a schedule whose waiter is already dead" {
+    # A machine that was off at the target time is the ordinary case, not an
+    # error: there is nothing to signal, only a sidecar to drop.
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 1 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    write_schedule_sidecar "$((PROTO_EPOCH + 5400))" "23:30:00 today" "$dead"
+    FILES=(plan.md)
+    run run_kill
+    [ "$status" -eq 0 ]
+    [ ! -f plan.scheduled ]
+    [[ "$output" == *"no longer waiting"* ]] || return 1
+}
+
+@test "run_kill: reports nothing to stop with neither sidecar present" {
+    cat > plan.md <<'EOF'
+- [ ] one
+EOF
+    FILES=(plan.md)
+    run run_kill
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Nothing to stop"* ]] || return 1
+}
+
+@test "run_kill: never pattern-matches the process table for the waiter" {
+    # The waiter's command line is a long env-and-bash-c string; a pgrep -f over
+    # it can truncate or hit twice. The sidecar records the one pid to signal.
+    local body
+    body="$(sed -n '/^cancel_schedule()/,/^}/p' "$WIGGUM_LIB")"
+    [ -n "$body" ] || return 1
+    [[ "$body" != *pgrep* ]] || return 1
+    [[ "$body" != *pkill\ -f* ]] || return 1
+    [[ "$body" == *read_schedule_field* ]] || return 1
+}
+
 # ── launch_execute_background ─────────────────────────────────────────────────
 
 @test "launch_execute_background: writes pidfile + out, runs the loop once" {
