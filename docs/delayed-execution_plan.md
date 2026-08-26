@@ -170,7 +170,7 @@ the two states distinguishable.
   Acceptance: `wiggum execute --help` shows the flag and the three forms; `wiggum --help` still exits 0.
   Files: lib/wiggum.sh
   Depends on: Phase 3
-- [ ] Add a `### Delayed runs` section to `README.md` next to `### Background runs & supervision` (`README.md:304`). Cover the three time forms with an example of each, why there is no calendar-date form and that `@<epoch>` is the escape hatch, the DST caveat on `HH:MM`, that it runs once and creates nothing recurring, how `status` and `kill` behave, and the sleep interaction: on a laptop that sleeps, the wait resumes on wake and the run starts late, and wiggum will not keep the machine awake for you because that is your call. Point at `examples/wiggum-nightly-setup.sh` for genuinely recurring schedules.
+- [x] Add a `### Delayed runs` section to `README.md` next to `### Background runs & supervision` (`README.md:304`). Cover the three time forms with an example of each, why there is no calendar-date form and that `@<epoch>` is the escape hatch, the DST caveat on `HH:MM`, that it runs once and creates nothing recurring, how `status` and `kill` behave, and the sleep interaction: on a laptop that sleeps, the wait resumes on wake and the run starts late, and wiggum will not keep the machine awake for you because that is your call. Point at `examples/wiggum-nightly-setup.sh` for genuinely recurring schedules.
   Acceptance: the section exists, names the three forms, states the run-once guarantee, and says wiggum does not prevent sleep.
   Files: README.md
   Depends on: previous task
