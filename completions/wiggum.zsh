@@ -55,6 +55,7 @@ _wiggum() {
                 '--summary-file[Output path for the summary]:file:_files -g "*.md"' \
                 '--update-docs[Comma-separated doc files to update]:files:_files -g "*.md"' \
                 '(-b --background)'{-b,--background}'[Run detached; supervise with status/watch/kill]' \
+                '--at[Wait until WHEN, then run once, detached: +90m, 01:07 or @epoch]:when:' \
                 '--no-verify[Skip the verification waterfall]' \
                 '--no-commit[Skip wiggum-issued git commits]' \
                 "$effort_opt" \

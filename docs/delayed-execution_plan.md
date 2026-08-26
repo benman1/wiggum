@@ -174,7 +174,7 @@ the two states distinguishable.
   Acceptance: the section exists, names the three forms, states the run-once guarantee, and says wiggum does not prevent sleep.
   Files: README.md
   Depends on: previous task
-- [ ] Add `--at` to both completion files: the `execute` option list in `completions/wiggum.bash:76` and the zsh equivalent. Give it no value completion, since a time is free text.
+- [x] Add `--at` to both completion files: the `execute` option list in `completions/wiggum.bash:76` and the zsh equivalent. Give it no value completion, since a time is free text.
   Acceptance: `grep -c -- '--at' completions/wiggum.bash completions/wiggum.zsh` returns at least 1 for each.
   Files: completions/wiggum.bash, completions/wiggum.zsh
   Depends on: previous task
