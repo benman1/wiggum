@@ -5643,3 +5643,114 @@ undocumented_surfaces() {
     missing="$(undocumented_surfaces --a)"
     [ "$missing" = "usage readme completion-bash completion-zsh skill-table" ]
 }
+
+# ── Guard: the --at path takes no decisions that are not wiggum's to take ────
+
+# The functions that exist because of `--at`, plus the three command entry
+# points that dispatch into them.  Named explicitly rather than matched by
+# pattern so that a function renamed out of the list is a loud failure below
+# and not a silently narrowed guard.
+at_path_functions() {
+    printf '%s\n' \
+        wiggum_now_epoch wiggum_now_hms parse_at_time format_duration \
+        describe_at_target wait_until_epoch at_replay_argv at_waiter_script \
+        start_at_waiter read_schedule_field launch_execute_delayed \
+        describe_schedule_state cancel_schedule \
+        run_execute run_status run_kill
+}
+
+# The bodies of those functions with comments stripped, so the guards below read
+# what the code does rather than what it says about itself -- the four command
+# names are discussed at length in the comments above `wait_until_epoch`,
+# `start_at_waiter` and `launch_execute_delayed`, and a guard that counted those
+# would fail on a clean tree.
+#
+# Bodies only, and scoped to lib/wiggum.sh: `examples/wiggum-cron.sh` and
+# `examples/wiggum-nightly-setup.sh` set up genuinely recurring runs and are
+# supposed to name `crontab` and `launchctl`.
+#
+# FILE defaults to the repo's own lib.  A missing file, or a function that is
+# not in it, exits non-zero naming what was not found, so a rename cannot turn
+# this into a test that reads nothing and passes.
+at_path_source() {
+    local file="${1:-}" fn body text=""
+
+    if [ -z "$file" ]; then
+        file="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/lib/wiggum.sh"
+    fi
+    if [ ! -f "$file" ]; then
+        echo "at_path_source: no such file: $file" >&2
+        return 1
+    fi
+
+    while read -r fn; do
+        body="$(sed -n "/^${fn}() {/,/^}/p" "$file")"
+        if [ -z "$body" ]; then
+            echo "at_path_source: no function named $fn in $file" >&2
+            return 1
+        fi
+        text="$text$body
+"
+    done < <(at_path_functions)
+
+    printf '%s' "$text" | sed 's/[[:space:]]#.*$//; s/^[[:space:]]*#.*$//'
+}
+
+# Names the decision-taking commands invoked in the source on stdin, sorted and
+# space-separated; empty when there are none.
+#
+# `caffeinate` and `pmset` would take a decision about the user's hardware that
+# is not wiggum's to take -- staying awake costs battery and heat, and a tool
+# asserting it silently from a shell is worse than a run that starts late.
+# `crontab` and `launchctl` would leave recurring state behind a flag whose
+# whole contract is one invocation, one run.
+decision_taking_commands() {
+    grep -owE 'caffeinate|pmset|crontab|launchctl' | sort -u | tr '\n' ' ' |
+        sed 's/ $//'
+}
+
+@test "guards: the --at code path invokes no wake-lock or recurring-schedule command" {
+    local src found
+    src="$(at_path_source)" || return 1
+
+    # Proves the extractor produced code and not an empty string, which is the
+    # shape in which this guard would pass without checking anything.
+    [[ "$src" == *"screen -dmS"* ]] || return 1
+
+    found="$(printf '%s\n' "$src" | decision_taking_commands)"
+    if [ -n "$found" ]; then
+        echo "the --at code path invokes: $found"
+        return 1
+    fi
+}
+
+@test "guards: the wake-lock guard catches each of the four commands" {
+    # Proves the guard discriminates.  Without this, a matcher that never fired
+    # would pass the test above on a tree that had grown all four.
+    local cmd found
+    for cmd in caffeinate pmset crontab launchctl; do
+        found="$(printf 'wait_until_epoch() {\n    %s -i sleep 3600\n}\n' "$cmd" |
+            decision_taking_commands)"
+        [ "$found" = "$cmd" ] || return 1
+    done
+}
+
+@test "guards: the wake-lock guard does not fire on a comment or a longer word" {
+    # `# no caffeinate here` is the comment this repo actually carries, and
+    # `pmsetup` is the false positive a bare substring match would invent.
+    local found
+    found="$(printf '    echo pmsetup\n    echo uncrontabbed\n' |
+        decision_taking_commands)"
+    [ -z "$found" ]
+}
+
+@test "guards: the --at source extractor fails loudly when it cannot read the path" {
+    run at_path_source "$TEST_DIR/absent.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no such file"* ]] || return 1
+
+    printf 'unrelated() {\n    :\n}\n' > "$TEST_DIR/partial.sh"
+    run at_path_source "$TEST_DIR/partial.sh"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no function named wiggum_now_epoch"* ]] || return 1
+}

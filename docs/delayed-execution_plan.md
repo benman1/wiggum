@@ -195,7 +195,7 @@ the two states distinguishable.
   Acceptance: passes on the tree at the end of Phase 4; fails when `--at` is removed from any one of the four.
   Files: test/wiggum.bats
   Depends on: Phase 4
-- [ ] Add a bats test asserting nothing in the `--at` code path invokes `caffeinate`, `pmset`, `crontab` or `launchctl`. The first two would take a decision about the user's hardware that is not wiggum's to take; the second two would make a one-shot flag leave recurring state behind. Both are stated in Constraints and neither is otherwise enforced.
+- [x] Add a bats test asserting nothing in the `--at` code path invokes `caffeinate`, `pmset`, `crontab` or `launchctl`. The first two would take a decision about the user's hardware that is not wiggum's to take; the second two would make a one-shot flag leave recurring state behind. Both are stated in Constraints and neither is otherwise enforced.
   Acceptance: a source-reading test over `lib/wiggum.sh` passes now and fails when any of those four commands is added.
   Files: test/wiggum.bats
   Depends on: previous task
