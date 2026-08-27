@@ -191,7 +191,7 @@ the two states distinguishable.
 
 ## Phase 5: Guards against the documentation drifting
 
-- [ ] Add a bats test asserting `--at` appears in all four documentation surfaces: `usage()`, `README.md`, both completion files, and the embedded skill table. This is the first doc-sync guard in this repo (`grep -n "README" test/wiggum.bats` currently finds only `--update-docs` argument tests), so write it as a small reusable helper that takes a flag name, and use it for `--at`.
+- [x] Add a bats test asserting `--at` appears in all four documentation surfaces: `usage()`, `README.md`, both completion files, and the embedded skill table. This is the first doc-sync guard in this repo (`grep -n "README" test/wiggum.bats` currently finds only `--update-docs` argument tests), so write it as a small reusable helper that takes a flag name, and use it for `--at`.
   Acceptance: passes on the tree at the end of Phase 4; fails when `--at` is removed from any one of the four.
   Files: test/wiggum.bats
   Depends on: Phase 4
