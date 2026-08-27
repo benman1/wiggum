@@ -1,6 +1,6 @@
 # Delayed execution: `wiggum execute --at <WHEN>`
 
-Status: in progress
+Status: complete
 Slug: delayed-execution
 Target files:
 - lib/wiggum.sh
@@ -203,7 +203,7 @@ the two states distinguishable.
   Acceptance: passes on the current tree; fails when `date -d` or `date -j` is added to `parse_at_time` or the waiter.
   Files: test/wiggum.bats
   Depends on: previous task
-- [ ] Run the full verify waterfall and fix anything this plan broke.
+- [x] Run the full verify waterfall and fix anything this plan broke.
   Acceptance: `shellcheck -s bash wiggum.sh lib/wiggum.sh install.sh` and `bats test/wiggum.bats` both exit 0, with the test count no lower than the 437 present before this plan plus the tests it adds.
   Files: (whatever the run surfaces)
   Depends on: all previous tasks
