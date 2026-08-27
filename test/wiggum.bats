@@ -5555,3 +5555,91 @@ EOF
         [[ "$block" == *"--at"* ]] || return 1
     done
 }
+
+# ── Documentation sync ───────────────────────────────────────────────────────
+
+# A flag nobody can find is a flag nobody uses, and this repo documents each one
+# in five places that drift independently: the command's own `--help`, the
+# README, both shell completions, and the CLI reference table in the embedded
+# skill text -- which is what an agent driving wiggum reads.  Names the surfaces
+# missing FLAG rather than returning a bare boolean, so a failure says which one
+# went stale.
+#
+# COMMAND (default `execute`) scopes the three per-command surfaces to their own
+# case block: a flag mentioned elsewhere in lib/wiggum.sh is not documentation
+# for the command that takes it.  A surface whose file is absent or whose block
+# extracts empty is reported as `(unreadable)`, so a moved file or a reindented
+# heredoc fails the guard loudly instead of passing it vacuously.
+undocumented_surfaces() {
+    local flag="$1" command="${2:-execute}"
+    local root surface start text file missing=""
+
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    # Matched with index(), not a regex, so the `)` needs no escaping.
+    start="        ${command})"
+
+    for surface in usage readme completion-bash completion-zsh skill-table; do
+        text=""
+        case "$surface" in
+            usage)
+                file="$root/lib/wiggum.sh"
+                if [ -f "$file" ]; then
+                    text="$(sed -n '/^usage() {/,/^}/p' "$file" |
+                        awk -v start="$start" 'index($0, start) == 1, /^            ;;$/')"
+                fi
+                ;;
+            readme)
+                file="$root/README.md"
+                if [ -f "$file" ]; then
+                    text="$(cat "$file")"
+                fi
+                ;;
+            completion-bash|completion-zsh)
+                file="$root/completions/wiggum.${surface#completion-}"
+                if [ -f "$file" ]; then
+                    text="$(awk -v start="$start" \
+                        'index($0, start) == 1, /^            ;;$/' "$file")"
+                fi
+                ;;
+            skill-table)
+                text="$(wiggum_skill_content |
+                    awk '/^\| Command \| What it does \|/,/^$/')"
+                ;;
+        esac
+
+        if [ -z "$text" ]; then
+            missing="$missing $surface(unreadable)"
+        elif ! printf '%s\n' "$text" | sed 's/^/ /; s/$/ /' |
+                grep -qE -- "[^A-Za-z0-9_-]${flag}[^A-Za-z0-9_-]"; then
+            missing="$missing $surface"
+        fi
+    done
+
+    echo "${missing# }"
+}
+
+@test "docs: --at is documented on every surface" {
+    local missing
+    missing="$(undocumented_surfaces --at)"
+    if [ -n "$missing" ]; then
+        echo "--at is missing from: $missing"
+        return 1
+    fi
+}
+
+@test "docs: the doc-sync guard names every surface for an undocumented flag" {
+    # Proves the guard discriminates.  Without this, a helper that silently
+    # extracted nothing -- or matched too loosely -- would pass the test above
+    # for a flag that is documented nowhere at all.
+    local missing
+    missing="$(undocumented_surfaces --no-such-flag)"
+    [ "$missing" = "usage readme completion-bash completion-zsh skill-table" ]
+}
+
+@test "docs: the doc-sync guard does not match a flag by prefix" {
+    # `--at` must not be satisfied by a `--attach` sitting on the same line;
+    # that is how a removed flag reads as present.
+    local missing
+    missing="$(undocumented_surfaces --a)"
+    [ "$missing" = "usage readme completion-bash completion-zsh skill-table" ]
+}
