@@ -5754,3 +5754,65 @@ decision_taking_commands() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"no function named wiggum_now_epoch"* ]] || return 1
 }
+
+# Names the `date` invocations on stdin that pass anything but a `+FORMAT`,
+# sorted and space-separated; empty when there are none.
+#
+# `date -d` is GNU-only, `date -j -f` and `date -r <epoch>` are BSD-only, and
+# CI runs one platform at a time, so a later edit reaching for either would
+# break the other silently.  Resolving `<WHEN>` with `%s`/`%H`/`%M`/`%S` and
+# shell arithmetic instead of a calendar parser is the invariant the whole
+# design rests on, and this is what holds it.
+#
+# `gdate` is matched too: reaching for GNU coreutils on macOS is the same
+# defect wearing a different name, and the design deliberately keeps
+# platform-specific date parsing outside wiggum, behind the `@<epoch>` form.
+date_flag_calls() {
+    grep -owE "g?date[[:space:]]+[^[:space:]]+" |
+        grep -vE "g?date[[:space:]]+[\"']?\+" |
+        sort -u | tr '\n' ' ' | sed 's/ $//'
+}
+
+@test "guards: no date call in the --at code path uses a flag beyond +FORMAT" {
+    local src found
+    src="$(at_path_source)" || return 1
+
+    # Proves the extractor produced the clock accessors and not an empty
+    # string, which is the shape in which this guard would pass without
+    # checking anything.
+    [[ "$src" == *"date +%s"* ]] || return 1
+    [[ "$src" == *"date +%H:%M:%S"* ]] || return 1
+
+    found="$(printf '%s\n' "$src" | date_flag_calls)"
+    if [ -n "$found" ]; then
+        echo "the --at code path calls date with a non-format argument: $found"
+        return 1
+    fi
+}
+
+@test "guards: the date-flag guard catches each platform-specific flag" {
+    # Proves the guard discriminates.  Without this, a matcher that never
+    # fired would pass the test above on a tree that had grown all of them.
+    local spec flag found
+    for spec in "date -d:date -d" "date -j:date -j" "date -r:date -r" \
+        "gdate -d:gdate -d"; do
+        flag="${spec%%:*}"
+        found="$(printf 'parse_at_time() {\n    %s "@$1" +%%s\n}\n' "$flag" |
+            date_flag_calls)"
+        [ "$found" = "${spec#*:}" ] || return 1
+    done
+}
+
+@test "guards: the date-flag guard does not fire on a format or a prose word" {
+    # The three shapes the clean tree actually carries -- bare, single-quoted
+    # and double-quoted formats -- plus the prose false positive a bare
+    # substring match would invent out of "update" and "validate".
+    local found
+    found="$(printf '%s\n' \
+        '    date +%s' \
+        "    date '+%Y-%m-%d %H:%M:%S'" \
+        '    date "+%s"' \
+        '    echo "update the plan and validate the candidate"' |
+        date_flag_calls)"
+    [ -z "$found" ]
+}

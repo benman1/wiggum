@@ -199,7 +199,7 @@ the two states distinguishable.
   Acceptance: a source-reading test over `lib/wiggum.sh` passes now and fails when any of those four commands is added.
   Files: test/wiggum.bats
   Depends on: previous task
-- [ ] Add a bats test asserting no `date` call in the `--at` code path uses a flag other than `+FORMAT`. `date -d` is GNU-only, `date -j` and `date -r <epoch>` are BSD-only, and a well-meaning later edit reaching for one of them would break the other platform silently, since this repo's CI runs on one of them at a time. This is the invariant the whole design rests on.
+- [x] Add a bats test asserting no `date` call in the `--at` code path uses a flag other than `+FORMAT`. `date -d` is GNU-only, `date -j` and `date -r <epoch>` are BSD-only, and a well-meaning later edit reaching for one of them would break the other platform silently, since this repo's CI runs on one of them at a time. This is the invariant the whole design rests on.
   Acceptance: passes on the current tree; fails when `date -d` or `date -j` is added to `parse_at_time` or the waiter.
   Files: test/wiggum.bats
   Depends on: previous task
