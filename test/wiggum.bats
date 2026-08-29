@@ -1953,6 +1953,57 @@ EOF
     [[ "$output" == *"per-task 'Acceptance:' and 'Files:' lines"* ]] || return 1
 }
 
+@test "prompt_expected_benefits: opens the plan with the benefits section" {
+    run prompt_expected_benefits
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"## Expected benefits"* ]] || return 1
+    [[ "$output" == *"most valuable first"* ]] || return 1
+}
+
+@test "prompt_expected_benefits: every benefit carries an observable signal" {
+    run prompt_expected_benefits
+    [[ "$output" == *"'Signal:' line"* ]] || return 1
+    [[ "$output" == *"after shipping"* ]] || return 1
+    # An unmeasurable benefit is labelled, not padded out into a fake metric.
+    [[ "$output" == *"speculative"* ]] || return 1
+}
+
+@test "prompt_expected_benefits: ties every phase back to a benefit" {
+    run prompt_expected_benefits
+    [[ "$output" == *"'Serves:' line"* ]] || return 1
+    [[ "$output" == *"scope creep"* ]] || return 1
+    # The planner may conclude the work is not worth doing as scoped.
+    [[ "$output" == *"do not justify the work"* ]] || return 1
+    [[ "$output" == *"smaller version"* ]] || return 1
+}
+
+@test "prompt_constraints_summary: follows the benefits section" {
+    run prompt_constraints_summary
+    [[ "$output" == *"Immediately after '## Expected benefits'"* ]] || return 1
+    # The pre-existing ordering rule survives: still ahead of phases and tasks.
+    [[ "$output" == *"before writing any phases or tasks"* ]] || return 1
+}
+
+@test "prompt_research_and_delegation: keeps non-edit tasks actionable" {
+    run prompt_research_and_delegation
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"actionable"* ]] || return 1
+    [[ "$output" == *"research task"* ]] || return 1
+    # A research task still lands an artifact, not a feeling of understanding.
+    [[ "$output" == *"written artifact"* ]] || return 1
+    [[ "$output" == *"never 'understand X'"* ]] || return 1
+}
+
+@test "prompt_research_and_delegation: allows bounded nested wiggum runs" {
+    run prompt_research_and_delegation
+    [[ "$output" == *"wiggum plan"* ]] || return 1
+    [[ "$output" == *"--max-iterations"* ]] || return 1
+    [[ "$output" == *"foreground"* ]] || return 1
+    # Guardrails: self-contained, bounded, and never fanned out in parallel.
+    [[ "$output" == *"self-contained"* ]] || return 1
+    [[ "$output" == *"never launch nested runs in parallel"* ]] || return 1
+}
+
 @test "prompt_constraints_summary: opens the plan with a Constraints section as a self-check" {
     run prompt_constraints_summary
     [ "$status" -eq 0 ]
@@ -2085,6 +2136,28 @@ EOF
     [[ "$output" == *"Edge Cases"* ]] || return 1
     [[ "$output" == *"Error States"* ]] || return 1
     [[ "$output" == *"Non-Functional"* ]] || return 1
+}
+
+@test "wiggum_skill_content: documents starting the plan from expected benefits" {
+    run wiggum_skill_content
+    [[ "$output" == *"## Expected benefits"* ]] || return 1
+    [[ "$output" == *"Start from the benefits, not from the tasks"* ]] || return 1
+    [[ "$output" == *"Signal:"* ]] || return 1
+    [[ "$output" == *"speculative"* ]] || return 1
+    # Phases trace back to the benefits they deliver.
+    [[ "$output" == *"Serves: benefits"* ]] || return 1
+    [[ "$output" == *"scope creep"* ]] || return 1
+}
+
+@test "wiggum_skill_content: documents research tasks and nested wiggum runs" {
+    run wiggum_skill_content
+    [[ "$output" == *"doesn't have to be an edit"* ]] || return 1
+    [[ "$output" == *"Research / a deep-dive spike"* ]] || return 1
+    [[ "$output" == *"never \"understand X\""* ]] || return 1
+    [[ "$output" == *"A nested wiggum run"* ]] || return 1
+    [[ "$output" == *"--max-iterations N"* ]] || return 1
+    # A background child would outlive the iteration that launched it.
+    [[ "$output" == *"foreground"* ]] || return 1
 }
 
 @test "wiggum_skill_content: documents opening the plan with a Constraints section" {
@@ -3222,9 +3295,15 @@ S
     grep -q 'Then' "$captured"
     # The unchanged per-task acceptance rule is still present verbatim (additive change)
     grep -q "'Acceptance:' line stating an observable outcome" "$captured"
-    # The constraints self-check reached the prompt
+    # The benefits-first opening reached the prompt
+    grep -q '## Expected benefits' "$captured"
+    grep -q "'Serves:' line" "$captured"
+    # The constraints self-check reached the prompt, after the benefits
     grep -q '## Constraints' "$captured"
     grep -q 'before writing any phases or tasks' "$captured"
+    # Research tasks and nested wiggum runs reached the prompt
+    grep -q 'research task' "$captured"
+    grep -q 'nested wiggum run' "$captured"
     # The four risk gates reached the prompt
     grep -q 'read-only measurement' "$captured"
     grep -q 'dry run' "$captured"
@@ -3308,7 +3387,7 @@ S
 
     # A feature request pays for the universal rules only, never the defect text.
     ! grep -q '## Symptoms' "$captured"
-    [ "$(wc -c < "$captured")" -lt 6000 ]
+    [ "$(wc -c < "$captured")" -lt 8000 ]
 }
 
 @test "run_plan: defect prompt stays within budget and exceeds the feature prompt" {
@@ -3340,7 +3419,7 @@ S
 
     # The diagnosis sections are real added text, and they stay bounded.
     [ "$defect_size" -gt "$feature_size" ]
-    [ "$defect_size" -lt 9000 ]
+    [ "$defect_size" -lt 10000 ]
 }
 
 # ── Strict mode ──────────────────────────────────────────────────────────────
