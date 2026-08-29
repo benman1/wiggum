@@ -1984,6 +1984,35 @@ EOF
     [[ "$output" == *"before writing any phases or tasks"* ]] || return 1
 }
 
+@test "prompt_issue_ledger: names where a repo keeps its issue ledger" {
+    run prompt_issue_ledger
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"issue ledger"* ]] || return 1
+    [[ "$output" == *"ISSUES.md"* ]] || return 1
+    [[ "$output" == *"CHANGELOG"* ]] || return 1
+    # The seed issue file itself is a ledger when it carries a status table.
+    [[ "$output" == *"the plan's own issue file"* ]] || return 1
+}
+
+@test "prompt_issue_ledger: closes only what actually shipped" {
+    run prompt_issue_ledger
+    [[ "$output" == *"ONLY the entries this run actually finished"* ]] || return 1
+    [[ "$output" == *"commit refs"* ]] || return 1
+    # An open or dropped task must not produce a shipped row.
+    [[ "$output" == *"has NOT shipped"* ]] || return 1
+    [[ "$output" == *"false 'done' row"* ]] || return 1
+    [[ "$output" == *"untouched"* ]] || return 1
+}
+
+@test "prompt_issue_ledger: never invents a ledger or closes a remote tracker" {
+    run prompt_issue_ledger
+    [[ "$output" == *"Never invent a ledger"* ]] || return 1
+    [[ "$output" == *"backfilling an entry"* ]] || return 1
+    # Closing someone's GitHub/Jira issue is a human's call, not the loop's.
+    [[ "$output" == *"Do not close a remote tracker"* ]] || return 1
+    [[ "$output" == *"leave closing it to a human"* ]] || return 1
+}
+
 @test "prompt_research_and_delegation: keeps non-edit tasks actionable" {
     run prompt_research_and_delegation
     [ "$status" -eq 0 ]
@@ -2192,6 +2221,20 @@ EOF
     [[ "$output" == *"reintroduced"* ]] || return 1
     # A gate that doesn't apply is marked, not dropped.
     [[ "$output" == *"mark a gate whose trigger is absent"* ]] || return 1
+}
+
+@test "wiggum_skill_content: documents the issue ledger closing with the run" {
+    run wiggum_skill_content
+    [[ "$output" == *"issue ledger"* ]] || return 1
+    [[ "$output" == *"3f"* ]] || return 1
+    # What the supervisor owns: pointing at an unfindable ledger, and checking the
+    # record against the tree rather than trusting the row.
+    [[ "$output" == *"name that path in the plan"* ]] || return 1
+    [[ "$output" == *"git show --stat"* ]] || return 1
+    [[ "$output" == *"still \`[ ]\`"* ]] || return 1
+    # It reports an absent ledger; it does not create one or close a remote tracker.
+    [[ "$output" == *"will not invent a ledger"* ]] || return 1
+    [[ "$output" == *"GitHub, Jira"* ]] || return 1
 }
 
 @test "wiggum_skill_content: documents --at in the CLI reference table" {
@@ -4660,6 +4703,50 @@ EOF
     # The added checkbox was counted, so implementation ran (not the skip path).
     [[ "$output" != *"no trackable tasks"* ]] || return 1
     grep -q "Execute the next discrete implementation step" claude_calls
+}
+
+@test "run_execute: phase 3 reconciles the issue ledger" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+# Plan
+- [x] already done
+EOF
+    claude() { printf '%s\n' "$*" >> claude_calls; return 0; }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    run run_execute
+    [ "$status" -eq 0 ]
+    # Phase 3 aligns the ledger alongside the plan checkboxes, not just the summary.
+    grep -q "Close the loop on the issue ledger" claude_calls
+    grep -q "Never invent a ledger" claude_calls
+    # ...and the summary has to say which entries closed and which stayed open.
+    grep -q "issue-ledger entries you closed" claude_calls
+    # The pre-existing phase-3 duties survive the insertion.
+    grep -q "marking completed tasks with \[x\]" claude_calls
+    grep -q "Write a concise execution summary" claude_calls
+}
+
+@test "run_execute: the phase 3 commit picks up the ledger it just edited" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+# Plan
+- [x] already done
+EOF
+    claude() { printf '%s\n' "$*" >> claude_calls; return 0; }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=false
+    run run_execute
+    [ "$status" -eq 0 ]
+    # A ledger edited but left uncommitted is a ledger that didn't get updated.
+    grep -q "any issue ledger updated" claude_calls
 }
 
 # ── env_reminder ─────────────────────────────────────────────────────────────

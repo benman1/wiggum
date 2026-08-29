@@ -565,6 +565,29 @@ hour tells you nothing: the run may be mid-build, finished, or dead. Confirm wit
 `tmux ls`. Then confirm *completion* by the artifact, per step 3a: the summary
 file exists, the plan's boxes moved.
 
+### 3f. The issue ledger closes with the run
+
+Phase 3 reconciles the **issue ledger**, not just the plan. It looks for wherever the
+repo tracks the issues this work came from — an `ISSUES.md`, `TODO.md`, `ROADMAP.md`,
+a `docs/issues*.md`, a `CHANGELOG` entry, a status table inside the plan's own issue
+file — marks the entries this run actually finished, and records each one's commit
+refs and the observed result. Entries whose tasks are still `[ ]` or `[~]` stay open,
+with the reason in the summary. It will not invent a ledger the repo doesn't keep,
+backfill an entry for work nobody tracked, or close a remote tracker (GitHub, Jira)
+on its own — those are named in the summary for a human to close.
+
+Two things stay yours:
+
+- **Point it at a ledger it can't find.** If the repo tracks issues somewhere a grep
+  wouldn't turn up — a `docs/issues/` directory, a table inside a README, a file named
+  for the team rather than for issues — name that path in the plan (`## Expected
+  benefits` or `## Constraints` is a good spot). A ledger the run can't find is one it
+  will honestly report as absent, which is correct and still not what you wanted.
+- **Check the record against the tree when you report.** `git show --stat` on the
+  phase 3 commit says whether the ledger actually moved. The failure worth catching is
+  a row marked shipped whose task is still `[ ]`: agents fill rows in optimistically,
+  and a plausible false record is worse than a missing one.
+
 ### 4. If the run didn't finish `complete` — remediate and re-run
 
 A finished run is not necessarily a done one. Read its stop reason from
@@ -663,6 +686,8 @@ once more and report:
   re-runs it took,
 - task counts (done / remaining / dropped),
 - what the summary file (`docs/<name>_summary.md`) says was done and deferred,
+- which issue-ledger entries the run closed and which stayed open — or, if the repo
+  keeps no ledger, that the summary says so rather than leaving it silent (step 3f),
 - if you stopped on a stall: the cause you found, the mitigation you tried, and the
   decision you need from the user.
 
@@ -697,6 +722,9 @@ can inspect and fix between stages.
   healthy long run to enforce a guess.
 - **Kill scope:** only ever stop the run you started (`wiggum kill <plan>`), never
   a blanket process kill.
+- **The ledger closes with the run** (step 3f): phase 3 marks the issues this run
+  actually finished, with their commit refs. Name a hard-to-find ledger in the plan,
+  and when you report, confirm no row marked shipped sits above a task still `[ ]`.
 - **Don't edit `.wiggumrc`** to make verification pass — it's the user's config. If
   a verify command itself is wrong, surface it.
 - **A finished run isn't a done one.** Always check the stop reason: `incomplete`

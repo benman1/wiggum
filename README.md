@@ -185,8 +185,9 @@ For each iteration (up to `--max-iterations` or the config file value, stopping 
 After all iterations complete (or early stop), Wiggum:
 
 - Updates the plan file, marking completed tasks with `[x]`
-- Writes an execution summary covering what was implemented, what was deferred, issues encountered, and verification results
-- Commits the updated plan and summary
+- Reconciles the **issue ledger** — wherever the repo tracks the issues this work came from (`ISSUES.md`, `TODO.md`, a `docs/issues*.md`, a `CHANGELOG` entry, a status table in the plan's own issue file). Entries the run actually finished are marked shipped with their commit refs and the observed result; entries whose tasks are still `[ ]` or `[~]` stay open, with the reason in the summary. Wiggum will not invent a ledger the repo doesn't keep, backfill an entry for untracked work, or close a remote tracker (GitHub, Jira) on its own — it names those in the summary for a human
+- Writes an execution summary covering what was implemented, what was deferred, issues encountered, verification results, and which ledger entries closed
+- Commits the updated plan, ledger, and summary
 
 ```
             +------------------+
