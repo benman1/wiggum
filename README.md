@@ -105,11 +105,14 @@ wiggum plan <issue-files...> | wiggum execute
 
 Reads issue descriptions, specs, or requirements documents and produces a structured workplan. The plan is a markdown document with:
 
+- An `## Expected benefits` opening: what the work is *for*, ranked, each with the observable signal that would show it landed after shipping. Every phase then names the benefits it serves, so a phase that serves none stands out as scope creep
 - Phases grouping related work
 - Discrete tasks, each with a `[ ]` checkbox (GitHub-flavored `-`, `*`, or `+` bullets all count)
 - An observable acceptance criterion per task
 - The files each task is expected to create or modify
 - Dependencies between tasks
+
+Not every task is a code edit. Where the plan depends on something not yet known, the unknown becomes its own research task, placed ahead of the work that needs it and accepted on a written artifact (findings in a file, a measured number, a recorded decision) rather than on "understand X". Where a sub-problem is large enough to be its own workplan, a task can delegate it to a bounded, nested `wiggum plan` + `wiggum execute` run instead of inlining it.
 
 Output destination depends on how `plan` is invoked:
 

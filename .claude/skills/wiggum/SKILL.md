@@ -92,6 +92,12 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 ```markdown
 # <Title>
 
+## Expected benefits
+1. <the outcome someone gets, in their terms — not the change being made>
+   Signal: <the observable thing that shows it landed after shipping>
+2. <the next benefit, ranked below the first> — **speculative**
+   Signal: <what you would measure once it can be measured>
+
 ## Constraints
 - In scope: <what this work will do>
 - Out of scope: <what it deliberately will not do>
@@ -115,6 +121,7 @@ buggy behaviour, name it>
 <what is affected — and explicitly what is unaffected, and why>
 
 ## Phase 1: <name>
+Serves: benefits 1, 2
 - [ ] <discrete task>
   Acceptance: <observable outcome — a passing test, a specific log line, a file
   that exists, a command that exits 0>. Never a feeling ("works", "looks right").
@@ -133,7 +140,20 @@ a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
-- Open the plan, before any phase, with a `## Constraints` section as a self-check
+- **Start from the benefits, not from the tasks.** The plan opens with
+  `## Expected benefits`: a numbered list, most valuable first, of what the work is
+  *for* — each one an outcome someone gets, never the change being made ("a failed
+  verify names the offending file in one line" is a benefit; "refactor the error
+  handler" is not). Each benefit gets a `Signal:` line — the observable thing that
+  shows it landed *after shipping* (a number that moves, an error that stops
+  appearing, a manual step nobody performs any more) — and a benefit you can't
+  measure yet is marked **speculative** rather than dressed up. Then derive the
+  phases from that list: every phase carries a `Serves:` line naming the benefit
+  numbers it delivers, and a phase that serves none is scope creep — cut it, or
+  name the benefit that justifies it. If the benefits don't justify the work as
+  scoped, say so in one line at the top and propose the smaller version that does.
+  This is what stops a plan from being a tidy list of edits nobody needed.
+- Then, still before any phase, add a `## Constraints` section as a self-check
   — `In scope`, `Out of scope`, and `Never do` — then derive the phases so they
   stay within those bounds.
 - Every task is a real Markdown checkbox line — `- [ ]` (GFM `*`/`+` bullets also
@@ -202,6 +222,25 @@ Rules for a good plan:
   anything whose output depends on the BLAS library or thread count, such as trained
   weights, a pinned digest is flaky and the old-vs-new comparison is a one-time
   migration check instead.
+- **A task doesn't have to be an edit — it has to be actionable.** Two kinds earn
+  their place beside code changes, and both are still real checkboxes with
+  `Acceptance:` and `Files:` lines:
+  - **Research / a deep-dive spike**, when the plan depends on something not yet
+    known. Put it *before* the work that depends on it, and make its acceptance a
+    written artifact — findings in a file, a measured number, a recorded decision —
+    never "understand X". The dependent task names what the research must return
+    and what a given answer would change. An unknown left implicit becomes a
+    mid-run stall; an unknown given its own task is just the first step.
+  - **A nested wiggum run**, when a sub-problem is big enough to be its own
+    workplan. The task runs `wiggum plan "<sub-problem>" --plan-file
+    docs/<sub>_plan.md`, then `wiggum execute docs/<sub>_plan.md --max-iterations N`
+    in the *foreground* (it is already inside a run — a `--background` child would
+    outlive the iteration that started it, unsupervised). Acceptance: the child's
+    `docs/<sub>_summary.md` exists and its boxes are checked. Delegate only
+    self-contained sub-problems, always bound the child with `--max-iterations`,
+    and never fan several children out at once — they compete for the same machine.
+    If you find yourself planning three of these, you wanted `wiggum chain` at the
+    top level instead.
 - Keep plans focused. Very large plans (40+ tasks) tend to stall — split them and
   `chain` instead.
 

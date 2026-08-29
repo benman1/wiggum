@@ -1626,6 +1626,12 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 ```markdown
 # <Title>
 
+## Expected benefits
+1. <the outcome someone gets, in their terms — not the change being made>
+   Signal: <the observable thing that shows it landed after shipping>
+2. <the next benefit, ranked below the first> — **speculative**
+   Signal: <what you would measure once it can be measured>
+
 ## Constraints
 - In scope: <what this work will do>
 - Out of scope: <what it deliberately will not do>
@@ -1649,6 +1655,7 @@ buggy behaviour, name it>
 <what is affected — and explicitly what is unaffected, and why>
 
 ## Phase 1: <name>
+Serves: benefits 1, 2
 - [ ] <discrete task>
   Acceptance: <observable outcome — a passing test, a specific log line, a file
   that exists, a command that exits 0>. Never a feeling ("works", "looks right").
@@ -1667,7 +1674,20 @@ a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
-- Open the plan, before any phase, with a `## Constraints` section as a self-check
+- **Start from the benefits, not from the tasks.** The plan opens with
+  `## Expected benefits`: a numbered list, most valuable first, of what the work is
+  *for* — each one an outcome someone gets, never the change being made ("a failed
+  verify names the offending file in one line" is a benefit; "refactor the error
+  handler" is not). Each benefit gets a `Signal:` line — the observable thing that
+  shows it landed *after shipping* (a number that moves, an error that stops
+  appearing, a manual step nobody performs any more) — and a benefit you can't
+  measure yet is marked **speculative** rather than dressed up. Then derive the
+  phases from that list: every phase carries a `Serves:` line naming the benefit
+  numbers it delivers, and a phase that serves none is scope creep — cut it, or
+  name the benefit that justifies it. If the benefits don't justify the work as
+  scoped, say so in one line at the top and propose the smaller version that does.
+  This is what stops a plan from being a tidy list of edits nobody needed.
+- Then, still before any phase, add a `## Constraints` section as a self-check
   — `In scope`, `Out of scope`, and `Never do` — then derive the phases so they
   stay within those bounds.
 - Every task is a real Markdown checkbox line — `- [ ]` (GFM `*`/`+` bullets also
@@ -1736,6 +1756,25 @@ Rules for a good plan:
   anything whose output depends on the BLAS library or thread count, such as trained
   weights, a pinned digest is flaky and the old-vs-new comparison is a one-time
   migration check instead.
+- **A task doesn't have to be an edit — it has to be actionable.** Two kinds earn
+  their place beside code changes, and both are still real checkboxes with
+  `Acceptance:` and `Files:` lines:
+  - **Research / a deep-dive spike**, when the plan depends on something not yet
+    known. Put it *before* the work that depends on it, and make its acceptance a
+    written artifact — findings in a file, a measured number, a recorded decision —
+    never "understand X". The dependent task names what the research must return
+    and what a given answer would change. An unknown left implicit becomes a
+    mid-run stall; an unknown given its own task is just the first step.
+  - **A nested wiggum run**, when a sub-problem is big enough to be its own
+    workplan. The task runs `wiggum plan "<sub-problem>" --plan-file
+    docs/<sub>_plan.md`, then `wiggum execute docs/<sub>_plan.md --max-iterations N`
+    in the *foreground* (it is already inside a run — a `--background` child would
+    outlive the iteration that started it, unsupervised). Acceptance: the child's
+    `docs/<sub>_summary.md` exists and its boxes are checked. Delegate only
+    self-contained sub-problems, always bound the child with `--max-iterations`,
+    and never fan several children out at once — they compete for the same machine.
+    If you find yourself planning three of these, you wanted `wiggum chain` at the
+    top level instead.
 - Keep plans focused. Very large plans (40+ tasks) tend to stall — split them and
   `chain` instead.
 
@@ -2521,7 +2560,7 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p \
-        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_constraints_summary) ${defect_rules}Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) $(prompt_risk_gates) $(prompt_phase_sequencing) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_expected_benefits) $(prompt_constraints_summary) ${defect_rules}Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) $(prompt_risk_gates) $(prompt_research_and_delegation) $(prompt_phase_sequencing) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
@@ -2550,9 +2589,14 @@ prompt_workplan() {
     echo "The workplan is defined ONLY in: $1. You may read README.md and other project documentation for context, but they are not the plan."
 }
 
-# Constraints self-check that must open the plan.  Usage: $(prompt_constraints_summary)
+# Expected-benefits section that must open the plan.  Usage: $(prompt_expected_benefits)
+prompt_expected_benefits() {
+    echo "START the plan with an '## Expected benefits' section, before anything else: a numbered list, most valuable first, of what this work is FOR -- each one an outcome someone gets, not the change being made ('a failed verify names the offending file in one line' is a benefit; 'refactor the error handler' is not). Give every benefit a 'Signal:' line -- the observable thing that shows it landed after shipping (a number that moves, an error that stops appearing, a manual step nobody performs any more) -- and mark one you cannot measure yet as 'speculative' rather than dressing it up. Then derive everything else from that list: every phase MUST carry a 'Serves:' line naming the benefit numbers it delivers, and a phase that serves none is scope creep -- cut it, or name the benefit that justifies it. If the benefits do not justify the work as scoped, say so in one line at the top of the section and propose the smaller version that does."
+}
+
+# Constraints self-check that must follow the benefits.  Usage: $(prompt_constraints_summary)
 prompt_constraints_summary() {
-    echo "FIRST, before writing any phases or tasks, open the plan with a '## Constraints' section as a self-check: 'In scope' (what this work will do), 'Out of scope' (what it deliberately will not do), and 'Never do' (actions that would be wrong here -- e.g. editing the user's config, breaking the public interface, or weakening verification to make it pass). Then derive the phases and tasks so they stay within these bounds."
+    echo "Immediately after '## Expected benefits', and before writing any phases or tasks, add a '## Constraints' section as a self-check: 'In scope' (what this work will do), 'Out of scope' (what it deliberately will not do), and 'Never do' (actions that would be wrong here -- e.g. editing the user's config, breaking the public interface, or weakening verification to make it pass). Then derive the phases and tasks so they stay within these bounds."
 }
 
 # Verification discipline appended to the planner prompt.  Usage: $(prompt_plan_verification)
@@ -2568,6 +2612,11 @@ prompt_acceptance_criteria() {
 # Risk gates appended to the planner prompt.  Usage: $(prompt_risk_gates)
 prompt_risk_gates() {
     echo "Apply these four risk gates. Each is conditional -- state a gate that is not triggered as 'not triggered' rather than silently omitting it, and never add a phase for a gate whose trigger is absent. (1) Measure before you act: If a phase is justified by a claim about production data or runtime state, make the FIRST phase a read-only measurement of that claim, and have each dependent phase name the measurement result that would make it unnecessary. (2) Activating never-run code is not a no-op: If a task enables, un-comments, or first-runs a path that has never executed against real data, precede it with a read-only impact report over real inputs, and gate shipping on that report being reviewed. (3) Irreversible work carries four conditions: If a task deletes, overwrites, or rewrites data, it MUST default to a dry run, export the affected rows before the first real write, be idempotent so a re-run is safe, and record the affected count per scope. (4) A new guard must pass on a clean tree: If a task adds a guard, lint rule, or CI check, enumerate the legitimate exceptions up front, and its acceptance MUST state that the guard passes against current code on its first run and fails when the defect is reintroduced."
+}
+
+# Non-edit task kinds -- research spikes and nested wiggum runs.  Usage: $(prompt_research_and_delegation)
+prompt_research_and_delegation() {
+    echo "Tasks do not all have to be edits, but every task must still be actionable -- something someone could start on Monday morning. Where the plan depends on something you do not yet know, make the unknown its own research task, placed before the work that depends on it: it is still a checkbox with a real 'Acceptance:' and 'Files:' line, so it lands a written artifact -- findings in a file, a measured number, a recorded decision -- never 'understand X', and the dependent task names what the research must return and what it would change. Where a sub-problem is large enough to be its own workplan, a task may delegate it to a nested wiggum run instead of inlining it: 'wiggum plan' to write the sub-plan, then 'wiggum execute <sub-plan> --max-iterations N' in the foreground, accepted when the sub-plan's summary exists and its boxes are checked. Delegate only self-contained sub-problems, always bound the child run, and never launch nested runs in parallel -- they compete for the same machine."
 }
 
 # Phase sequencing rule appended to the planner prompt.  Usage: $(prompt_phase_sequencing)
