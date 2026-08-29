@@ -505,7 +505,8 @@ Phases:
   2. Iterative Implementation - implement, verify, commit, progress check
      Stops early when all tasks are checked off, or when no progress
      is made for 2 consecutive iterations.
-  3. Summary & Alignment     - update plan checkboxes, write summary
+  3. Summary & Alignment     - update plan checkboxes and issue ledger,
+                                write summary
   4. Documentation Update     - update docs (if --update-docs is set)
 
 When no files are given, reads from stdin.
@@ -2099,6 +2100,29 @@ hour tells you nothing: the run may be mid-build, finished, or dead. Confirm wit
 `tmux ls`. Then confirm *completion* by the artifact, per step 3a: the summary
 file exists, the plan's boxes moved.
 
+### 3f. The issue ledger closes with the run
+
+Phase 3 reconciles the **issue ledger**, not just the plan. It looks for wherever the
+repo tracks the issues this work came from — an `ISSUES.md`, `TODO.md`, `ROADMAP.md`,
+a `docs/issues*.md`, a `CHANGELOG` entry, a status table inside the plan's own issue
+file — marks the entries this run actually finished, and records each one's commit
+refs and the observed result. Entries whose tasks are still `[ ]` or `[~]` stay open,
+with the reason in the summary. It will not invent a ledger the repo doesn't keep,
+backfill an entry for work nobody tracked, or close a remote tracker (GitHub, Jira)
+on its own — those are named in the summary for a human to close.
+
+Two things stay yours:
+
+- **Point it at a ledger it can't find.** If the repo tracks issues somewhere a grep
+  wouldn't turn up — a `docs/issues/` directory, a table inside a README, a file named
+  for the team rather than for issues — name that path in the plan (`## Expected
+  benefits` or `## Constraints` is a good spot). A ledger the run can't find is one it
+  will honestly report as absent, which is correct and still not what you wanted.
+- **Check the record against the tree when you report.** `git show --stat` on the
+  phase 3 commit says whether the ledger actually moved. The failure worth catching is
+  a row marked shipped whose task is still `[ ]`: agents fill rows in optimistically,
+  and a plausible false record is worse than a missing one.
+
 ### 4. If the run didn't finish `complete` — remediate and re-run
 
 A finished run is not necessarily a done one. Read its stop reason from
@@ -2197,6 +2221,8 @@ once more and report:
   re-runs it took,
 - task counts (done / remaining / dropped),
 - what the summary file (`docs/<name>_summary.md`) says was done and deferred,
+- which issue-ledger entries the run closed and which stayed open — or, if the repo
+  keeps no ledger, that the summary says so rather than leaving it silent (step 3f),
 - if you stopped on a stall: the cause you found, the mitigation you tried, and the
   decision you need from the user.
 
@@ -2231,6 +2257,9 @@ can inspect and fix between stages.
   healthy long run to enforce a guess.
 - **Kill scope:** only ever stop the run you started (`wiggum kill <plan>`), never
   a blanket process kill.
+- **The ledger closes with the run** (step 3f): phase 3 marks the issues this run
+  actually finished, with their commit refs. Name a hard-to-find ledger in the plan,
+  and when you report, confirm no row marked shipped sits above a task still `[ ]`.
 - **Don't edit `.wiggumrc`** to make verification pass — it's the user's config. If
   a verify command itself is wrong, surface it.
 - **A finished run isn't a done one.** Always check the stop reason: `incomplete`
@@ -2628,6 +2657,11 @@ prompt_phase_sequencing() {
 # report (see input_describes_defect).  Usage: $(prompt_defect_diagnosis)
 prompt_defect_diagnosis() {
     echo "The input reads like a defect report, so the plan MUST diagnose before it prescribes: place these four sections BEFORE the phases. '## Symptoms': what is observably wrong, in the terms of whoever sees it (a user, an on-call engineer, a dashboard), with EVERY symptom tagged **observed** (you saw it in data, logs, or a reproduction) or **predicted** (it follows from the code but you have not seen it happen) -- never present a predicted symptom as observed. Name the tell: the specific signal that separates this defect from the benign explanation, so a reader can tell them apart. '## Root cause': a numbered path from entry point to failure, each step carrying its \`path:line\`. '## Why existing verification missed it': name the blind spot and cite the tests that pass anyway; if a passing test pins the buggy behaviour, say so and name it. '## Blast radius': what is affected, and explicitly what is unaffected and why. If the input turns out not to be a defect after all, omit these four sections rather than inventing symptoms."
+}
+
+# Issue-ledger reconciliation appended to the phase 3 prompt.  Usage: $(prompt_issue_ledger)
+prompt_issue_ledger() {
+    echo "Close the loop on the issue ledger. Find where this repository tracks the issues this work came from: the issue or spec files the plan was built from, and any tracker kept in version control -- an ISSUES.md, TODO.md, ROADMAP.md, a docs/issues*.md, a CHANGELOG entry, or a status table inside the plan's own issue file. Update ONLY the entries this run actually finished: mark each one shipped, and record its commit refs (read them from 'git log --oneline' for the commits this run made) plus the observable result its acceptance criterion asked for. A task still '[ ]', or '[~]', has NOT shipped -- leave its entry open and say why in the summary; a plausible false 'done' row is worse than a missing one. Never invent a ledger: if the repo keeps none, or it keeps one with no entry for this work, write one line in the summary saying so instead of creating a tracker or backfilling an entry nobody asked for. Leave entries this run did not work on untouched. Do not close a remote tracker (a GitHub or Jira issue) from here -- name the issue and its commits in the summary and leave closing it to a human, unless a plan task explicitly said to close it."
 }
 
 # Verification discipline appended to the implementation prompt.  Usage: $(prompt_implement_verification)
@@ -3088,10 +3122,10 @@ run_execute() {
 
     WIGGUM_CURRENT_LABEL="phase3-summary"
     run_claude -p -c \
-        "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, and why execution stopped ($stop_reason).${final_benchmark_context}${dropped_context} $PROMPT_SUFFIX" \
+        "$(prompt_workplan "$file_list") Execution stopped because: $stop_reason. Review all implementation work done. 1. Update the plan files ($file_list) by marking completed tasks with [x]. 2. $(prompt_issue_ledger) 3. Write a concise execution summary to $SUMMARY_FILE covering: what was implemented, what was deferred, any issues encountered, verification results, which issue-ledger entries you closed and which stay open (and where that ledger is, or that the repo keeps none), and why execution stopped ($stop_reason).${final_benchmark_context}${dropped_context} $PROMPT_SUFFIX" \
         "${FILES[@]}"
 
-    commit_or_skip "phase3-commit" "$SUMMARY_FILE and $file_list"
+    commit_or_skip "phase3-commit" "$SUMMARY_FILE, $file_list, and any issue ledger updated"
 
     echo "" >&2
 
