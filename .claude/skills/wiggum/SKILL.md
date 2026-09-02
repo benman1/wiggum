@@ -103,6 +103,15 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 - Out of scope: <what it deliberately will not do>
 - Never do: <actions that would be wrong here>
 
+## The shape of it
+```mermaid
+flowchart TD
+    A["what somebody does"] --> B{"the decision<br/>this work changes"}
+    B -- "the ordinary case" --> C["NEW: what the work adds"]
+    B -- "the failure branch" --> D["what happens instead"]
+```
+<two or three sentences naming what the reader should take from it>
+
 <!-- defect work only — omit all four sections for feature work -->
 ## Symptoms
 - <what is observably wrong, in the terms of whoever sees it> — **observed**
@@ -156,6 +165,20 @@ Rules for a good plan:
 - Then, still before any phase, add a `## Constraints` section as a self-check
   — `In scope`, `Out of scope`, and `Never do` — then derive the phases so they
   stay within those bounds.
+- **Draw it before you phase it.** After the constraints and before the first
+  phase, add `## The shape of it`: one mermaid diagram of the thing the plan acts
+  on, and two or three sentences saying what to take from it. Choose by what the
+  work changes — a **user flow** (`flowchart TD`) when it changes what somebody
+  experiences, an **architecture** diagram (`flowchart LR`) when it changes how
+  components call each other, a **sequence** diagram when it is about ordering
+  across systems (a webhook, a retry, a cutover). Draw the system as it will be
+  *after* the work and mark the nodes the plan adds or changes, so the blast
+  radius is visible at a glance. Label nodes in the reader's words, not function
+  names; stay under ~20 nodes; put decisions in rhombus nodes and name every
+  branch **including the failure branch**, because the branch nobody drew is the
+  one nobody built. This is a scoping check, not decoration: a plan whose diagram
+  cannot be drawn is a plan whose scope is not yet understood, so say that in the
+  section and make the first phase the research that would let you draw it.
 - Every task is a real Markdown checkbox line — `- [ ]` (GFM `*`/`+` bullets also
   count) — with its own **Acceptance:** and **Files:** lines. This matters
   mechanically: wiggum tracks progress by *counting* `[ ]`/`[x]`/`[~]` checkboxes,
