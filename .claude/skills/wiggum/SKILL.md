@@ -164,6 +164,14 @@ Rules for a good plan:
   task without observable acceptance is a wish, not a step.
 - `[x]` = done, `[ ]` = pending, `[~]` = dropped (terminal — wiggum won't re-pick
   it). Record why on the `[~]` line.
+- \`[~]\` means *decided against*, not *waiting on somebody*. It is terminal: the
+  run skips it and the summary files it under "What was dropped", so a task parked
+  there because a person still has to decide is silently recorded as abandoned. If a
+  phase needs a human decision first, do not mark it \`[~]\` -- leave the tasks
+  \`[ ]\`, say in the phase header that it is gated, and keep that plan out of the
+  queue (or split the gated phase into its own plan that nobody runs yet). Reserve
+  \`[~]\` for work someone has actually decided not to do, and record that decision
+  and its date on the line.
 - Give each phase its own phase-level **### Acceptance Criteria** section, in
   addition to (not instead of) the per-task `Acceptance:`/`Files:` lines. Organize
   it into four categories: **Happy Path** (the primary flow works end to end),
