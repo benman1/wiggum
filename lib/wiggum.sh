@@ -1699,6 +1699,14 @@ Rules for a good plan:
   task without observable acceptance is a wish, not a step.
 - `[x]` = done, `[ ]` = pending, `[~]` = dropped (terminal — wiggum won't re-pick
   it). Record why on the `[~]` line.
+- \`[~]\` means *decided against*, not *waiting on somebody*. It is terminal: the
+  run skips it and the summary files it under "What was dropped", so a task parked
+  there because a person still has to decide is silently recorded as abandoned. If a
+  phase needs a human decision first, do not mark it \`[~]\` -- leave the tasks
+  \`[ ]\`, say in the phase header that it is gated, and keep that plan out of the
+  queue (or split the gated phase into its own plan that nobody runs yet). Reserve
+  \`[~]\` for work someone has actually decided not to do, and record that decision
+  and its date on the line.
 - Give each phase its own phase-level **### Acceptance Criteria** section, in
   addition to (not instead of) the per-task `Acceptance:`/`Files:` lines. Organize
   it into four categories: **Happy Path** (the primary flow works end to end),
@@ -2666,7 +2674,7 @@ prompt_issue_ledger() {
 
 # Verification discipline appended to the implementation prompt.  Usage: $(prompt_implement_verification)
 prompt_implement_verification() {
-    echo "Before writing code, verify your assumptions: confirm the functions, APIs, and imports you will call actually exist and the config values you depend on are defined -- grep the repo or read the source, do not assume. If no test covers the change, write a minimal failing test first, then implement until it passes. After implementing, run three spot checks and show your work as input -> expected -> actual: the happy path, an edge case (empty, boundary, or large input), and a failure case (invalid input must fail safely with a clear error). Do not mark a task \`[x]\` until its acceptance criterion is met and all three spot checks pass; never round an unverified result up to done."
+    echo "Before writing code, verify your assumptions: confirm the functions, APIs, and imports you will call actually exist and the config values you depend on are defined -- grep the repo or read the source, do not assume. Treat every \`file:line\` reference in the plan itself as stale until you have checked it: plans are written before the work and the code moves underneath them, including by earlier iterations of this same run. Open each cited location, and if the plan points at the wrong place, correct the citation in the plan in the same commit as the code -- a task implemented against a citation nobody re-read is how a fix lands in the wrong function. If the thing a citation describes has already been done, say so and mark the task \`[x]\` with the evidence instead of re-implementing it. If no test covers the change, write a minimal failing test first, then implement until it passes. After implementing, run three spot checks and show your work as input -> expected -> actual: the happy path, an edge case (empty, boundary, or large input), and a failure case (invalid input must fail safely with a clear error). Do not mark a task \`[x]\` until its acceptance criterion is met and all three spot checks pass; never round an unverified result up to done."
 }
 
 # Build a commit prompt.  Optional arg: extra files to mention.
