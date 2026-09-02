@@ -41,7 +41,7 @@ wiggum_reset() {
     FILES=()
     PLAN_FILE=""
     SUMMARY_FILE=""
-    MAX_ITERATIONS=3
+    MAX_ITERATIONS=15
     MAX_VALIDATION_RETRIES=5
     MAX_STALL_COUNT=2
     CLAUDE_RETRIES=2
@@ -478,7 +478,7 @@ Usage:
   wiggum plan issue.md | wiggum execute
 
 Options:
-  --max-iterations <n>          Maximum implementation iterations (default: 3)
+  --max-iterations <n>          Maximum implementation iterations (default: 15)
   --max-validation-retries <n>  Max fix attempts per verification step (default: 5)
   --claude-retries <n>          Retries when a claude session dies mid-run,
                                 e.g. a dropped connection (default: 2; 0 disables)
@@ -1283,7 +1283,7 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-max_iterations = 3
+max_iterations = 15
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1295,7 +1295,7 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-max_iterations = 3
+max_iterations = 15
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1305,7 +1305,7 @@ RCEOF
 autofix = ruff format . && ruff check --fix .
 verify = pytest
 
-max_iterations = 3
+max_iterations = 15
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1317,7 +1317,7 @@ verify = npm test
 verify = npm run build
 autofix = npx prettier --write .
 
-max_iterations = 3
+max_iterations = 15
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1327,7 +1327,7 @@ RCEOF
 verify = shellcheck -s bash *.sh **/*.sh
 verify = bats test/
 
-max_iterations = 3
+max_iterations = 15
 max_validation_retries = 5
 RCEOF
             ;;
