@@ -15,7 +15,7 @@ _wiggum() {
         'watch:Follow a background run until it finishes'
         'kill:Stop a background run (only that run process)'
         'chain:Execute several workplans back to back'
-        'top:List every known wiggum run at a glance'
+        'top:List every wiggum run on this machine at a glance'
         'help:Show help for a command'
     )
 

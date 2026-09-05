@@ -4,11 +4,12 @@ A self-driving agent loop that turns issue descriptions into working, verified c
 
 Wiggum wraps [Claude Code](https://claude.com/claude-code) in a structured orchestration loop. You give it issue files or spec documents; it produces a workplan, implements it step by step, verifies each step against your project's own toolchain, self-heals failures, and commits the results. The human decides *what* to build. Wiggum figures out *how* and keeps going until it's done.
 
-Kick off runs in the background and keep an eye on all of them at once with `wiggum top`:
+Kick off as many runs as you like and see all of them at once with `wiggum top` — every run on the machine, whichever project it was started from:
 
 ```console
 $ wiggum top
 PLAN                                     PID      STATE                TASKS
+/Users/me/other-project/docs/etl_plan.md 8123     running              3/9 done, 6 left
 docs/global-score_plan.md                519      running              4/12 done, 8 left
 docs/api-rate-limit_plan.md              -        finished: complete   9/9 done
 docs/onboarding-ui_plan.md               621      running (blocked)    2/7 done, 5 left
@@ -442,6 +443,8 @@ wiggum chain docs/*.plan.md --max-iterations 5
 
 `chain` runs `wiggum execute` on each plan in order. If a plan fails (stalls or errors), the chain stops there rather than wasting effort on plans that likely depend on it. This is the preferred way to tackle work too large for one plan: split it into focused plans and chain them, instead of writing one 40-task plan that tends to stall.
 
+Each plan in a chain registers itself while it is the active one, so `wiggum top` shows a running chain as a single row for the plan it is on right now — and drops that row when the chain moves to the next plan. To supervise a chain, run `top` (or `status` on the active plan); `watch` attaches to one plan, not to the chain as a whole.
+
 ### Claude Code skill
 
 Wiggum ships a `/wiggum` slash command for Claude Code that acts as an **orchestrator** for the CLI. Instead of re-running the loop in-conversation, the skill drives the `wiggum` binary: it creates a workplan, launches `wiggum execute` (in the background), monitors progress, waits for completion, analyzes whether a run is blocked, kills a run that overruns (only that run's process), and chains workplans together.
@@ -638,7 +641,7 @@ Modes:
   watch       Follow a background run until it finishes (wait)
   kill        Stop a background run (only that run's process)
   chain       Execute several workplans back to back
-  top         List every known wiggum run at a glance
+  top         List every wiggum run on this machine at a glance
 
 Options:
   --plan-file <path>       Output path for the plan (plan mode)
@@ -1091,6 +1094,9 @@ On macOS, `launchd` is more reliable than cron for user agents — it survives r
 | `execute`/`plan`/`docs` | `<dir>/<basename>.log` | *(always created)* |
 | `execute` | `<dir>/<basename>.pid` | *(always created; removed when the run ends)* |
 | `execute --background` | `<dir>/<basename>.pid`, `<dir>/<basename>.out` | *(always created)* |
+| `execute` (any mode) | `~/.wiggum/runs/<pid>` | `WIGGUM_REGISTRY_DIR` |
+
+The last one is the machine-wide run registry — one small file per run in flight, named by pid and holding the absolute path of the plan it is working on. It is what lets `wiggum top` answer "what is running" rather than "what is running *here*", and it is the only file wiggum writes outside the project directory. Entries are pruned whenever `top` reads them and finds a dead pid, so a killed run or a reboot leaves nothing stale behind. Point `WIGGUM_REGISTRY_DIR` somewhere else to keep runs out of the shared view (a test harness should).
 
 The directory and basename are derived from the first input file. When reading from stdin, files default to `docs/`. The sidecars sit next to the plan and are how `status`/`watch`/`kill`/`top` find a run. Every run writes a `.pid` while it is working; a foreground run removes its own when it ends, while a background run's is left behind (its `.out` holds the final status) until `watch`/`kill` clear it. For example:
 
@@ -1176,6 +1182,8 @@ Prefer that PID check over matching command lines. `pgrep -f` *errors* (rather t
 **Tasks that take longer than an iteration need care.** An iteration completes roughly one task, so a task that trains a model or runs a long migration will not tick its checkbox inside that iteration. Wiggum records no progress, and two of those in a row stop the run while the work is still going. Write such tasks to launch their job into a separate detached session and to accept on the artifact's existence, so a later iteration sees the finished output instead of restarting an hour of work. Before treating `No progress detected` as a stall, check whether that job is still alive and its output still growing.
 
 **Two runs on one machine compete.** wiggum runs Claude, the verify steps, and anything a task spawns. Two concurrent runs plus a training job on a 4-core machine reached a load average of 59, which tripled the time of every verify pass. Running two plans one after the other finishes both sooner than interleaving them.
+
+Run `wiggum top` before launching another one. It lists runs from every project, not just the one you are standing in, which is the case that catches people out: an idle-looking directory is not an idle machine.
 
 **Watch the verification cost.** `verify` and `autofix` run over the whole repo after every task, and again after each fix attempt (`max_validation_retries`, default 5). On a large suite that can dominate the run: check the `phase2-validate-*` timings in the `.log` before assuming the work itself is slow. `--no-verify` turns the sweep off for one run without touching your `.wiggumrc`, at the cost of the safety net, which suits a run whose own tests you are checking directly rather than one left unattended.
 
