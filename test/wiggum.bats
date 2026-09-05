@@ -18,7 +18,10 @@ setup() {
     # Keep the machine-wide run registry inside the temp dir: a test that starts
     # a run must never announce it in the real ~/.wiggum, nor read runs the
     # developer actually has going.
-    WIGGUM_REGISTRY_DIR="$TEST_DIR/registry"
+    #
+    # Exported, not just set: several tests spawn the CLI or a fresh `bash -c`,
+    # and an unexported value lets the child fall back to the real registry.
+    export WIGGUM_REGISTRY_DIR="$TEST_DIR/registry"
 
     # Stub claude so it never actually runs
     claude() { return 0; }
@@ -49,6 +52,15 @@ make_file() {
     local unbound
     unbound="$(grep -cE '^[[:space:]]*\[\[ .* \]\][[:space:]]*$' "$BATS_TEST_FILENAME" || true)"
     [ "$unbound" -eq 0 ]
+}
+
+@test "suite: the run registry is exported so a child process cannot reach the real one" {
+    # A spawned CLI re-evaluates `${WIGGUM_REGISTRY_DIR:-$HOME/.wiggum/runs}`
+    # from scratch. Unexported, that resolves to the developer's own registry
+    # and a test run announces phantom jobs in it -- which `wiggum top` then
+    # reports as real work on the machine.
+    run bash -c 'echo "${WIGGUM_REGISTRY_DIR:-UNSET}"'
+    [ "$output" = "$TEST_DIR/registry" ]
 }
 
 # ── parse_args ───────────────────────────────────────────────────────────────
@@ -4815,6 +4827,208 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"Status: complete"* ]] || return 1
     [ ! -f plan.pid ]
+}
+
+# ── explain mode / plan feedback ─────────────────────────────────────────────
+
+@test "parse_args: explain is a valid mode and takes files" {
+    make_file docs/x_plan.md
+    parse_args explain docs/x_plan.md
+    [ "$MODE" = "explain" ]
+    [ "${FILES[0]}" = "docs/x_plan.md" ]
+    [ -z "$EXPLAIN_FILE" ]
+}
+
+@test "parse_args: --explain-file sets the output destination" {
+    make_file docs/x_plan.md
+    parse_args explain docs/x_plan.md --explain-file docs/x_explained.md
+    [ "$EXPLAIN_FILE" = "docs/x_explained.md" ]
+}
+
+@test "parse_args: --no-feedback sets NO_FEEDBACK" {
+    make_file docs/x.md
+    parse_args plan docs/x.md --no-feedback
+    [ "$NO_FEEDBACK" = "true" ]
+}
+
+@test "wiggum_reset clears the explain and feedback state" {
+    make_file docs/x_plan.md
+    parse_args explain docs/x_plan.md --explain-file out.md
+    wiggum_reset
+    [ -z "$EXPLAIN_FILE" ]
+    [ "$NO_FEEDBACK" = "false" ]
+}
+
+@test "parse_args: an unknown mode names explain among the valid ones" {
+    run parse_args nonsense
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"'explain'"* ]] || return 1
+}
+
+@test "run_explain: prints to stdout and writes nothing by default" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    claude() { printf '%s\n' "$*" > captured; echo "the explanation"; return 0; }
+    export -f claude
+    MODE=explain
+    FILES=(docs/x_plan.md)
+    run run_explain
+    [ "$status" -eq 0 ]
+    grep -q "Print your answer. Write no files." captured
+    ! grep -q "Use the Write tool" captured
+    [ ! -f docs/x_explained.md ]
+}
+
+@test "run_explain: asks the four questions and forbids changes" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    claude() { printf '%s\n' "$*" > captured; return 0; }
+    export -f claude
+    MODE=explain
+    FILES=(docs/x_plan.md)
+    run_explain >/dev/null 2>&1
+    grep -q "What it contains" captured
+    grep -q "What it is worth" captured
+    grep -q "How it reaches users" captured
+    grep -q "Open decisions" captured
+    grep -q "read-only explanation" captured
+}
+
+@test "run_explain: --explain-file writes a file and reports it" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    claude() { echo "explained" > docs/x_explained.md; return 0; }
+    export -f claude
+    MODE=explain
+    FILES=(docs/x_plan.md)
+    EXPLAIN_FILE=docs/x_explained.md
+    run run_explain
+    [ "$status" -eq 0 ]
+    [ -f docs/x_explained.md ]
+    [[ "$output" == *"Explanation written: docs/x_explained.md"* ]] || return 1
+}
+
+@test "run_explain: an empty explanation file is an error, not a success" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    claude() { return 0; }
+    export -f claude
+    MODE=explain
+    FILES=(docs/x_plan.md)
+    EXPLAIN_FILE=docs/x_explained.md
+    run run_explain
+    [ "$status" -eq "$EXIT_PLAN_FAILED" ]
+    [[ "$output" == *"was not created or is empty"* ]] || return 1
+}
+
+@test "run_plan_feedback: edits the plan in place and protects the tasks" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    PLAN_FILE=docs/x_plan.md
+    claude() { printf '%s\n' "$*" > captured; return 0; }
+    export -f claude
+    run_plan_feedback >/dev/null 2>&1
+    grep -q "## Open decisions" captured
+    grep -q "How this reaches users" captured
+    grep -q "do not reword, reorder, renumber, split, merge or delete" captured
+    grep -q "UPDATE that file in place" captured
+}
+
+@test "run_plan_feedback: continues the planning session rather than reading cold" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    PLAN_FILE=docs/x_plan.md
+    # run_claude consumes -c itself (it becomes --resume/--fork-session), so the
+    # claude stub never sees it -- capture the call one level up.
+    run_claude() { printf '%s\n' "$@" > rc_args; return 0; }
+    run_plan_feedback >/dev/null 2>&1
+    grep -qx -- "-c" rc_args
+    grep -qx -- "docs/x_plan.md" rc_args
+}
+
+@test "run_plan_feedback: --no-feedback skips it entirely" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    PLAN_FILE=docs/x_plan.md
+    NO_FEEDBACK=true
+    claude() { printf '%s\n' "$*" > captured; return 0; }
+    export -f claude
+    run run_plan_feedback
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipped (--no-feedback)"* ]] || return 1
+    [ ! -f captured ]
+}
+
+@test "run_plan: a piped plan skips the feedback pass" {
+    mkdir -p docs
+    echo "an issue" > issue.md
+    claude() { printf '%s\n' "$*" >> calls; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+    MODE=plan
+    FILES=(issue.md)
+    PLAN_FILE=docs/issue_plan.md
+    STDIN_FILE=/tmp/fake_stdin
+    CLI_PLAN_FILE=""
+    run_plan >/dev/null 2>&1
+    # Exactly one claude call: the plan itself, no feedback pass.
+    ! grep -q "## Open decisions" calls
+}
+
+@test "run_plan: the plan prompt tells the planner to cite the issue ledger" {
+    mkdir -p docs
+    echo "an issue" > issue.md
+    claude() { printf '%s\n' "$*" >> calls; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+    MODE=plan
+    FILES=(issue.md)
+    PLAN_FILE=docs/issue_plan.md
+    STDIN_FILE=/tmp/fake_stdin
+    CLI_PLAN_FILE=""
+    run_plan >/dev/null 2>&1
+    grep -q "Anchor the plan to the issues it comes from" calls
+    grep -q "ISSUES.md" calls
+    grep -q "Never invent or create a tracker" calls
+}
+
+@test "prompt_open_decisions: refuses to invent a decision" {
+    run prompt_open_decisions
+    [[ "$output" == *"If nothing is genuinely open"* ]] || return 1
+    [[ "$output" == *"effort estimate"* ]] || return 1
+}
+
+@test "prompt_user_benefit: asks all four questions, users included" {
+    run prompt_user_benefit
+    [[ "$output" == *"WHAT IT CONTAINS"* ]] || return 1
+    [[ "$output" == *"WHAT THE BENEFIT IS TO USERS"* ]] || return 1
+    [[ "$output" == *"HOW IT IS COMMUNICATED"* ]] || return 1
+    [[ "$output" == *"has not shipped"* ]] || return 1
+}
+
+@test "prompt_plan_issue_refs: never invents or creates a tracker" {
+    run prompt_plan_issue_refs
+    [[ "$output" == *"Never invent or create a tracker"* ]] || return 1
+    [[ "$output" == *"never cite an entry you have not read"* ]] || return 1
+}
+
+@test "docs: explain is documented on every surface" {
+    local root
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    grep -q "explain   Explain" "$root/lib/wiggum.sh"
+    grep -q "wiggum explain - " "$root/lib/wiggum.sh"
+    grep -q "explain     Explain" "$root/README.md"
+    grep -q "### Explain mode" "$root/README.md"
+    grep -q "explain" "$root/completions/wiggum.bash"
+    grep -q "'explain:" "$root/completions/wiggum.zsh"
+    grep -q "wiggum explain" "$root/.claude/skills/wiggum/SKILL.md"
+}
+
+@test "docs: the CLI dispatches explain" {
+    local cli
+    cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
+    grep -q "run_explain" "$cli"
+    run bash "$cli" help explain
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wiggum explain - "* ]] || return 1
 }
 
 # ── run_chain ─────────────────────────────────────────────────────────────────
