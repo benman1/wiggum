@@ -631,7 +631,7 @@ Modes:
 Options:
   --plan-file <path>       Output path for the plan (plan mode)
   --summary-file <path>    Output path for the summary (execute mode)
-  --max-iterations <n>    Maximum implementation iterations (execute/chain, default: 15)
+  --max-iterations <n>    Maximum implementation iterations (execute/chain, default: 30)
   --benchmark <script>    Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
   -b, --background         Run execute detached; supervise with status/watch/kill
@@ -679,7 +679,7 @@ Wiggum looks for a `.wiggumrc` file, first in the current directory, then in `$H
 | `verify` | A shell command to run as a verification step. Fails are sent to Claude for fixing. Multiple lines define an ordered waterfall. | *(none)* |
 | `autofix` | Like `verify`, but the command is run once first to let it self-correct (e.g. linters with `--fix`). Only escalates to Claude if it still fails after autofix. | *(none)* |
 | `benchmark` | A shell command to run after each iteration. Output is fed to Claude as context for the next iteration. Purely informational — does not gate or block. Multiple lines are supported. | *(none)* |
-| `max_iterations` | Maximum implementation iterations per run. Stops early if all tasks complete or progress stalls. | `15` |
+| `max_iterations` | Maximum implementation iterations per run. Stops early if all tasks complete or progress stalls. | `30` |
 | `max_validation_retries` | Max times the validation cycle retries before giving up. | `5` |
 | `skip_verify` | If `true`, skip wiggum's verification waterfall entirely (same as `--no-verify`). | `false` |
 | `skip_commit` | If `true`, skip every wiggum-issued git commit (same as `--no-commit`). | `false` |
@@ -838,7 +838,7 @@ max_iterations = 5
 autofix = ruff format app tests && ruff check --fix app tests
 verify = pytest
 
-max_iterations = 15
+max_iterations = 30
 max_validation_retries = 3
 ```
 
@@ -863,7 +863,7 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-max_iterations = 15
+max_iterations = 30
 ```
 
 **Minimal (no verification):**

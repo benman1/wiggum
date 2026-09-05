@@ -465,7 +465,7 @@ EOF
     [ -z "$MODE" ]
     [ "${#FILES[@]}" -eq 0 ]
     [ -z "$PLAN_FILE" ]
-    [ "$MAX_ITERATIONS" -eq 15 ]
+    [ "$MAX_ITERATIONS" -eq 30 ]
     [ -z "$STDIN_FILE" ]
     [ -z "$CLI_PLAN_FILE" ]
     [ "$NO_VERIFY" = "false" ]

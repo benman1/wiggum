@@ -326,12 +326,12 @@ active, stop, activate it, and relaunch.
 **Size the iteration budget to the plan, on the FIRST launch.** An iteration
 completes roughly one task, so a run needs at least as many iterations as the plan
 has open checkboxes, plus headroom for the ones that need a second pass. The
-default is **3** — from `--max-iterations`'s built-in default, the `max_iterations`
+default is **30** — from `--max-iterations`'s built-in default, the `max_iterations`
 in the `.wiggumrc` templates wiggum generates, or a `.wiggumrc` written for an
-older, smaller plan — and it is almost always wrong for a real workplan. A 3-
-iteration budget on an 11-task plan does not fail loudly; it stops `incomplete`
-about a quarter of the way in, which reads like a stall and costs a supervise
-cycle to diagnose.
+older, smaller plan — and a config written for a smaller plan is almost always
+wrong for a real workplan. An undersized budget — 3 iterations on an 11-task plan
+— does not fail loudly; it stops `incomplete` about a quarter of the way in, which
+reads like a stall and costs a supervise cycle to diagnose.
 
 So count the boxes and pass the flag explicitly — **always**, even when
 `.wiggumrc` already sets `max_iterations`, because the flag overrides it and you
