@@ -94,6 +94,7 @@ _wiggum() {
             ;;
         chain)
             _arguments \
+                '--queue[Read the plan list from a file, re-read after every plan]:file:_files' \
                 '--max-iterations[Maximum implementation iterations]:count:(1 2 3 5 10)' \
                 '--no-verify[Skip the verification waterfall]' \
                 '--no-commit[Skip wiggum-issued git commits]' \
