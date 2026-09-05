@@ -5112,6 +5112,146 @@ EOF
     [ ! -f a.pid ]
 }
 
+# ── chain --queue ────────────────────────────────────────────────────────────
+
+@test "read_queue: skips blanks and comments, trims whitespace" {
+    printf '  docs/a_plan.md  \n\n# a comment\ndocs/b_plan.md # trailing\n' > q.txt
+    run read_queue q.txt
+    [ "$status" -eq 0 ]
+    [ "$(sed -n 1p <<< "$output")" = "docs/a_plan.md" ]
+    [ "$(sed -n 2p <<< "$output")" = "docs/b_plan.md" ]
+    [ "${#lines[@]}" -eq 2 ]
+}
+
+@test "read_queue: a missing queue file is empty, not an error" {
+    run read_queue nope.txt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "read_queue: a final line with no newline still counts" {
+    printf 'docs/a_plan.md' > q.txt
+    run read_queue q.txt
+    [ "$output" = "docs/a_plan.md" ]
+}
+
+@test "next_queued_plan: returns the first plan not already done" {
+    printf 'a.md\nb.md\nc.md\n' > q.txt
+    run next_queued_plan q.txt ""
+    [ "$output" = "a.md" ]
+    run next_queued_plan q.txt "$(printf 'a.md\n')"
+    [ "$output" = "b.md" ]
+    run next_queued_plan q.txt "$(printf 'a.md\nb.md\nc.md\n')"
+    [ -z "$output" ]
+}
+
+@test "parse_args: --queue is chain-only and refuses positional plans" {
+    printf 'a.md\n' > q.txt
+    make_file a.md
+    run parse_args execute --queue q.txt
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"only valid for 'wiggum chain'"* ]] || return 1
+    run parse_args chain a.md --queue q.txt
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"not both"* ]] || return 1
+}
+
+@test "parse_args: --queue needs the file to exist" {
+    run parse_args chain --queue missing.txt
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"queue file not found"* ]] || return 1
+}
+
+@test "parse_args: a queued chain takes no positional files" {
+    printf 'a.md\n' > q.txt
+    parse_args chain --queue q.txt
+    [ "$MODE" = "chain" ]
+    [ "$QUEUE_FILE" = "q.txt" ]
+    [ "${#FILES[@]}" -eq 0 ]
+}
+
+@test "run_chain_queue: runs the queued plans in order" {
+    printf -- '- [ ] a\n' > a.md
+    printf -- '- [ ] b\n' > b.md
+    printf 'a.md\nb.md\n' > q.txt
+    QUEUE_FILE=q.txt
+    run_execute() { echo "${FILES[0]}" >> ran.log; return 0; }
+    run_chain_queue >/dev/null 2>&1
+    [ "$(sed -n 1p ran.log)" = "a.md" ]
+    [ "$(sed -n 2p ran.log)" = "b.md" ]
+}
+
+@test "run_chain_queue: a plan appended while running is picked up" {
+    printf -- '- [ ] a\n' > a.md
+    printf -- '- [ ] b\n' > b.md
+    printf 'a.md\n' > q.txt
+    QUEUE_FILE=q.txt
+    # The queue grows during the first plan, exactly as a person appending to
+    # it mid-chain would.
+    run_execute() {
+        echo "${FILES[0]}" >> ran.log
+        [[ "${FILES[0]}" == "a.md" ]] && printf 'b.md\n' >> q.txt
+        return 0
+    }
+    run_chain_queue >/dev/null 2>&1
+    [ "$(sed -n 2p ran.log)" = "b.md" ]
+    [ "$(grep -c . ran.log)" -eq 2 ]
+}
+
+@test "run_chain_queue: a plan removed from the queue after running is not repeated" {
+    printf -- '- [ ] a\n' > a.md
+    printf 'a.md\n' > q.txt
+    QUEUE_FILE=q.txt
+    run_execute() { echo "${FILES[0]}" >> ran.log; printf 'a.md\na.md\n' > q.txt; return 0; }
+    run_chain_queue >/dev/null 2>&1
+    [ "$(grep -c . ran.log)" -eq 1 ]
+}
+
+@test "run_chain_queue: stops at the first failing plan" {
+    printf -- '- [ ] a\n' > a.md
+    printf -- '- [ ] b\n' > b.md
+    printf -- '- [ ] c\n' > c.md
+    printf 'a.md\nb.md\nc.md\n' > q.txt
+    QUEUE_FILE=q.txt
+    run_execute() {
+        echo "${FILES[0]}" >> ran.log
+        [[ "${FILES[0]}" == "b.md" ]] && return 1
+        return 0
+    }
+    run run_chain_queue
+    [ "$status" -eq "$EXIT_PLAN_FAILED" ]
+    [ "$(grep -c . ran.log)" -eq 2 ]
+    [[ "$(cat ran.log)" != *"c.md"* ]] || return 1
+}
+
+@test "run_chain_queue: a queued plan that does not exist fails loudly" {
+    printf 'ghost.md\n' > q.txt
+    QUEUE_FILE=q.txt
+    run_execute() { echo ran >> ran.log; return 0; }
+    run run_chain_queue
+    [ "$status" -eq "$EXIT_PLAN_FAILED" ]
+    [[ "$output" == *"does not exist"* ]] || return 1
+    [ ! -f ran.log ]
+}
+
+@test "run_chain_queue: an empty queue says so and succeeds" {
+    : > q.txt
+    QUEUE_FILE=q.txt
+    run run_chain_queue
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"queue was empty"* ]] || return 1
+}
+
+@test "run_chain: --queue takes precedence over the argv form" {
+    printf -- '- [ ] a\n' > a.md
+    printf 'a.md\n' > q.txt
+    QUEUE_FILE=q.txt
+    FILES=()
+    run_execute() { echo "${FILES[0]}" >> ran.log; return 0; }
+    run_chain >/dev/null 2>&1
+    [ "$(cat ran.log)" = "a.md" ]
+}
+
 # ── find_run_sidecars / run_top ──────────────────────────────────────────────
 
 @test "find_run_sidecars: finds runs in docs/ and cwd, sorted/deduped" {
@@ -5241,6 +5381,59 @@ EOF
     [[ "$output" == *"$pid"* ]] || return 1
     [[ "$output" == *"running"* ]] || return 1
     [[ "$output" != *"scheduled for"* ]] || return 1
+}
+
+@test "read_run_status: no Status line is empty and successful, not a failure" {
+    printf 'working...\nno status here\n' > out.txt
+    run read_run_status out.txt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "current_run_slice: a file with no run separator is not a failure" {
+    printf 'old output\n' > out.txt
+    run current_run_slice out.txt
+    [ "$status" -eq 0 ]
+    [ "$output" = "old output" ]
+}
+
+@test "run_top: one run with no recorded status does not truncate the table" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/a_plan.md
+    : > docs/a_plan.pid
+    # A .out with no "Status:" line used to make grep exit 1, pipefail
+    # propagate it, and set -e abort run_top part-way down the list.
+    printf 'started, then killed\n' > docs/a_plan.out
+    printf -- '- [ ] b\n' > docs/z_plan.md
+    : > docs/z_plan.pid
+    FILES=()
+    run bash -c "set -euo pipefail; source '$WIGGUM_LIB'; export WIGGUM_REGISTRY_DIR='$WIGGUM_REGISTRY_DIR'; cd '$TEST_DIR'; FILES=(); run_top"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"docs/a_plan.md"* ]] || return 1
+    # The row after the failing one has to survive.
+    [[ "$output" == *"docs/z_plan.md"* ]] || return 1
+}
+
+@test "run_top: running runs sort above finished ones" {
+    mkdir -p docs
+    printf -- '- [x] a\n' > docs/aaa_plan.md
+    sleep 1 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    echo "$dead" > docs/aaa_plan.pid
+    printf 'Status: complete\n' > docs/aaa_plan.out
+    printf -- '- [ ] b\n' > docs/zzz_plan.md
+    sleep 30 &
+    local live=$!
+    echo "$live" > docs/zzz_plan.pid
+    FILES=()
+    run run_top
+    kill "$live" 2>/dev/null; wait "$live" 2>/dev/null || true
+    # Alphabetically aaa precedes zzz; by state the running one leads.
+    local first
+    first="$(printf '%s\n' "$output" | sed -n '2p')"
+    [[ "$first" == *"zzz_plan.md"* ]] || return 1
+    [[ "$first" == *"running"* ]] || return 1
 }
 
 @test "run_top: flags a blocked run" {

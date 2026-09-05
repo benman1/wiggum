@@ -123,7 +123,7 @@ _wiggum() {
             ;;
         chain)
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--max-iterations --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--queue --max-iterations --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi

@@ -57,6 +57,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
+| `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
 | `wiggum top` | Every run at a glance: one line per known run (plan, pid, state, task tally). Read-only — use it to see them all at once. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,

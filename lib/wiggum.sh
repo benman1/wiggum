@@ -42,6 +42,7 @@ wiggum_reset() {
     PLAN_FILE=""
     SUMMARY_FILE=""
     EXPLAIN_FILE=""
+    QUEUE_FILE=""
     NO_FEEDBACK=false
     MAX_ITERATIONS=30
     MAX_VALIDATION_RETRIES=5
@@ -621,14 +622,31 @@ wiggum chain - Execute several workplans back to back
 
 Usage:
   wiggum chain <plan-file...> [options]
+  wiggum chain --queue <file> [options]
 
 Runs 'wiggum execute' on each plan in order, each in a fresh session. Stops at
 the first plan that fails so a broken step doesn't drag the rest down. Accepts
 the same execution options as 'wiggum execute' (e.g. --max-iterations).
 
+Options:
+  --queue <file>       Read the plan list from a file instead of arguments
+
+With plans as arguments the list is fixed when the chain starts. With --queue it
+is re-read after every plan, so a line appended while the chain is working is
+picked up when the current plan finishes. One path per line, '#' starts a
+comment, blank lines ignored. A plan already run is not repeated even if the
+file changes, and a queued path that does not exist when its turn comes stops
+the chain rather than being skipped.
+
+Because the list is on disk rather than in argv, a killed chain resumes by
+running the same command again: delete the finished plans from the file first,
+or leave them and let their tasks reconcile as already done.
+
 Examples:
   wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
   wiggum chain docs/*.plan.md --max-iterations 5
+  wiggum chain --queue docs/queue.txt --max-iterations 12
+  echo docs/extra_plan.md >> docs/queue.txt   # while the chain runs
 EOF
             ;;
         top)
@@ -907,6 +925,10 @@ parse_args() {
                 EXPLAIN_FILE="$2"
                 shift 2
                 ;;
+            --queue)
+                QUEUE_FILE="$2"
+                shift 2
+                ;;
             --no-feedback)
                 NO_FEEDBACK=true
                 shift
@@ -1038,6 +1060,24 @@ parse_args() {
 
     # check mode needs no input files
     if [[ "$MODE" == "check" ]]; then
+        return 0
+    fi
+
+    # A queued chain reads its plans from the queue file, so it takes no
+    # positional arguments and must not fall through to the stdin branch below.
+    if [[ -n "$QUEUE_FILE" ]]; then
+        if [[ "$MODE" != "chain" ]]; then
+            echo "Error: --queue is only valid for 'wiggum chain'." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+        if [[ ${#FILES[@]} -gt 0 ]]; then
+            echo "Error: pass plans either as arguments or with --queue, not both." >&2
+            return "$EXIT_BAD_ARGS"
+        fi
+        if [[ ! -f "$QUEUE_FILE" ]]; then
+            echo "Error: queue file not found: $QUEUE_FILE" >&2
+            return "$EXIT_BAD_ARGS"
+        fi
         return 0
     fi
 
@@ -1654,6 +1694,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
+| `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
 | `wiggum top` | Every run at a glance: one line per known run (plan, pid, state, task tally). Read-only — use it to see them all at once. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
@@ -3446,8 +3487,12 @@ WIGGUM_RUN_SEPARATOR_PREFIX='--- wiggum run'
 current_run_slice() {
     local outfile="$1"
     [[ -f "$outfile" ]] || return 0
+    # `|| true`, because a `.out` with no separator is the ordinary case for a
+    # file written before separators existed. grep exits 1 on no match and
+    # `pipefail` propagates that, so without this the assignment fails and
+    # `set -e` takes the whole command down.
     local start
-    start="$(grep -n "^${WIGGUM_RUN_SEPARATOR_PREFIX} " "$outfile" | tail -n1 | cut -d: -f1)"
+    start="$(grep -n "^${WIGGUM_RUN_SEPARATOR_PREFIX} " "$outfile" | tail -n1 | cut -d: -f1 || true)"
     if [[ -n "$start" ]]; then
         tail -n +"$start" "$outfile"
     else
@@ -3630,10 +3675,16 @@ release_run_pidfile() {
     return 0
 }
 
+# Echoes nothing, successfully, when the run recorded no status. That is a
+# normal state (a run still going, or one killed before it could write one),
+# not an error: `grep` exits 1 on no match, `pipefail` propagates it, and a
+# bare failure here used to abort `wiggum top` part-way through its list --
+# printing a truncated table and exiting 1, which reads as "those are all the
+# runs" rather than "this command failed".
 read_run_status() {
     local outfile="$1"
     [[ -f "$outfile" ]] || return 0
-    current_run_slice "$outfile" | grep -E '^Status: ' | tail -n1 | sed -E 's/^Status: //'
+    current_run_slice "$outfile" | grep -E '^Status: ' | tail -n1 | sed -E 's/^Status: //' || true
 }
 
 # Return 0 if a run's output shows it is blocked: a stall was detected, the
@@ -4359,7 +4410,17 @@ top_row() {
     [[ "$remaining" -gt 0 ]] && tasks="${tasks}, ${remaining} left"
     [[ "$dropped" -gt 0 ]] && tasks="${tasks}, ${dropped} dropped"
 
-    printf '%-40s %-8s %-20s %s\n' "$plan" "$pid_display" "$state" "$tasks"
+    # Leading rank, stripped by run_top after sorting. Without it the table is
+    # alphabetical, which buries the one running job among a dozen finished
+    # ones -- the opposite of what someone types `top` to find out.
+    local rank=3
+    case "$state" in
+        "running (blocked)") rank=0 ;;
+        running)             rank=1 ;;
+        scheduled*)          rank=2 ;;
+    esac
+
+    printf '%s\t%-40s %-8s %-20s %s\n' "$rank" "$plan" "$pid_display" "$state" "$tasks"
 }
 
 # Render a run's base path the way `top` should show it: relative when the run
@@ -4414,15 +4475,113 @@ run_top() {
         return 0
     fi
     printf '%-40s %-8s %-20s %s\n' "PLAN" "PID" "STATE" "TASKS"
+    # Blocked first, then running, then scheduled, then everything finished.
+    # `sort -s` keeps the alphabetical order collect_top_bases produced within
+    # each group.
     for f in "${bases[@]}"; do
         top_row "$f"
+    done | sort -s -k1,1n | cut -f2-
+}
+
+# Plan paths listed in a queue file: one per line, `#` starts a comment, blank
+# lines ignored. Echoes nothing for a missing file rather than failing, because
+# a queue can legitimately be deleted while the chain that reads it is winding
+# down.
+read_queue() {
+    local file="$1" line
+    [[ -f "$file" ]] || return 0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%%#*}"
+        # Trim surrounding whitespace without spawning a process per line.
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -n "$line" ]] && printf '%s\n' "$line"
+    done < "$file"
+    return 0
+}
+
+# The next plan in the queue that this run has not already executed, or nothing
+# when the queue is exhausted.
+#
+# The file is re-read on every call, which is the whole point: a line appended
+# while a plan is running is picked up when that plan finishes. A line removed
+# before it is reached is simply never run, and one removed after it ran stays
+# in DONE, so editing the file mid-chain cannot cause a repeat.
+next_queued_plan() {
+    local file="$1" done_list="${2:-}" line
+    while IFS= read -r line; do
+        if printf '%s\n' "$done_list" | grep -Fxq -- "$line"; then
+            continue
+        fi
+        printf '%s\n' "$line"
+        return 0
+    done < <(read_queue "$file")
+    return 0
+}
+
+# `wiggum chain --queue <file>` -- a chain whose plan list lives on disk.
+#
+# `run_chain` takes its plans from argv, which fixes the list at launch: there
+# is nowhere to add work to a chain that is already running. Reading the list
+# from a file instead means appending a line adds a plan to the tail, and the
+# queue survives the process, so a killed chain can be resumed by re-running the
+# same command.
+#
+# Stops at the first plan that fails, exactly as the argv form does. A queued
+# plan that does not exist when its turn comes is a failure rather than a skip:
+# silently passing over a path somebody typed wrong would leave the work undone
+# with nothing saying so.
+run_chain_queue() {
+    local done_list="" plan idx=0 rc=0 total_done=0
+    echo "=== WIGGUM CHAIN MODE (queue: $QUEUE_FILE) ===" >&2
+
+    while :; do
+        plan="$(next_queued_plan "$QUEUE_FILE" "$done_list")"
+        [[ -n "$plan" ]] || break
+
+        idx=$((idx + 1))
+        done_list="${done_list}${plan}
+"
+        echo "" >&2
+        echo "=== Chain plan $idx (queued): $plan ===" >&2
+
+        if [[ ! -f "$plan" ]]; then
+            echo "=== Chain plan $idx FAILED: $plan does not exist -- stopping chain ===" >&2
+            return "$EXIT_PLAN_FAILED"
+        fi
+
+        # Fresh session per plan, as in the argv form.
+        WIGGUM_LAST_SESSION_ID=""
+        FILES=("$plan")
+        SUMMARY_FILE="$(derive_output_file execute "$plan" "")"
+        rc=0
+        run_execute || rc=$?
+        release_run_pidfile
+        if [[ "$rc" -ne 0 ]]; then
+            echo "=== Chain plan $idx FAILED: $plan -- stopping chain ===" >&2
+            return "$EXIT_PLAN_FAILED"
+        fi
+        total_done=$((total_done + 1))
+        echo "=== Chain plan $idx complete: $plan ===" >&2
     done
+
+    echo "" >&2
+    if [[ "$total_done" -eq 0 ]]; then
+        echo "=== WIGGUM CHAIN COMPLETE: the queue was empty ===" >&2
+    else
+        echo "=== WIGGUM CHAIN COMPLETE: $total_done plan(s) from $QUEUE_FILE ===" >&2
+    fi
+    return 0
 }
 
 # Execute several workplans back to back, each in its own fresh session, in the
 # order given. Stops at the first plan that fails so a broken step doesn't drag
 # the rest of the chain down. This is wiggum's "chain up different workplans".
 run_chain() {
+    if [[ -n "$QUEUE_FILE" ]]; then
+        run_chain_queue
+        return $?
+    fi
     local plans=("${FILES[@]}")
     local total=${#plans[@]}
     local idx=0 f

@@ -479,6 +479,15 @@ wiggum chain docs/*.plan.md --max-iterations 5
 
 `chain` runs `wiggum execute` on each plan in order. If a plan fails (stalls or errors), the chain stops there rather than wasting effort on plans that likely depend on it. This is the preferred way to tackle work too large for one plan: split it into focused plans and chain them, instead of writing one 40-task plan that tends to stall.
 
+Chains normally take their plan list from the command line, which fixes it at launch. `--queue` reads the list from a file instead, and re-reads it after every plan:
+
+```
+wiggum chain --queue docs/queue.txt --max-iterations 12
+echo docs/extra_plan.md >> docs/queue.txt   # while the chain is running
+```
+
+One path per line, `#` starts a comment, blank lines ignored. A plan appended while the chain works is picked up when the current plan finishes, a plan already run is never repeated even if you edit the file, and a queued path that does not exist when its turn comes stops the chain rather than being skipped silently. Because the list is on disk rather than in argv, a killed chain resumes by re-running the same command.
+
 Each plan in a chain registers itself while it is the active one, so `wiggum top` shows a running chain as a single row for the plan it is on right now — and drops that row when the chain moves to the next plan. To supervise a chain, run `top` (or `status` on the active plan); `watch` attaches to one plan, not to the chain as a whole.
 
 ### Claude Code skill
