@@ -56,6 +56,9 @@ main() {
                 run_execute
             fi
             ;;
+        explain)
+            run_explain
+            ;;
         check)
             run_check
             ;;

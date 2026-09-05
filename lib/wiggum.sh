@@ -41,6 +41,8 @@ wiggum_reset() {
     FILES=()
     PLAN_FILE=""
     SUMMARY_FILE=""
+    EXPLAIN_FILE=""
+    NO_FEEDBACK=false
     MAX_ITERATIONS=30
     MAX_VALIDATION_RETRIES=5
     MAX_STALL_COUNT=2
@@ -457,11 +459,19 @@ Usage:
 
 Options:
   --plan-file <path>   Output path for the plan (default: <base>_plan.md)
+  --no-feedback        Skip the feedback pass over the finished plan
   --verbose            Show Claude output (suppressed by default)
 
 Reads issue descriptions, specs, or requirements and produces a structured
 markdown workplan with phases, tasks, acceptance criteria, and dependencies.
 Does not modify your codebase.
+
+A second pass then adds the context a reader needs to judge the plan, without
+touching the work itself: an '## Open decisions' section naming the choices
+still open with their options, trade-offs and effort, and a '## How this reaches
+users' section naming the documentation, help text or web pages a user would
+have to read to learn the feature exists. Same analysis as 'wiggum explain'.
+'--no-feedback' skips it; a piped plan skips it automatically.
 
 When no files are given, reads from stdin.
 
@@ -470,6 +480,35 @@ Examples:
   wiggum plan issues/*.md --plan-file docs/sprint_plan.md
   echo "Add dark mode toggle" | wiggum plan
   wiggum plan <<< "Fix the login timeout bug"
+EOF
+            ;;
+        explain)
+            cat <<EOF
+wiggum explain - Explain what a plan or issue is worth, and what it leaves open
+
+Usage:
+  wiggum explain <files...> [options]
+  wiggum explain [options] < plan.md
+
+Options:
+  --explain-file <path>  Write the explanation to a file instead of stdout
+  --verbose              Show Claude output as it is produced
+
+Read-only. Reads a workplan or issue file and answers four questions under four
+headings: what it contains, what it is worth, how it reaches users (which docs,
+help text or web pages would have to change for anyone to find out), and which
+decisions are still open -- with each option's trade-offs and rough effort.
+
+Changes nothing: no edits, no plan, no commit. This is the same analysis
+'wiggum plan' folds into a plan it writes, available on demand for a plan
+somebody else wrote, one already part-executed, or an issue nobody has planned.
+
+When no files are given, reads from stdin.
+
+Examples:
+  wiggum explain docs/auth_plan.md
+  wiggum explain issues/*.md --explain-file docs/auth_explained.md
+  wiggum explain docs/auth_plan.md --verbose
 EOF
             ;;
         execute)
@@ -729,6 +768,7 @@ Usage:
 Commands:
   init      Generate a .wiggumrc for a standard project setup
   plan      Create a workplan from issue/spec files
+  explain   Explain a plan's worth and its open decisions (read-only)
   execute   Implement a workplan with iterative validation
   check     Run verification waterfall and fix issues
   docs      Update documentation from input files
@@ -781,9 +821,9 @@ parse_args() {
     fi
 
     case "$MODE" in
-        plan|execute|init|docs|check|run|status|watch|kill|chain|top) ;;
+        plan|execute|explain|init|docs|check|run|status|watch|kill|chain|top) ;;
         *)
-            echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'check', 'docs', 'run', 'status', 'watch', 'kill', 'chain', 'top', or 'init'." >&2
+            echo "Error: unknown mode '$MODE'. Use 'plan', 'execute', 'explain', 'check', 'docs', 'run', 'status', 'watch', 'kill', 'chain', 'top', or 'init'." >&2
             return "$EXIT_BAD_ARGS"
             ;;
     esac
@@ -862,6 +902,14 @@ parse_args() {
             --delimiter)
                 RUN_DELIMITER="$2"
                 shift 2
+                ;;
+            --explain-file)
+                EXPLAIN_FILE="$2"
+                shift 2
+                ;;
+            --no-feedback)
+                NO_FEEDBACK=true
+                shift
                 ;;
             -b|--background)
                 BACKGROUND=true
@@ -1597,7 +1645,8 @@ That's the whole preflight. Everything else you need is in this skill.
 
 | Command | What it does |
 |---|---|
-| `wiggum plan <issue-or-file> [--plan-file docs/<slug>_plan.md]` | Write a workplan. Does not touch code. |
+| `wiggum plan <issue-or-file> [--plan-file docs/<slug>_plan.md]` | Write a workplan, then add its open decisions and audience analysis. Does not touch code. |
+| `wiggum explain <plan-or-issue>` | Explain what a plan contains, what it is worth to users, how they would find out about it, and which decisions are still open. Read-only. |
 | `wiggum execute <plan> [--max-iterations N]` | Run the loop in the foreground (blocks). |
 | `wiggum execute <plan> --background` | Run detached; writes `docs/<name>.pid` + `docs/<name>.out`. Returns immediately. |
 | `wiggum execute <plan> --at <WHEN>` | Wait until WHEN, then run once, detached. WHEN is `+90m` (relative), `01:07` (the next such clock time) or `@1756180020` (epoch). Creates nothing recurring; `status` reports it as scheduled and `kill` cancels it. |
@@ -1716,6 +1765,25 @@ Rules for a good plan:
 - Then, still before any phase, add a `## Constraints` section as a self-check
   — `In scope`, `Out of scope`, and `Never do` — then derive the phases so they
   stay within those bounds.
+- **Cite the issues the plan comes from.** Find where the repo tracks them — the
+  issue or spec files the plan was built from, and any tracker in version control
+  (`ISSUES.md`, `TODO.md`, `ROADMAP.md`, `docs/issues*.md`, a `CHANGELOG` section,
+  a status table inside the plan's own issue file) — and name the open entries each
+  phase addresses, with `path:line` where you can. This is what lets phase 3 close
+  exactly those entries and no others instead of inferring which ones this work was
+  about (step 3f). A phase that closes no tracked entry says so rather than leaving
+  it ambiguous, and if the repo keeps no ledger the plan says that in one line.
+  Never cite an entry you have not read: a plan pointing at an issue that does not
+  exist is worse than one pointing at nothing.
+- **Say what is still open, and who the work is for.** `wiggum plan` adds these
+  itself in a feedback pass, and `wiggum explain <plan>` produces them on demand for
+  a plan you did not write — but if you are writing the plan by hand, include them:
+  an `## Open decisions` section (the choices a person still has to make, each with
+  its options, what each buys and costs, and rough effort — or one line saying
+  nothing is open), and a `## How this reaches users` section naming the README
+  sections, `--help` text, release notes or web pages somebody would have to read to
+  learn the feature exists. A feature nobody can discover has not shipped, and the
+  doc task that fixes it belongs in the plan rather than in somebody's memory.
 - **Draw it before you phase it.** After the constraints and before the first
   phase, add `## The shape of it`: one mermaid diagram of the thing the plan acts
   on, and two or three sentences saying what to take from it. Choose by what the
@@ -2296,6 +2364,14 @@ with the supervise loop in step 3 so you can inspect and fix between stages.
 
 - **Drive the CLI; don't reimplement it.** Plan/implement/verify/commit are
   wiggum's job. You orchestrate: plan, launch, monitor, wait, unblock, kill, chain.
+- **Back out when the loop isn't warranted.** wiggum runs a full cycle *per task* —
+  a fresh `claude` session, the whole verify suite, a commit. If you could make the
+  change and confirm it in a single pass, say so and edit it directly rather than
+  planning it; a plan that fragments one edit into eight commits costs more than it
+  returns. Size and file count are the wrong test — prompt wording, a doc sweep, or
+  a function copying an existing pattern is direct work even across many files. The
+  loop earns its cost when steps depend on each other and each needs verifying
+  before the next can be written.
 - **Never ask for confirmation** — just execute.
 - **Refer to runs by their plan file** — that's how status/watch/kill find the
   sidecars.
@@ -2600,6 +2676,84 @@ run_claude() {
 
 # ── Plan ─────────────────────────────────────────────────────────────────────
 
+# Second pass over a freshly written plan: adds the context a reader needs to
+# judge it, without touching the work itself.
+#
+# Runs with -c so it reviews the plan it just wrote rather than re-reading it
+# cold. Deliberately additive -- rewriting tasks here would let a review pass
+# silently redesign work the first pass reasoned about, and the checkbox counts
+# wiggum tracks would move for reasons nobody asked for.
+#
+# Skipped by --no-feedback, and by a piped run: piping means the plan is going
+# straight into `wiggum execute`, where the extra sections cost a second claude
+# call and are read by nobody.
+run_plan_feedback() {
+    if [[ "$NO_FEEDBACK" == true ]]; then
+        echo "Feedback step: skipped (--no-feedback)" >&2
+        return 0
+    fi
+
+    echo "" >&2
+    echo "--- Plan feedback: open decisions and audience ---" >&2
+    log_entry "phase" "plan feedback"
+
+    local prev_label="${WIGGUM_CURRENT_LABEL:-plan}"
+    WIGGUM_CURRENT_LABEL="plan-feedback"
+    run_claude -p -c \
+        "Review the workplan you just wrote to $PLAN_FILE and UPDATE that file in place, adding the context a reader needs to judge it. $(prompt_open_decisions) Put that analysis in a new '## Open decisions' section, immediately after the constraints and before the first phase. $(prompt_user_benefit) Fold items 1 to 3 of that analysis into the plan's existing '## Expected benefits' section rather than repeating them beside it, and put item 4 in a '## How this reaches users' section directly below it -- if the plan has no task covering a documentation or website change that item 4 says is missing, add it as a real checkbox task with an Acceptance line, in the phase where it belongs. Do NOT otherwise change the plan: do not reword, reorder, renumber, split, merge or delete any existing task, phase or acceptance criterion. Use the Edit tool on $PLAN_FILE. Do not print the plan. $PROMPT_SUFFIX" \
+        "$PLAN_FILE"
+    WIGGUM_CURRENT_LABEL="$prev_label"
+    return 0
+}
+
+# `wiggum explain <plan-or-issue>` -- the same analysis the plan feedback step
+# performs, on demand and read-only.
+#
+# Separate from `plan` because the questions outlive the plan's creation: a plan
+# somebody else wrote, one half-executed, or an issue file nobody has planned yet
+# all raise them, and regenerating the plan to find out is both expensive and
+# destructive. Writes nothing to the repository and makes no commit; the analysis
+# goes to stdout unless --explain-file names a destination.
+run_explain() {
+    local file_list="${FILES[*]}"
+
+    echo "=== WIGGUM EXPLAIN MODE ===" >&2
+    echo "Input files: $file_list" >&2
+    if [[ -n "$EXPLAIN_FILE" ]]; then
+        echo "Output: $EXPLAIN_FILE" >&2
+    else
+        echo "Output: stdout" >&2
+    fi
+    echo "" >&2
+
+    log_init "${FILES[0]}"
+
+    local destination
+    if [[ -n "$EXPLAIN_FILE" ]]; then
+        destination="Use the Write tool to save your answer to: $EXPLAIN_FILE. Do not print it."
+    else
+        destination="Print your answer. Write no files."
+    fi
+
+    WIGGUM_CURRENT_LABEL="explain"
+    WIGGUM_SHOW_OUTPUT=true
+    run_claude -p \
+        "Explain the following file(s) to somebody deciding whether to run this work: $file_list. Read them, and read the repository around them for anything they assert about current behaviour. $(prompt_user_benefit) Then, separately: $(prompt_open_decisions) Answer under four headings -- 'What it contains', 'What it is worth', 'How it reaches users', 'Open decisions'. Change NOTHING in the repository: this is a read-only explanation, so make no edits, write no plan, and run no git command that alters state. $destination $PROMPT_SUFFIX" \
+        "${FILES[@]}"
+    WIGGUM_SHOW_OUTPUT=false
+
+    if [[ -n "$EXPLAIN_FILE" ]]; then
+        if [[ -f "$EXPLAIN_FILE" && -s "$EXPLAIN_FILE" ]]; then
+            echo "" >&2
+            echo "Explanation written: $EXPLAIN_FILE" >&2
+        else
+            echo "Error: explanation file was not created or is empty. Check Claude output above." >&2
+            return "$EXIT_PLAN_FAILED"
+        fi
+    fi
+    return 0
+}
+
 run_plan() {
     local piped=false
     # Pipe the plan to stdout when no explicit -o was given AND either stdin
@@ -2643,11 +2797,16 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p \
-        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_expected_benefits) $(prompt_constraints_summary) $(prompt_plan_diagram) ${defect_rules}Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) $(prompt_risk_gates) $(prompt_research_and_delegation) $(prompt_phase_sequencing) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_expected_benefits) $(prompt_constraints_summary) $(prompt_plan_diagram) ${defect_rules}Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) $(prompt_risk_gates) $(prompt_research_and_delegation) $(prompt_phase_sequencing) $(prompt_plan_issue_refs) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
     if [[ -f "$PLAN_FILE" && -s "$PLAN_FILE" ]]; then
+        # A piped plan is on its way into `wiggum execute`, where the extra
+        # sections cost a second claude call and are read by nobody.
+        if [[ "$piped" != true ]]; then
+            run_plan_feedback
+        fi
         warn_if_plan_large "$PLAN_FILE"
         if [[ "$piped" == true ]]; then
             cat "$PLAN_FILE"
@@ -2673,6 +2832,30 @@ prompt_workplan() {
 }
 
 # Expected-benefits section that must open the plan.  Usage: $(prompt_expected_benefits)
+# The open-decisions analysis, shared by `wiggum explain` and the plan feedback
+# step. A plan states what will be done; the choices still genuinely open are the
+# part a human has to settle, and a run that guesses at one spends iterations
+# discovering it guessed wrong.
+prompt_open_decisions() {
+    echo "Identify the decisions this work leaves OPEN -- the choices a person still has to make. For each: the decision in one line; the context needed to judge it (what in the repo forces it, as path:line, and what depends on it); the realistic options, with what each buys and costs; and a rough effort estimate per option, flagging which parts you are unsure of. Order them by the phase each blocks, and name that phase. Only a real fork belongs here, not a detail the implementer should just pick. If nothing is genuinely open, say so in one line rather than inventing a dilemma."
+}
+
+# The audience analysis, shared by `wiggum explain` and the plan feedback step.
+# Work that nobody can find out about is work that only half shipped, and the
+# documentation and web changes that close that gap are routinely remembered
+# after the fact rather than planned.
+prompt_user_benefit() {
+    echo "Explain the work from the outside in. 1. WHAT IT CONTAINS: the phases and what each changes, in plain terms, for somebody who has not read the tasks. 2. WHAT BENEFIT IT BRINGS: what becomes true when this is done that is not true now -- an outcome, not an edit. 3. WHAT THE BENEFIT IS TO USERS: the same, in the words of somebody who USES the product; name who they are and what they were doing when they hit this problem. If users see nothing and this serves maintainers, say so rather than inflating it. 4. HOW IT IS COMMUNICATED: the places a user would look to find out -- README sections, --help text, release notes, a website page, completions -- citing each as a path, and whether the work covers it. A feature nobody can discover has not shipped."
+}
+
+# Appended to the plan prompt so planning starts from the issues the repository
+# already tracks. prompt_issue_ledger reconciles that ledger in phase 3, but
+# nothing told the PLANNER to look at it, so plans rarely named the entries they
+# addressed and phase 3 was left inferring which ones this work closed.
+prompt_plan_issue_refs() {
+    echo "Anchor the plan to the issues it comes from: the issue or spec files it was built from, plus any tracker in version control (ISSUES.md, TODO.md, ROADMAP.md, docs/issues*.md, a CHANGELOG section, a status table in the plan's own issue file). On each phase, cite the open entries it addresses as path:line, so phase 3 closes exactly those; a phase closing none says so. If the repo keeps no ledger, say that in one line. Never invent or create a tracker, and never cite an entry you have not read."
+}
+
 prompt_expected_benefits() {
     echo "START the plan with an '## Expected benefits' section, before anything else: a numbered list, most valuable first, of what this work is FOR -- each one an outcome someone gets, not the change being made ('a failed verify names the offending file in one line' is a benefit; 'refactor the error handler' is not). Give every benefit a 'Signal:' line -- the observable thing that shows it landed after shipping (a number that moves, an error that stops appearing, a manual step nobody performs any more) -- and mark one you cannot measure yet as 'speculative' rather than dressing it up. Then derive everything else from that list: every phase MUST carry a 'Serves:' line naming the benefit numbers it delivers, and a phase that serves none is scope creep -- cut it, or name the benefit that justifies it. If the benefits do not justify the work as scoped, say so in one line at the top of the section and propose the smaller version that does."
 }
@@ -2684,7 +2867,7 @@ prompt_constraints_summary() {
 
 # Diagram that must follow the constraints.  Usage: $(prompt_plan_diagram)
 prompt_plan_diagram() {
-    echo "After '## Constraints' and before the first phase, add a '## The shape of it' section containing ONE mermaid diagram of the thing the plan acts on, plus two or three sentences naming what the reader should take from it. Pick the kind by what the work changes: a 'flowchart TD' of the USER FLOW when the work changes what somebody experiences (a journey, a decision about who may do what, a funnel, a form being filled in); a 'flowchart LR' or 'graph TD' ARCHITECTURE diagram when the work changes how components call each other (a new module, a moved boundary, a request path); a 'sequenceDiagram' when the work is about ordering across systems (a webhook, a retry, a race, a migration with a cutover). Diagram the system as it will be AFTER the work, and mark the nodes the plan actually adds or changes -- a distinct node shape, or a 'NEW'/'CHANGED' prefix in the label -- so a reader sees the blast radius at a glance. Rules: label every node with the words a reader of the plan would use rather than function names; keep it under about 20 nodes and split into two diagrams before exceeding that; put decision points in rhombus nodes and name the branches on the edges, including the failure branch, because the branch nobody drew is the one nobody built. This is not decoration -- a plan whose diagram cannot be drawn is a plan whose scope is not yet understood, so if you cannot draw it, say so in that section and make the first phase the research that would let you."
+    echo "After '## Constraints' and before the first phase, add a '## The shape of it' section: ONE mermaid diagram of the thing the plan acts on, plus two or three sentences naming what the reader should take from it. Pick by what the work changes -- 'flowchart TD' of the USER FLOW when it changes what somebody experiences, 'flowchart LR' ARCHITECTURE when it changes how components call each other, 'sequenceDiagram' when it is about ordering across systems. Draw the system as it will be AFTER the work, prefixing changed nodes 'NEW'/'CHANGED' so the blast radius is visible at a glance. Label nodes in the reader's words, not function names; stay under about 20 nodes, splitting into two diagrams before exceeding that; put decisions in rhombus nodes and name every branch on its edge, including the failure branch, because the branch nobody drew is the one nobody built. A plan whose diagram cannot be drawn is a plan whose scope is not yet understood: say so there, and make the first phase the research that would let you draw it."
 }
 
 # Verification discipline appended to the planner prompt.  Usage: $(prompt_plan_verification)
@@ -2699,7 +2882,7 @@ prompt_acceptance_criteria() {
 
 # Risk gates appended to the planner prompt.  Usage: $(prompt_risk_gates)
 prompt_risk_gates() {
-    echo "Apply these four risk gates. Each is conditional -- state a gate that is not triggered as 'not triggered' rather than silently omitting it, and never add a phase for a gate whose trigger is absent. (1) Measure before you act: If a phase is justified by a claim about production data or runtime state, make the FIRST phase a read-only measurement of that claim, and have each dependent phase name the measurement result that would make it unnecessary. (2) Activating never-run code is not a no-op: If a task enables, un-comments, or first-runs a path that has never executed against real data, precede it with a read-only impact report over real inputs, and gate shipping on that report being reviewed. (3) Irreversible work carries four conditions: If a task deletes, overwrites, or rewrites data, it MUST default to a dry run, export the affected rows before the first real write, be idempotent so a re-run is safe, and record the affected count per scope. (4) A new guard must pass on a clean tree: If a task adds a guard, lint rule, or CI check, enumerate the legitimate exceptions up front, and its acceptance MUST state that the guard passes against current code on its first run and fails when the defect is reintroduced."
+    echo "Apply these four risk gates. Each is conditional: mark one whose trigger is absent 'not triggered' rather than omitting it, and never add a phase for it. (1) Measure first: If a phase is justified by a claim about production data or runtime state, make the FIRST phase a read-only measurement of it, and have each dependent phase name the result that would make it unnecessary. (2) Activating never-run code is not a no-op: If a task enables or first-runs a path that has never executed against real data, precede it with a read-only impact report over real inputs, reviewed before shipping. (3) Irreversible work carries four conditions: If a task deletes, overwrites or rewrites data, it MUST default to a dry run, export the affected rows before the first real write, be idempotent, and record the affected count per scope. (4) A new guard must pass on a clean tree: If a task adds a guard, lint rule or CI check, enumerate the legitimate exceptions up front, and its acceptance MUST state that the guard passes against current code on its first run and fails when the defect is reintroduced."
 }
 
 # Non-edit task kinds -- research spikes and nested wiggum runs.  Usage: $(prompt_research_and_delegation)

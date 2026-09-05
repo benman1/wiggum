@@ -7,6 +7,7 @@ _wiggum() {
     commands=(
         'init:Generate a .wiggumrc for a standard project setup'
         'plan:Create a workplan from issue/spec files'
+        'explain:Explain a plan worth and its open decisions (read-only)'
         'execute:Implement a workplan with iterative validation'
         'check:Run verification waterfall and fix issues'
         'docs:Update documentation from input files'
@@ -43,6 +44,16 @@ _wiggum() {
         plan)
             _arguments \
                 '--plan-file[Output path for the plan]:file:_files -g "*.md"' \
+                '--no-feedback[Skip the feedback pass over the finished plan]' \
+                "$effort_opt" \
+                "$perm_opt" \
+                '--verbose[Pass --verbose to Claude Code]' \
+                '(-h --help)'{-h,--help}'[Show help]' \
+                '*:input files:_files -g "*.md"'
+            ;;
+        explain)
+            _arguments \
+                '--explain-file[Write the explanation to a file instead of stdout]:file:_files -g "*.md"' \
                 "$effort_opt" \
                 "$perm_opt" \
                 '--verbose[Pass --verbose to Claude Code]' \

@@ -21,6 +21,7 @@ docs/onboarding-ui_plan.md               621      running (blocked)    2/7 done,
 - [How it works](#how-it-works)
   - [Init mode](#init-mode)
   - [Plan mode](#plan-mode)
+  - [Explain mode](#explain-mode)
   - [Execute mode](#execute-mode)
   - [Docs mode](#docs-mode)
   - [Check mode](#check-mode)
@@ -60,6 +61,8 @@ docs/onboarding-ui_plan.md               621      running (blocked)    2/7 done,
 - [Output files](#output-files)
 - [Project structure](#project-structure)
 - [Development](#development)
+  - [The website](#the-website)
+- [License](#license)
 - [Tips](#tips)
 - [Long runs](#long-runs)
 
@@ -81,7 +84,7 @@ The result: you kick off a run, walk away, and come back to a branch with a seri
 
 ## How it works
 
-Wiggum's commands map to the natural workflow of software development — `init`, `plan`, `execute`, `check`, `docs`, and `run` — with `status`, `watch`, `kill`, and `chain` layered on top to supervise long or batched runs.
+Wiggum's commands map to the natural workflow of software development — `init`, `plan`, `explain`, `execute`, `check`, `docs`, and `run` — with `status`, `watch`, `kill`, `top`, and `chain` layered on top to supervise long or batched runs.
 
 ### Init mode
 
@@ -112,6 +115,10 @@ Reads issue descriptions, specs, or requirements documents and produces a struct
 - An observable acceptance criterion per task
 - The files each task is expected to create or modify
 - Dependencies between tasks
+- The open issues the plan addresses, cited on the phase that addresses each — so [phase 3](#execute-mode) can close exactly those entries and no others. If the repo keeps no issue ledger, the plan says so in one line rather than inventing one
+- An `## Open decisions` section and a `## How this reaches users` section, both added by the feedback pass below
+
+Once the plan is written, a second pass reviews it and updates the file in place, adding the context a reader needs to judge it: the choices still genuinely open (options, trade-offs, rough effort), and which documentation, help text or web pages a user would have to read to learn the feature exists — adding a real task for any that the plan missed. It is deliberately additive and will not reword, reorder or delete existing tasks. This is the same analysis [`wiggum explain`](#explain-mode) performs on demand. Pass `--no-feedback` to skip it; a piped plan skips it automatically, since it is heading straight into `execute` where nobody reads it.
 
 Not every task is a code edit. Where the plan depends on something not yet known, the unknown becomes its own research task, placed ahead of the work that needs it and accepted on a written artifact (findings in a file, a measured number, a recorded decision) rather than on "understand X". Where a sub-problem is large enough to be its own workplan, a task can delegate it to a bounded, nested `wiggum plan` + `wiggum execute` run instead of inlining it.
 
@@ -151,6 +158,35 @@ What `[~]` is **not**:
 - Not a way to silence stalls. `[~]` is a recorded decision in the plan, not a control knob.
 
 GitHub-rendering caveat: `[~]` renders as plain text in GitHub's task-list view (only `[ ]` and `[x]` get the interactive checkbox treatment). This is acceptable because plans are primarily read in IDEs, `cat`, and `grep` -- the marker stays distinct everywhere it matters.
+
+### Explain mode
+
+```
+wiggum explain <plan-or-issue-files...> [--explain-file <path>]
+```
+
+Read-only. Answers the questions a plan doesn't answer about itself, under four
+headings:
+
+| Heading | What it answers |
+|---|---|
+| What it contains | The phases and what each actually changes, in plain terms |
+| What it is worth | What becomes true when it's done — and what that's worth *to a user*, in their words |
+| How it reaches users | Which README sections, `--help` text, release notes or web pages would have to change for anyone to discover it, and whether the plan already covers them |
+| Open decisions | The choices still genuinely open: context, the realistic options, what each buys and costs, and rough effort |
+
+It changes nothing — no edits, no plan, no commit. Output goes to stdout so it
+can be piped or read; `--explain-file <path>` writes it to a file instead.
+
+`wiggum plan` folds the same analysis into the plans it writes (below). `explain`
+exists because the questions outlive the plan's creation: a plan somebody else
+wrote, one already half-executed, or an issue nobody has planned yet all raise
+them, and regenerating the plan to find out is both expensive and destructive.
+
+```
+wiggum explain docs/auth_plan.md
+wiggum explain issues/*.md --explain-file docs/auth_explained.md
+```
 
 ### Execute mode
 
@@ -633,6 +669,7 @@ command | wiggum <mode> [options]
 Modes:
   init        Generate a .wiggumrc for the current project
   plan        Create a workplan from issue/spec files
+  explain     Explain a plan's worth and its open decisions (read-only)
   execute     Implement a workplan with iterative validation
   check       Run verification waterfall and fix issues
   docs        Update documentation from input files
@@ -1129,6 +1166,12 @@ wiggum/
   test/
     wiggum.bats          Bats test suite
     run.sh               Test runner (shellcheck lint + bats)
+  site/
+    index.html           Landing page, published to GitHub Pages
+  docs/                  Workplans, summaries and run sidecars (not the website)
+  .github/workflows/
+    pages.yml            Deploys site/ on any push that touches it
+  LICENSE                MIT
   .wiggumrc              Self-hosting config (wiggum tests itself)
   .wiggumrc.example      Example config with comments
   CLAUDE.md              Project standards for Claude Code
@@ -1151,6 +1194,24 @@ This runs shellcheck on all shell scripts, then the Bats test suite. Requires `b
 ```bash
 brew install bats-core shellcheck
 ```
+
+### The website
+
+The landing page is a single self-contained file, `site/index.html` — no build step, no
+dependencies. Open it directly to preview it:
+
+```bash
+open site/index.html
+```
+
+Pushing any change under `site/` deploys it to <https://benman1.github.io/wiggum/> via
+`.github/workflows/pages.yml`. It is served from `site/` rather than `docs/` because
+`docs/` is where wiggum keeps its own plans, summaries and run sidecars — publishing
+that directory would put every workplan in the repo on the web.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
 
 ## Tips
 
