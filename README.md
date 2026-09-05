@@ -525,7 +525,9 @@ git clone <repo-url> && cd wiggum
 ./install.sh
 ```
 
-This copies `wiggum.sh` and `lib/wiggum.sh` to `/usr/local/lib/wiggum/`, symlinks `/usr/local/bin/wiggum` to the entry point, seeds `~/.wiggumrc` from the example config if you don't have one yet, and installs the `/wiggum` Claude Code skill globally. May prompt for sudo.
+This copies `wiggum.sh` and `lib/wiggum.sh` to `/usr/local/lib/wiggum/`, symlinks `/usr/local/bin/wiggum` to the entry point, seeds `~/.wiggumrc` from the example config if you don't have one yet, and installs the `/wiggum` Claude Code skill globally. May prompt for sudo. Set `WIGGUM_PREFIX` to install somewhere other than `/usr/local`.
+
+**Upgrading while a run is in flight is safe.** Each file is renamed into place rather than rewritten, so a run already under way keeps the version it started on and finishes on it; the next run picks up the new one.
 
 Or just run it directly from the repo without installing:
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALL_DIR="/usr/local/lib/wiggum"
-BIN_DIR="/usr/local/bin"
+PREFIX="${WIGGUM_PREFIX:-/usr/local}"
+INSTALL_DIR="$PREFIX/lib/wiggum"
+BIN_DIR="$PREFIX/bin"
 SCRIPT_NAME="wiggum"
 SOURCE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -31,6 +32,37 @@ run_privileged() {
     fi
 }
 
+# Put a file in place by rename, never by rewriting the file that is there.
+#
+# A wiggum run holds its script open for hours, and bash reads a script by byte
+# offset as it goes: overwrite that inode mid-run and bash resumes at an offset
+# that has moved, then dies on whatever fragment it lands in -- "syntax error
+# near unexpected token" and exit 2, on a run that was doing fine. rename(2)
+# swaps the directory entry instead, so the live run keeps the file it started
+# with and only the next run sees the new one.
+install_file() {
+    local src="$1" dest="$2"
+    run_privileged cp "$src" "$dest.new"
+    run_privileged mv -f "$dest.new" "$dest"
+}
+
+# The first completion directory that exists. Homebrew keeps its own tree, but
+# only a default install may look outside the prefix -- a test prefix has to
+# write nothing beyond itself.
+first_existing_dir() {
+    local rel="$1" d
+    local -a candidates=()
+    [[ "$PREFIX" == "/usr/local" ]] && candidates+=("/opt/homebrew/$rel")
+    candidates+=("$PREFIX/$rel")
+    for d in "${candidates[@]}"; do
+        if [[ -d "$d" ]]; then
+            printf '%s\n' "$d"
+            return 0
+        fi
+    done
+    return 0
+}
+
 # Install lib + CLI (safe to re-run for updates)
 if [[ -f "$INSTALL_DIR/wiggum.sh" ]]; then
     echo "Updating existing installation..."
@@ -38,8 +70,8 @@ else
     echo "Installing to $INSTALL_DIR..."
 fi
 run_privileged mkdir -p "$INSTALL_DIR/lib"
-run_privileged cp "$SOURCE_DIR/wiggum.sh" "$INSTALL_DIR/wiggum.sh"
-run_privileged cp "$SOURCE_DIR/lib/wiggum.sh" "$INSTALL_DIR/lib/wiggum.sh"
+install_file "$SOURCE_DIR/wiggum.sh" "$INSTALL_DIR/wiggum.sh"
+install_file "$SOURCE_DIR/lib/wiggum.sh" "$INSTALL_DIR/lib/wiggum.sh"
 run_privileged chmod +x "$INSTALL_DIR/wiggum.sh"
 
 # Symlink into bin
@@ -48,25 +80,15 @@ run_privileged mkdir -p "$BIN_DIR"
 run_privileged ln -sf "$INSTALL_DIR/wiggum.sh" "$BIN_DIR/$SCRIPT_NAME"
 
 # Install shell completions
-ZSH_COMP_DIR=""
-if [[ -d "/opt/homebrew/share/zsh/site-functions" ]]; then
-    ZSH_COMP_DIR="/opt/homebrew/share/zsh/site-functions"
-elif [[ -d "/usr/local/share/zsh/site-functions" ]]; then
-    ZSH_COMP_DIR="/usr/local/share/zsh/site-functions"
-fi
+ZSH_COMP_DIR="$(first_existing_dir "share/zsh/site-functions")"
 if [[ -n "$ZSH_COMP_DIR" && -f "$SOURCE_DIR/completions/wiggum.zsh" ]]; then
-    run_privileged cp "$SOURCE_DIR/completions/wiggum.zsh" "$ZSH_COMP_DIR/_wiggum"
+    install_file "$SOURCE_DIR/completions/wiggum.zsh" "$ZSH_COMP_DIR/_wiggum"
     echo "Installed zsh completions to $ZSH_COMP_DIR/_wiggum"
 fi
 
-BASH_COMP_DIR=""
-if [[ -d "/opt/homebrew/etc/bash_completion.d" ]]; then
-    BASH_COMP_DIR="/opt/homebrew/etc/bash_completion.d"
-elif [[ -d "/usr/local/etc/bash_completion.d" ]]; then
-    BASH_COMP_DIR="/usr/local/etc/bash_completion.d"
-fi
+BASH_COMP_DIR="$(first_existing_dir "etc/bash_completion.d")"
 if [[ -n "$BASH_COMP_DIR" && -f "$SOURCE_DIR/completions/wiggum.bash" ]]; then
-    run_privileged cp "$SOURCE_DIR/completions/wiggum.bash" "$BASH_COMP_DIR/wiggum"
+    install_file "$SOURCE_DIR/completions/wiggum.bash" "$BASH_COMP_DIR/wiggum"
     echo "Installed bash completions to $BASH_COMP_DIR/wiggum"
 fi
 
@@ -83,7 +105,7 @@ SKILL_DIR="$HOME/.claude/skills/wiggum"
 SKILL_SRC="$SOURCE_DIR/.claude/skills/wiggum/SKILL.md"
 if [[ -f "$SKILL_SRC" ]]; then
     mkdir -p "$SKILL_DIR"
-    cp "$SKILL_SRC" "$SKILL_DIR/SKILL.md"
+    install_file "$SKILL_SRC" "$SKILL_DIR/SKILL.md"
     echo "Installed /wiggum skill to $SKILL_DIR/SKILL.md"
 fi
 
