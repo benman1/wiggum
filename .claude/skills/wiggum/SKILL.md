@@ -48,7 +48,8 @@ That's the whole preflight. Everything else you need is in this skill.
 
 | Command | What it does |
 |---|---|
-| `wiggum plan <issue-or-file> [--plan-file docs/<slug>_plan.md]` | Write a workplan. Does not touch code. |
+| `wiggum plan <issue-or-file> [--plan-file docs/<slug>_plan.md]` | Write a workplan, then add its open decisions and audience analysis. Does not touch code. |
+| `wiggum explain <plan-or-issue>` | Explain what a plan contains, what it is worth to users, how they would find out about it, and which decisions are still open. Read-only. |
 | `wiggum execute <plan> [--max-iterations N]` | Run the loop in the foreground (blocks). |
 | `wiggum execute <plan> --background` | Run detached; writes `docs/<name>.pid` + `docs/<name>.out`. Returns immediately. |
 | `wiggum execute <plan> --at <WHEN>` | Wait until WHEN, then run once, detached. WHEN is `+90m` (relative), `01:07` (the next such clock time) or `@1756180020` (epoch). Creates nothing recurring; `status` reports it as scheduled and `kill` cancels it. |
@@ -167,6 +168,25 @@ Rules for a good plan:
 - Then, still before any phase, add a `## Constraints` section as a self-check
   — `In scope`, `Out of scope`, and `Never do` — then derive the phases so they
   stay within those bounds.
+- **Cite the issues the plan comes from.** Find where the repo tracks them — the
+  issue or spec files the plan was built from, and any tracker in version control
+  (`ISSUES.md`, `TODO.md`, `ROADMAP.md`, `docs/issues*.md`, a `CHANGELOG` section,
+  a status table inside the plan's own issue file) — and name the open entries each
+  phase addresses, with `path:line` where you can. This is what lets phase 3 close
+  exactly those entries and no others instead of inferring which ones this work was
+  about (step 3f). A phase that closes no tracked entry says so rather than leaving
+  it ambiguous, and if the repo keeps no ledger the plan says that in one line.
+  Never cite an entry you have not read: a plan pointing at an issue that does not
+  exist is worse than one pointing at nothing.
+- **Say what is still open, and who the work is for.** `wiggum plan` adds these
+  itself in a feedback pass, and `wiggum explain <plan>` produces them on demand for
+  a plan you did not write — but if you are writing the plan by hand, include them:
+  an `## Open decisions` section (the choices a person still has to make, each with
+  its options, what each buys and costs, and rough effort — or one line saying
+  nothing is open), and a `## How this reaches users` section naming the README
+  sections, `--help` text, release notes or web pages somebody would have to read to
+  learn the feature exists. A feature nobody can discover has not shipped, and the
+  doc task that fixes it belongs in the plan rather than in somebody's memory.
 - **Draw it before you phase it.** After the constraints and before the first
   phase, add `## The shape of it`: one mermaid diagram of the thing the plan acts
   on, and two or three sentences saying what to take from it. Choose by what the
@@ -747,6 +767,14 @@ with the supervise loop in step 3 so you can inspect and fix between stages.
 
 - **Drive the CLI; don't reimplement it.** Plan/implement/verify/commit are
   wiggum's job. You orchestrate: plan, launch, monitor, wait, unblock, kill, chain.
+- **Back out when the loop isn't warranted.** wiggum runs a full cycle *per task* —
+  a fresh `claude` session, the whole verify suite, a commit. If you could make the
+  change and confirm it in a single pass, say so and edit it directly rather than
+  planning it; a plan that fragments one edit into eight commits costs more than it
+  returns. Size and file count are the wrong test — prompt wording, a doc sweep, or
+  a function copying an existing pattern is direct work even across many files. The
+  loop earns its cost when steps depend on each other and each needs verifying
+  before the next can be written.
 - **Never ask for confirmation** — just execute.
 - **Refer to runs by their plan file** — that's how status/watch/kill find the
   sidecars.

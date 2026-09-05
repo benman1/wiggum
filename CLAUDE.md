@@ -4,7 +4,13 @@ Wiggum is a **self-driving agent loop** that orchestrates Claude Code to turn is
 
 ## How we work here (dogfood wiggum)
 
-For any non-trivial change -- a new feature, a multi-file refactor, a bug fix that touches several functions, anything beyond a quick edit -- drive it through wiggum itself instead of hand-coding it ad hoc. We use the tool on its own codebase.
+We use the tool on its own codebase -- but the test is the **shape of the work, not its size or its file count**.
+
+**Drive it through wiggum** when the change needs the loop: several interdependent steps where each has to be verified before the next one can be written, or where you cannot predict what the verify suite will say until you try. That is what wiggum is for.
+
+**Edit it directly** when you can hold the whole change in your head and a single `./test/run.sh` tells you whether it is right -- even when it spans `lib/` + tests + docs + the skill. Prompt text, a new mode that copies the shape of an existing one, a doc sweep across several surfaces: all direct-edit work.
+
+The overhead is the reason. Wiggum runs a full cycle **per task** -- a fresh `claude` session, the entire verify suite, and a git commit. On a change that is really one edit, that dwarfs the work and fragments one logical change into a string of noisy commits. Reach for wiggum when the loop earns its cost, and say so plainly when it does not; "it is a new feature" is not on its own a reason.
 
 Use the `/wiggum` skill — it is model-invocable, so invoke it to load the orchestration playbook (plan, run, monitor, wait, detect-blocked, kill, chain) and drive the run. Equivalently, run the `wiggum` CLI directly:
 
@@ -12,7 +18,9 @@ Use the `/wiggum` skill — it is model-invocable, so invoke it to load the orch
 2. **Execute:** `wiggum execute docs/<slug>_plan.md`. Add `--background` to supervise with `wiggum status|watch|kill <plan>`; use `wiggum chain <plan...>` for work too large for one plan.
 3. Let the loop plan -> implement -> verify (this repo's `.wiggumrc`: shellcheck + bats) -> commit. Review the resulting commits and `docs/<slug>_summary.md`.
 
-Do directly (no plan needed): trivial one-line fixes, doc/comment tweaks, and the supervision of wiggum runs themselves (status/watch/kill/chain).
+Always direct, never planned: one-line fixes, doc and comment tweaks, and the supervision of wiggum runs themselves (status/watch/kill/top/chain).
+
+If a wiggum run does fragment one logical change across several commits, squash them (`git reset --soft <base>`) into one before finishing -- see the commit rules below.
 
 ## Tech Stack
 
@@ -67,7 +75,32 @@ These matter because wiggum's prompts are its primary interface with Claude Code
 - Commit prompts must cover "modified and untracked files" (not just "modified").
 - Use fresh sessions (`-p` without `-c`) for independent tasks like commits.
 - Use `-c` (continue) only where Claude genuinely needs prior context (e.g., implementation -> validation fix).
+- **Every prompt helper is on a byte budget.** The plan prompt is assembled from nine
+  `prompt_*` helpers and sent on every `wiggum plan` call, so words there cost tokens
+  on every run forever. Two Bats tests guard the total (`run_plan: feature-request
+  prompt stays within budget`, and the defect counterpart). When one fails, cut the
+  helper before raising the ceiling -- a raise is the last resort, and a second raise
+  means the helpers need consolidating instead.
 
-## 6. Current Work
+## 6. Writing: first draft, then cut
+
+Applies to prompt text, code comments, commit messages, docs, and answers to the user.
+
+**Treat the first version as a first draft.** Keep only the sentences carrying unique
+information, then rewrite the survivors. Expect to cut about half: a first pass
+typically makes the same point in the lead, again in the detail, and again in the
+summary, and only one of those earns its place.
+
+**Cut redundancy, never content.** A sentence goes if it repeats a point already made,
+restates the heading above it, hedges a claim the next sentence makes plainly, or
+announces what the text is about to do. A sentence stays if it carries a number, a file
+path, a trade-off, a risk, an open question, or a thing the reader must decide. A short
+text that drops a caveat is worse than a long one that keeps it.
+
+**In prompts, the same rule has teeth.** An instruction Claude already follows from a
+neighbouring sentence is pure cost. Name the failure the instruction prevents once, in
+the shortest form that still forbids it, and delete the restatement.
+
+## 7. Current Work
 
 - See `docs/` for plans and issues.
