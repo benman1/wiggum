@@ -692,6 +692,9 @@ Modes:
 Options:
   --plan-file <path>       Output path for the plan (plan mode)
   --summary-file <path>    Output path for the summary (execute mode)
+  --explain-file <path>    Write the explanation to a file instead of stdout (explain mode)
+  --no-feedback            Skip the feedback pass over the finished plan (plan mode)
+  --queue <file>           Read the plan list from a file, re-read after each plan (chain mode)
   --max-iterations <n>    Maximum implementation iterations (execute/chain, default: 30)
   --benchmark <script>    Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
