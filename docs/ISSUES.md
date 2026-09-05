@@ -9,31 +9,7 @@ file is the tracked one, and it is the one to update.
 
 ## Open
 
-### 1. A pid alone is not an identity, and `kill` acts on it
-
-`process_alive()` is `kill -0 "$pid"` (`lib/wiggum.sh:3520`), the pidfile holds a
-bare number, and a registry entry holds only the plan path keyed by pid
-(`register_run`). Nothing records *which* process that pid was.
-
-The OS recycles pids. A stale pidfile — left by a crash, a `kill -9`, or a box
-that rebooted mid-run, all states the code already expects elsewhere — will
-eventually name a pid that belongs to somebody else. Then:
-
-- `wiggum top` and `wiggum status` report a phantom run as `running`, and
-  `find_registered_runs` never prunes the entry because the pid answers.
-- `wiggum kill <plan>` sends `SIGTERM` to that process **and its children**
-  (`pkill -TERM -P "$pid"` in `kill_run`), with no check that it is a wiggum.
-
-The second one is the reason this is not cosmetic: on this machine the
-casualties would be exactly the long unattended runs the pidfile exists to
-protect.
-
-**A fix has to record identity at claim time** — the process start time
-(`ps -o lstart= -p "$pid"`) beside the pid, or the run's own command line — and
-verify it before believing a pidfile or signalling anything. Bare pidfiles
-written by older versions must degrade to "unknown", not to "alive".
-
-### 2. `top` samples, and the expensive moment is usually over
+### 1. `top` samples, and the expensive moment is usually over
 
 The `RSS`/`CPU` columns added in `6fb6ba3` read the process tree at the instant
 you look. The run that took this machine to 84% swap was quiet by the time
@@ -46,6 +22,15 @@ split out of the columns rather than bolted onto them.
 
 ## Closed
 
+- **A pid alone was an identity, and `kill` acted on it.** `process_alive()` was
+  a bare `kill -0`, the `.pid` held a number and the registry entry held only a
+  path, so a sidecar naming a recycled pid made `top` invent a running run and
+  made `wiggum kill` signal a stranger's process tree, children included. Fixed
+  in `e921a1d`: sidecars and registry entries record the process start time beside
+  the pid, and `top`, `status`, `watch`, `kill`, `cancel` and the claim checks
+  all compare it before believing or signalling a pid. Sidecars from older
+  versions carry none and fall back to bare liveness, which `kill` says out
+  loud rather than trusting silently.
 - **`top` said nothing about what a run costs.** Answering "which run is
   expensive" or "can I launch another" meant shelling out to `ps`, `uptime` and
   `sysctl` and correlating by hand. Fixed in `6fb6ba3`: `RSS` and `CPU` columns

@@ -4457,7 +4457,9 @@ EOF
     mkdir -p docs
     : > docs/p_plan.md
     claim_run_pidfile docs/p_plan.md
-    [ "$(cat docs/p_plan.pid)" = "$$" ]
+    [ "$(read_pidfile_pid docs/p_plan.pid)" = "$$" ] || return 1
+    # The second line is what makes that pid trustworthy later on.
+    [ "$(read_pidfile_identity docs/p_plan.pid)" = "$(pid_started_at $$)" ] || return 1
     [ "$WIGGUM_RUN_PIDFILE" = "docs/p_plan.pid" ]
 }
 
@@ -4489,7 +4491,7 @@ EOF
     local pid="$(spawn_dead_pid)"
     echo "$pid" > docs/p_plan.pid
     claim_run_pidfile docs/p_plan.md
-    [ "$(cat docs/p_plan.pid)" = "$$" ]
+    [ "$(read_pidfile_pid docs/p_plan.pid)" = "$$" ]
 }
 
 @test "claim_run_pidfile: no plan, no sidecar" {
@@ -4557,7 +4559,7 @@ EOF
     mkdir -p docs
     : > docs/r_plan.md
     claim_run_pidfile docs/r_plan.md
-    [ "$(cat "$WIGGUM_REGISTRY_DIR/$$")" = "$TEST_DIR/docs/r_plan" ]
+    [ "$(head -n1 "$WIGGUM_REGISTRY_DIR/$$")" = "$TEST_DIR/docs/r_plan" ]
     release_run_pidfile
     [ ! -f "$WIGGUM_REGISTRY_DIR/$$" ]
 }
@@ -4761,8 +4763,8 @@ EOF
     BACKGROUND=true
     launch_execute_background >/dev/null 2>&1
     local pid
-    pid="$(cat docs/plan.pid)"
-    [ "$(cat "$WIGGUM_REGISTRY_DIR/$pid")" = "$TEST_DIR/docs/plan" ]
+    pid="$(read_pidfile_pid docs/plan.pid)"
+    [ "$(head -n1 "$WIGGUM_REGISTRY_DIR/$pid")" = "$TEST_DIR/docs/plan" ]
     [ ! -f "$WIGGUM_REGISTRY_DIR/$$" ]
     kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     # Nothing unregisters a background run; the next read prunes it.
@@ -5526,7 +5528,7 @@ EOF
     NO_COMMIT=true
     run run_execute
     [ "$status" -eq 0 ]
-    [ "$(cat pid_seen)" = "$$" ]
+    [ "$(read_pidfile_pid pid_seen)" = "$$" ]
     [ ! -f docs/plan.pid ]
 }
 
@@ -7159,4 +7161,179 @@ d = json.load(sys.stdin)
 assert isinstance(d[0]['rss_kb'], int) and d[0]['rss_kb'] > 0, d
 assert isinstance(d[0]['cpu_percent'], float), d
 "
+}
+
+# ── a pid is not an identity ─────────────────────────────────────────────────
+
+# A start time that no live process can have, standing in for "this pid now
+# belongs to somebody else".
+STALE_IDENTITY="Thu  1 Jan 00:00:00 2000"
+
+@test "pid_started_at: answers for a live process, not for a dead one" {
+    sleep 30 &
+    local live=$!
+    local dead
+    dead="$(spawn_dead_pid)"
+    [ -n "$(pid_started_at "$live")" ] || return 1
+    [ -z "$(pid_started_at "$dead")" ] || return 1
+    [ -z "$(pid_started_at "")" ] || return 1
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+}
+
+@test "run_pid_alive: true for the process that recorded the identity" {
+    sleep 30 &
+    local live=$!
+    run run_pid_alive "$live" "$(pid_started_at "$live")"
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+}
+
+@test "run_pid_alive: false when the pid has been handed to somebody else" {
+    sleep 30 &
+    local live=$!
+    run run_pid_alive "$live" "$STALE_IDENTITY"
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [ "$status" -ne 0 ]
+}
+
+@test "run_pid_alive: an unrecorded identity falls back to bare liveness" {
+    # Sidecars written by older wiggums carry no identity. Reporting those runs
+    # as dead would be worse than the pid reuse this guards against.
+    sleep 30 &
+    local live=$!
+    run run_pid_alive "$live" ""
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+}
+
+@test "write_pidfile: records the pid on one line and its identity on the next" {
+    mkdir -p docs
+    write_pidfile docs/w_plan.pid $$
+    [ "$(sed -n 1p docs/w_plan.pid)" = "$$" ] || return 1
+    [ "$(read_pidfile_pid docs/w_plan.pid)" = "$$" ] || return 1
+    [ "$(read_pidfile_identity docs/w_plan.pid)" = "$(pid_started_at $$)" ] || return 1
+    run pidfile_alive docs/w_plan.pid
+    [ "$status" -eq 0 ]
+}
+
+@test "kill_run: signals nothing when the pid it names has been reused" {
+    # The reason any of this exists. Without the identity check this test kills
+    # a process that has nothing to do with wiggum -- and its children with it.
+    mkdir -p docs
+    sleep 30 &
+    local bystander=$!
+    printf '%s\n%s\n' "$bystander" "$STALE_IDENTITY" > docs/k_plan.pid
+    run kill_run docs/k_plan.pid
+    local survived=0
+    kill -0 "$bystander" 2>/dev/null && survived=1
+    kill "$bystander" 2>/dev/null || true
+    wait "$bystander" 2>/dev/null || true
+    [ "$survived" -eq 1 ] || return 1
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"pid was reused"* ]] || return 1
+    # The sidecar that lied is cleaned up rather than left to lie again.
+    [ ! -f docs/k_plan.pid ]
+}
+
+@test "kill_run: says when a sidecar predates the check, and still stops the run" {
+    mkdir -p docs
+    sleep 30 &
+    local target=$!
+    echo "$target" > docs/k_plan.pid
+    run kill_run docs/k_plan.pid
+    wait "$target" 2>/dev/null || true
+    [[ "$output" == *"cannot be"* ]] || return 1
+    [[ "$output" == *"Killing wiggum run"* ]] || return 1
+    ! kill -0 "$target" 2>/dev/null || return 1
+}
+
+@test "run_kill: a reused pid stops nothing" {
+    mkdir -p docs
+    : > docs/k_plan.md
+    sleep 30 &
+    local bystander=$!
+    printf '%s\n%s\n' "$bystander" "$STALE_IDENTITY" > docs/k_plan.pid
+    FILES=(docs/k_plan.md)
+    run run_kill
+    local survived=0
+    kill -0 "$bystander" 2>/dev/null && survived=1
+    kill "$bystander" 2>/dev/null || true
+    wait "$bystander" 2>/dev/null || true
+    [ "$survived" -eq 1 ]
+}
+
+@test "top_row: a sidecar whose pid has been reused does not read as running" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    sleep 30 &
+    local other=$!
+    printf '%s\n%s\n' "$other" "$STALE_IDENTITY" > docs/x_plan.pid
+    run top_row docs/x_plan
+    kill "$other" 2>/dev/null || true
+    wait "$other" 2>/dev/null || true
+    [[ "$output" == *"not running"* ]] || return 1
+    [[ "$output" != *"$other"* ]] || return 1
+}
+
+@test "run_status: a reused pid is not reported as a running run" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/x_plan.md
+    sleep 30 &
+    local other=$!
+    printf '%s\n%s\n' "$other" "$STALE_IDENTITY" > docs/x_plan.pid
+    FILES=(docs/x_plan.md)
+    run run_status
+    kill "$other" 2>/dev/null || true
+    wait "$other" 2>/dev/null || true
+    # "not running (no status recorded)" contains the word, so match the shape
+    # that would mean a live run rather than the word alone.
+    [[ "$output" != *"running (pid"* ]] || return 1
+    [[ "$output" == *"not running"* ]] || return 1
+}
+
+@test "claim_run_pidfile: claims over a sidecar whose pid has been reused" {
+    # The mirror image of the kill case: a reused pid must not lock a plan out
+    # of running just because something answers to its number.
+    mkdir -p docs
+    : > docs/p_plan.md
+    sleep 30 &
+    local other=$!
+    printf '%s\n%s\n' "$other" "$STALE_IDENTITY" > docs/p_plan.pid
+    claim_run_pidfile docs/p_plan.md
+    kill "$other" 2>/dev/null || true
+    wait "$other" 2>/dev/null || true
+    [ "$(read_pidfile_pid docs/p_plan.pid)" = "$$" ]
+}
+
+@test "find_registered_runs: prunes an entry whose pid has been reused" {
+    mkdir -p "$WIGGUM_REGISTRY_DIR"
+    sleep 30 &
+    local other=$!
+    printf '%s\n%s\n' "$TEST_DIR/docs/ghost_plan" "$STALE_IDENTITY" \
+        > "$WIGGUM_REGISTRY_DIR/$other"
+    run find_registered_runs
+    kill "$other" 2>/dev/null || true
+    wait "$other" 2>/dev/null || true
+    [ -z "$output" ] || return 1
+    [ ! -f "$WIGGUM_REGISTRY_DIR/$other" ]
+}
+
+@test "cancel_schedule: cancels nothing when the waiter pid has been reused" {
+    mkdir -p docs
+    sleep 30 &
+    local bystander=$!
+    printf 'target=9999999999\ntarget_human=tomorrow\nspec=+1d\npid=%s\npid_started=%s\n' \
+        "$bystander" "$STALE_IDENTITY" > docs/s_plan.scheduled
+    run cancel_schedule docs/s_plan.scheduled
+    local survived=0
+    kill -0 "$bystander" 2>/dev/null && survived=1
+    kill "$bystander" 2>/dev/null || true
+    wait "$bystander" 2>/dev/null || true
+    [ "$survived" -eq 1 ] || return 1
+    [[ "$output" == *"no longer waiting"* ]] || return 1
+    [ ! -f docs/s_plan.scheduled ]
 }

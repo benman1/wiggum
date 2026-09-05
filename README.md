@@ -355,7 +355,7 @@ wiggum execute docs/plan.md --background   # or -b
 
 `--background` launches the loop in a detached process, records its pid, and captures all output to sidecar files next to the plan:
 
-- `docs/plan.pid` — the wiggum process id for this run
+- `docs/plan.pid` — the wiggum process id for this run, and on a second line the time that process started
 - `docs/plan.out` — the full run output (phase headers, progress, status)
 - `docs/plan.log` — the structured run log
 
@@ -1164,7 +1164,9 @@ On macOS, `launchd` is more reliable than cron for user agents — it survives r
 | `execute --background` | `<dir>/<basename>.pid`, `<dir>/<basename>.out` | *(always created)* |
 | `execute` (any mode) | `~/.wiggum/runs/<pid>` | `WIGGUM_REGISTRY_DIR` |
 
-The last one is the machine-wide run registry — one small file per run in flight, named by pid and holding the absolute path of the plan it is working on. It is what lets `wiggum top` answer "what is running" rather than "what is running *here*", and it is the only file wiggum writes outside the project directory. Entries are pruned whenever `top` reads them and finds a dead pid, so a killed run or a reboot leaves nothing stale behind. Point `WIGGUM_REGISTRY_DIR` somewhere else to keep runs out of the shared view (a test harness should).
+The last one is the machine-wide run registry — one small file per run in flight, named by pid and holding the absolute path of the plan it is working on. It is what lets `wiggum top` answer "what is running" rather than "what is running *here*", and it is the only file wiggum writes outside the project directory. Entries are pruned whenever `top` reads them and finds a dead pid — or a pid that has been reused — so a killed run or a reboot leaves nothing stale behind. Point `WIGGUM_REGISTRY_DIR` somewhere else to keep runs out of the shared view (a test harness should).
+
+**A pid alone is not an identity, so the `.pid` records two lines: the pid, then the time that process started.** The kernel reuses pids. A sidecar left behind by a crash, a `kill -9` or a reboot will eventually name a process that belongs to somebody else, and every question wiggum asks of it then gets a confident wrong answer — `top` invents a running run, `status` agrees, and `kill` signals a stranger's process tree, children included. Wiggum compares the recorded start time (what `ps -o lstart=` prints, never parsed, only compared) before believing a pid or signalling it: a reused pid reads as "not running", and `kill` says so and clears the sidecar instead of firing. The machine-wide registry records the same thing. A sidecar written by an older wiggum carries no start time and falls back to bare liveness, which is what wiggum did before — `kill` warns that it cannot verify such a pid rather than silently trusting it.
 
 The directory and basename are derived from the first input file. When reading from stdin, files default to `docs/`. The sidecars sit next to the plan and are how `status`/`watch`/`kill`/`top` find a run. Every run writes a `.pid` while it is working; a foreground run removes its own when it ends, while a background run's is left behind (its `.out` holds the final status) until `watch`/`kill` clear it. For example:
 
@@ -1267,7 +1269,7 @@ screen -dmS wig1 bash -lc 'conda activate myenv; \
   exec wiggum execute docs/plan.md --max-iterations 12 >> docs/plan.out 2>&1'
 ```
 
-No `--background` here: the multiplexer provides the durability, and a daemonizing child would let its session exit immediately and take the run with it. A foreground run still writes a `.pid` while it works, so `wiggum status` and `wiggum top` can find it — it just clears the sidecar when it ends rather than leaving a `finished:` row behind. For liveness across a whole `screen` session (which outlives any one plan) use `screen -ls`, or capture the PID and check it with `kill -0 <pid>` — the same primitive wiggum's own `process_alive()` uses.
+No `--background` here: the multiplexer provides the durability, and a daemonizing child would let its session exit immediately and take the run with it. A foreground run still writes a `.pid` while it works, so `wiggum status` and `wiggum top` can find it — it just clears the sidecar when it ends rather than leaving a `finished:` row behind. For liveness across a whole `screen` session (which outlives any one plan) use `screen -ls`, or capture the PID and check it with `kill -0 <pid>` — the same primitive wiggum's own `process_alive()` uses. Capture `ps -o lstart= -p <pid>` alongside it and compare before you act on that pid: `kill -0` alone cannot tell your run from whatever inherited its number, which is the check `run_pid_alive()` adds.
 
 Prefer that PID check over matching command lines. `pgrep -f` *errors* (rather than returning empty) if any unrelated process on the machine has non-UTF-8 bytes in its command line, and `ps -eo pid,command` truncates to the terminal width, so in a background context the string you are matching can be cut off. Both failures look identical to "the job finished", so a `until ! <check>` waiter fires early. Confirm a completion by the artifact it was supposed to produce, never by the absence of a process alone.
 

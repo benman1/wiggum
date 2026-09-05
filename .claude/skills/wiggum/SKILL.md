@@ -794,6 +794,14 @@ read before testing liveness, so a killed chain whose sidecar was left behind pr
 "Watching wiggum run … (pid N)" line and then returns immediately. Read the return, not
 the banner, and confirm with `wiggum top` or `ps` before believing either.
 
+**A pid alone is not an identity — never signal one you have not verified.** The kernel
+reuses pids, so a sidecar left by a crash or a reboot eventually names somebody else's
+process. Wiggum records the process start time next to the pid and compares it before
+believing or signalling anything: a reused pid reads as "not running", and `wiggum kill`
+clears the sidecar instead of firing. Do the same when you supervise a run yourself —
+capture `ps -o lstart= -p "$pid"` at launch and compare it before you `kill`, because
+`kill -0` cannot tell your run from whatever inherited its number.
+
 To supervise a long chain, background it and watch the active plan's sidecars, or run
 the plans one at a time with the supervise loop in step 3 so you can inspect and fix
 between stages.
