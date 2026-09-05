@@ -76,8 +76,10 @@ they fail with `command not found`. The `wiggum` binary is the only entry point.
   wait for / report on a run, or `wiggum status <plan>` shows `running`: do **not**
   start a new run. Attach to it with `wiggum watch <plan>` to follow it to
   completion (your "wait"), then report a summary (step 5). If you don't know which
-  plan, run `wiggum top` to list every active run, or look for a `docs/*.pid`
-  sidecar. This is the common "what's my background run doing?" case.
+  plan, run `wiggum top` — with no arguments it lists every run in flight
+  anywhere on this machine, not only the ones under the current directory, so a
+  run you started from another project still shows up. This is the common
+  "what's my background run doing?" case.
 - **An existing plan file** (path ending in `_plan.md`, or a markdown file full of
   `- [ ]` tasks): skip to step 3.
 - **"chain: a.md b.md c.md"** or several plan paths: this is a chain — go to
@@ -430,8 +432,9 @@ multiplexer supplies the durability, and a daemonizing child would let its sessi
 exit immediately and take the tree down. `tmux new -d -s wig1 '<same>'` works
 identically; macOS has `screen` at `/usr/bin/screen` and no `setsid`.
 
-A foreground run does register a `.pid` while it works, so `wiggum status` and
-`wiggum top` find it — but it clears the sidecar the moment it ends, and a
+A foreground run does register itself while it works — a `.pid` next to the plan
+and an entry in the machine-wide registry — so `wiggum status` and `wiggum top`
+find it from anywhere. But it clears both the moment it ends, and a
 `kill -0 $(cat <plan>.pid)` check then reports "gone" for a plan that merely
 finished, indistinguishable from a real death. The multiplexer session also
 outlives any one plan. Check the session with `screen -ls` / `tmux ls` and a
@@ -770,8 +773,9 @@ with the supervise loop in step 3 so you can inspect and fix between stages.
   diagnosis instead of burning more runs.
 - **Launch durably for anything long** (step 3a): `--background` dies with the
   session that started it. Use a detached `screen`/`tmux` with wiggum in the
-  foreground inside it. `wiggum top` finds a foreground run, but the `.pid` is gone
-  the moment the plan ends — for the session as a whole, check `pgrep`.
+  foreground inside it. `wiggum top` finds a foreground run from any directory, but
+  the registration goes the moment the plan ends — for the session as a whole,
+  check `pgrep`.
 - **Rule out a false stall before remediating** (step 4): if a job the task spawned
   is still alive and its output still growing, wait and relaunch — don't rewrite a
   task that was working.
