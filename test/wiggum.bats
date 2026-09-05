@@ -7480,3 +7480,37 @@ STALE_IDENTITY="Thu  1 Jan 00:00:00 2000"
     [[ "$output" == *"finished: complete"* ]] || return 1
     [[ "$output" != *" 0s "* ]] || return 1
 }
+
+# ── The landing page is a doc surface too ────────────────────────────────────
+
+# The column labels `run_top` actually prints, read off its header printf.
+top_table_columns() {
+    local root
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    grep -A1 "printf '%-40s %-8s %-20s %-9s %-8s %-6s %s" "$root/lib/wiggum.sh" \
+        | grep -oE '"[A-Z]+"' | tr -d '"' | sort -u
+}
+
+@test "docs: the landing page shows the columns top actually prints" {
+    # site/index.html is outside the flag guard's five surfaces, so it drifts
+    # silently: it carried the pre-RSS table for as long as nobody looked.
+    local root header col
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    header="$(grep -o 'PLAN  *PID .*TASKS' "$root/site/index.html" | head -n1)"
+    [ -n "$header" ] || return 1
+    for col in $(top_table_columns); do
+        [[ "$header" == *"$col"* ]] || return 1
+    done
+    # And the footer, which is the whole point of the columns having a machine
+    # to be measured against.
+    grep -q 'load .* cores · swap ' "$root/site/index.html"
+}
+
+@test "docs: the landing-page guard notices a missing column" {
+    # Proves the matcher discriminates rather than passing on anything.
+    local header="PLAN PID STATE ACTIVITY TASKS" col missing=0
+    for col in $(top_table_columns); do
+        [[ "$header" == *"$col"* ]] || missing=1
+    done
+    [ "$missing" -eq 1 ]
+}
