@@ -4492,6 +4492,25 @@ run_status() {
 # Following the process needs no new bookkeeping: the registry already names the
 # plan a run is on and is rewritten at every transition, so re-reading one file
 # is the whole mechanism.
+# The line the current run's output starts after. Both `.out` and `.log`
+# accumulate across runs, so streaming from the top replays history -- and a
+# watcher that attaches mid-flight has no cursor of its own to inherit.
+# Echoes 0 when the file has no separator or does not exist yet.
+run_slice_start_line() {
+    local file="$1" sep
+    if [[ ! -f "$file" ]]; then
+        printf '0\n'
+        return 0
+    fi
+    sep="$(grep -n "^${WIGGUM_RUN_SEPARATOR_PREFIX} " "$file" 2>/dev/null | tail -n1 | cut -d: -f1 || true)"
+    if [[ -n "$sep" ]]; then
+        printf '%s\n' "$((sep - 1))"
+    else
+        printf '0\n'
+    fi
+    return 0
+}
+
 run_watch_chain() {
     local pid="${FILES[0]:-}"
     if [[ -z "$pid" ]]; then
@@ -4516,12 +4535,6 @@ run_watch_chain() {
     local base last_base="" src lines=0 waited=0 now
     while run_pid_alive "$pid" "$identity"; do
         base="$(registry_entry_base "$pid")"
-        if [[ -n "$base" && "$base" != "$last_base" ]]; then
-            echo "" >&2
-            echo "=== now on: ${base}.md ===" >&2
-            last_base="$base"
-            lines=0
-        fi
         # A background run writes `.out`; a foreground or chained one writes
         # only `.log`, which is its heartbeat either way. Between plans the
         # registry entry is briefly absent -- that is a transition, not an end,
@@ -4529,6 +4542,15 @@ run_watch_chain() {
         if [[ -n "$base" ]]; then
             src="${base}.out"
             [[ -f "$src" ]] || src="${base}.log"
+            if [[ "$base" != "$last_base" ]]; then
+                echo "" >&2
+                echo "=== now on: ${base}.md ===" >&2
+                last_base="$base"
+                # Start at this run's separator. Attaching to a plan that has
+                # been run before would otherwise replay every earlier run of
+                # it before showing anything current.
+                lines="$(run_slice_start_line "$src")"
+            fi
             if [[ -f "$src" ]]; then
                 now="$(wc -l < "$src" | tr -d ' ')"
                 if (( now > lines )); then
@@ -4586,11 +4608,8 @@ run_watch() {
 
     # `.out` accumulates across runs, so start from this run's separator rather
     # than replaying every previous run's output on the first poll.
-    local waited=0 last_lines=0 sep_line
-    sep_line="$(grep -n "^${WIGGUM_RUN_SEPARATOR_PREFIX} " "$outfile" 2>/dev/null | tail -n1 | cut -d: -f1 || true)"
-    if [[ -n "$sep_line" ]]; then
-        last_lines=$((sep_line - 1))
-    fi
+    local waited=0 last_lines
+    last_lines="$(run_slice_start_line "$outfile")"
     while run_pid_alive "$pid" "$identity"; do
         if [[ -f "$outfile" ]]; then
             local now
