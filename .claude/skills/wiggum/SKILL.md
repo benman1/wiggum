@@ -55,6 +55,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum execute <plan> --at <WHEN>` | Wait until WHEN, then run once, detached. WHEN is `+90m` (relative), `01:07` (the next such clock time) or `@1756180020` (epoch). Creates nothing recurring; `status` reports it as scheduled and `kill` cancels it. |
 | `wiggum status <plan>` | Task counts + run state (not started / running / running but appears blocked / finished: \<reason\>). Read-only. |
 | `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
+| `wiggum watch --chain [<pid>]` | Follow a run **across plans**: prints each plan as the chain reaches it and keeps streaming through the transitions. No pid means the only live run. Use this instead of hand-rolling a loop over `pgrep`/`ps`. |
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
@@ -778,16 +779,22 @@ stops the chain rather than being skipped. The queue also *is* the chain's plan 
 so a killed chain relaunches from the same command without you reconstructing it from
 your shell history.
 
-**`watch` is per-plan, not per-chain, and this bites.** `wiggum watch <plan>` attaches
-to one run's pidfile. A plan later in the chain has no pidfile until its turn comes, so
-watching it **exits 1 immediately** rather than waiting — it reads as "that run is
-finished" when it means "that run has not started". There is no `watch` for "this chain,
-whatever it is on". Until there is:
+**To follow a chain, use `wiggum watch --chain`, not `watch <plan>`.** Watching by plan
+attaches to one run's pidfile, and a plan later in the chain has no pidfile until its
+turn comes, so watching it **exits 1 immediately** rather than waiting — it reads as
+"that run is finished" when it means "that run has not started". `--chain` follows the
+process: it announces each plan as the chain reaches it, keeps streaming across the
+transitions, and returns when the process does.
 
-- Watch the plan the chain is on **now** (`wiggum top` names it), and re-check when it
-  ends; or
-- Hold the chain's own PID from launch and poll `kill -0 "$pid"` for "is the chain still
-  going", which is a different question from "is this plan still going".
+```
+wiggum watch --chain          # the only live run
+wiggum watch --chain 70613    # a named one; `wiggum top` lists the pids
+```
+
+It streams `.out` when there is one and the `.log` otherwise, so a foreground chain is
+followed by its heartbeat. It exits non-zero only if the last plan recorded a status
+other than `complete`. **Do not hand-roll this** with `pgrep`/`ps`/`kill -0` loops --
+that is what the anti-patterns below are about.
 
 **A stale pidfile can make `watch` announce a run that is gone.** It prints the pid it
 read before testing liveness, so a killed chain whose sidecar was left behind produces a

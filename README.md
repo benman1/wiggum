@@ -365,6 +365,7 @@ Every supervision command refers to a run **by its plan file** and derives those
 |---|---|
 | `wiggum status docs/plan.md` | Print task counts and run state: `not started`, `running`, `running but appears blocked`, or `finished: <reason>`. Read-only. |
 | `wiggum watch docs/plan.md` | Stream the run's output and **block until it finishes** — wiggum's "wait". Exits 0 only when the run finished `complete`. |
+| `wiggum watch --chain [pid]` | Follow a run **across plans** rather than watching one: prints each plan as the chain reaches it and keeps streaming through the transitions. With no pid it picks the only live run. |
 | `wiggum kill docs/plan.md` | Stop the run — and only this run's process tree (the wiggum process and the `claude` it spawned). Never a blanket kill. |
 | `wiggum top` | An at-a-glance overview of every run on the machine: one line per run — plan, pid, state, time since last activity, what the run is costing in RSS and CPU, and task tally — over a footer giving load, swap and the number of live runs. Read-only. `--json` for scripts. |
 
@@ -472,7 +473,7 @@ Cancelling the wiggum run scheduled for 01:07:00 tomorrow (waiter pid 41207)...
 
 - `wiggum status <plan>` reports `scheduled for <time> (in <duration>)` while it waits, then the ordinary `running` / `finished: <reason>` states once it fires. A scheduled run never reads as `running`.
 - `wiggum kill <plan>` **cancels** the schedule — it says "cancelled", not "killed", because nothing ran and there is no output to go looking for. It signals only the waiter's recorded pid, never a pattern match.
-- `wiggum watch` only knows about runs that have started (it keys off the `.pid` sidecar), so a run that is still waiting shows up in `status` and `top`, not in `watch`.
+- `wiggum watch <plan>` only knows about runs that have started (it keys off the `.pid` sidecar), so a run that is still waiting shows up in `status` and `top`, not in `watch`. (`watch --chain` keys off the pid instead, so it follows a run into plans that have not started yet.)
 
 The pending schedule lives in one sidecar, `docs/plan.scheduled`, next to the plan; it is removed when the run fires or is cancelled.
 
@@ -500,9 +501,22 @@ echo docs/extra_plan.md >> docs/queue.txt   # while the chain is running
 
 One path per line, `#` starts a comment, blank lines ignored. A plan appended while the chain works is picked up when the current plan finishes, a plan already run is never repeated even if you edit the file, and a queued path that does not exist when its turn comes stops the chain rather than being skipped silently. Because the list is on disk rather than in argv, a killed chain resumes by re-running the same command.
 
-Each plan in a chain registers itself while it is the active one, so `wiggum top` shows a running chain as a single row for the plan it is on right now — and drops that row when the chain moves to the next plan. To supervise a chain, run `top` (or `status` on the active plan); `watch` attaches to one plan, not to the chain as a whole.
+Each plan in a chain registers itself while it is the active one, so `wiggum top` shows a running chain as a single row for the plan it is on right now — and drops that row when the chain moves to the next plan. To supervise a chain, use `wiggum watch --chain`; `wiggum watch <plan>` attaches to one plan, not to the chain as a whole.
 
-That distinction has a sharp edge. A plan later in the chain has no pidfile until its turn comes, so `wiggum watch` on it **exits 1 immediately** rather than waiting: it reads as "that run finished" and means "that run has not started". Watch the plan the chain is on now and re-check when it ends, or hold the chain's own PID from launch and poll `kill -0 "$pid"` — that answers "is the chain still going", which is a different question from "is this plan still going".
+That distinction has a sharp edge, which is why `--chain` exists. A plan later in the chain has no pidfile until its turn comes, so `wiggum watch` **on that plan** exits 1 immediately rather than waiting: it reads as "that run finished" and means "that run has not started". `--chain` follows the process instead — it re-reads the registry entry, so it announces each plan as the chain reaches it and keeps streaming through the gaps between them:
+
+```console
+$ wiggum watch --chain
+Following wiggum run 70613 across its plans...
+
+=== now on: docs/site-improvements_plan.md ===
+[2026-09-05 16:57:24] stop: all tasks complete after iteration 5
+
+=== now on: docs/compare-campaigns_plan.md ===
+[2026-09-05 17:11:01] phase: 2 - iteration 1 of 30 (12 tasks remaining, 0 dropped)
+```
+
+It streams whichever of `.out` and `.log` the run is writing, so a foreground chain — which writes no `.out` — is followed by its log. It returns when the process does, and non-zero only if the last plan recorded a status other than `complete`: a chain's own verdict is not observable from outside, and inventing one is the "any non-zero means gone" mistake that hand-rolled waiters make.
 
 `watch` also prints the pid it read before testing whether it is alive, so a killed run that left its sidecar behind produces a `Watching wiggum run ... (pid N)` line and then returns at once. Read the return value, not the opening line.
 

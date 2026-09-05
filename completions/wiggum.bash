@@ -117,7 +117,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--timeout --kill-on-timeout --poll-interval --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--timeout --kill-on-timeout --poll-interval --chain --help" -- "$cur")
             else
                 _filedir md
             fi

@@ -90,6 +90,7 @@ _wiggum() {
                 '--timeout[Stop watching after N seconds (0 = forever)]:seconds:' \
                 '--kill-on-timeout[Kill the run if the timeout is reached]' \
                 '--poll-interval[How often to poll for new output]:seconds:' \
+                '--chain[Follow a run across plans by pid rather than watching one plan]' \
                 '(-h --help)'{-h,--help}'[Show help]' \
                 '*:plan file:_files -g "*.md"'
             ;;

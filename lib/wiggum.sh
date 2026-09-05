@@ -89,6 +89,7 @@ wiggum_reset() {
     WATCH_TIMEOUT=0
     WATCH_POLL=5
     KILL_ON_TIMEOUT=false
+    CHAIN_WATCH=false
 }
 
 wiggum_reset
@@ -587,19 +588,31 @@ wiggum watch - Follow a background run until it finishes
 
 Usage:
   wiggum watch <plan-file> [options]
+  wiggum watch --chain [<pid>] [options]
 
 Options:
   --timeout <seconds>     Stop watching after this long (0 = wait forever)
   --kill-on-timeout       On timeout, kill the run (only that run's process)
   --poll-interval <secs>  How often to poll for new output (default: 5)
+  --chain                 Follow a run across plans by pid, not by plan file
 
 Streams the run's output and blocks until it completes -- wiggum's "wait".
 Exits 0 only if the run finished 'complete'; non-zero for stalled, incomplete,
 or killed. Pair with 'wiggum execute --background' to launch then wait.
 
+--chain follows the process instead of a plan: it prints each plan as the run
+reaches it and keeps streaming across the transitions, because a plan whose turn
+has not come has no pidfile and watching it by name exits 1 at once -- which
+reads as 'finished' and means 'not started'. With no pid it picks the only live
+run, and lists them when there is more than one. It returns when the process
+does: non-zero only if the last plan recorded a status other than 'complete',
+since a chain's own verdict is not observable from outside.
+
 Examples:
   wiggum watch docs/plan.md
   wiggum watch docs/plan.md --timeout 1800 --kill-on-timeout
+  wiggum watch --chain
+  wiggum watch --chain 70613
 EOF
             ;;
         kill)
@@ -981,6 +994,10 @@ parse_args() {
                 KILL_ON_TIMEOUT=true
                 shift
                 ;;
+            --chain)
+                CHAIN_WATCH=true
+                shift
+                ;;
             --no-verify)
                 NO_VERIFY=true
                 CLI_NO_VERIFY=true
@@ -1120,6 +1137,9 @@ parse_args() {
     if [[ ${#FILES[@]} -eq 0 ]]; then
         case "$MODE" in
             status|watch|kill)
+                # `watch --chain` with no pid follows the only live run, so it
+                # needs neither a plan file nor an argument at all.
+                [[ "$MODE" == watch && "$CHAIN_WATCH" == true ]] && return 0
                 echo "Error: $MODE requires a plan file (e.g. wiggum $MODE docs/foo_plan.md)." >&2
                 return "$EXIT_BAD_ARGS"
                 ;;
@@ -1141,6 +1161,10 @@ parse_args() {
         fi
         FILES+=("$STDIN_FILE")
     fi
+
+    # `watch --chain <pid>` puts a pid where a plan path would go: there is no
+    # file to find, and no project directory to keep it inside.
+    [[ "$MODE" == watch && "$CHAIN_WATCH" == true ]] && return 0
 
     local work_dir
     work_dir="$(pwd)"
@@ -1709,6 +1733,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum execute <plan> --at <WHEN>` | Wait until WHEN, then run once, detached. WHEN is `+90m` (relative), `01:07` (the next such clock time) or `@1756180020` (epoch). Creates nothing recurring; `status` reports it as scheduled and `kill` cancels it. |
 | `wiggum status <plan>` | Task counts + run state (not started / running / running but appears blocked / finished: \<reason\>). Read-only. |
 | `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
+| `wiggum watch --chain [<pid>]` | Follow a run **across plans**: prints each plan as the chain reaches it and keeps streaming through the transitions. No pid means the only live run. Use this instead of hand-rolling a loop over `pgrep`/`ps`. |
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
@@ -2432,16 +2457,22 @@ stops the chain rather than being skipped. The queue also *is* the chain's plan 
 so a killed chain relaunches from the same command without you reconstructing it from
 your shell history.
 
-**`watch` is per-plan, not per-chain, and this bites.** `wiggum watch <plan>` attaches
-to one run's pidfile. A plan later in the chain has no pidfile until its turn comes, so
-watching it **exits 1 immediately** rather than waiting — it reads as "that run is
-finished" when it means "that run has not started". There is no `watch` for "this chain,
-whatever it is on". Until there is:
+**To follow a chain, use `wiggum watch --chain`, not `watch <plan>`.** Watching by plan
+attaches to one run's pidfile, and a plan later in the chain has no pidfile until its
+turn comes, so watching it **exits 1 immediately** rather than waiting — it reads as
+"that run is finished" when it means "that run has not started". `--chain` follows the
+process: it announces each plan as the chain reaches it, keeps streaming across the
+transitions, and returns when the process does.
 
-- Watch the plan the chain is on **now** (`wiggum top` names it), and re-check when it
-  ends; or
-- Hold the chain's own PID from launch and poll `kill -0 "$pid"` for "is the chain still
-  going", which is a different question from "is this plan still going".
+```
+wiggum watch --chain          # the only live run
+wiggum watch --chain 70613    # a named one; `wiggum top` lists the pids
+```
+
+It streams `.out` when there is one and the `.log` otherwise, so a foreground chain is
+followed by its heartbeat. It exits non-zero only if the last plan recorded a status
+other than `complete`. **Do not hand-roll this** with `pgrep`/`ps`/`kill -0` loops --
+that is what the anti-patterns below are about.
 
 **A stale pidfile can make `watch` announce a run that is gone.** It prints the pid it
 read before testing liveness, so a killed chain whose sidecar was left behind produces a
@@ -3803,14 +3834,62 @@ find_registered_runs() {
         pid="$(basename "$f")"
         # A pid that answers is not proof the run is there: prune an entry
         # whose pid has been recycled exactly as if the process were gone.
-        if ! run_pid_alive "$pid" "$(sed -n 2p "$f" | sed -e 's/^ *//' -e 's/ *$//')"; then
+        if ! run_pid_alive "$pid" "$(registry_entry_identity "$pid")"; then
             rm -f "$f"
             continue
         fi
-        base="$(head -n1 "$f")"
+        base="$(registry_entry_base "$pid")"
         [[ -n "$base" ]] && echo "$base"
     done
     return 0
+}
+
+# The two fields of a registry entry: the plan a run is on, and the identity of
+# the process working it. Read through these rather than by hand, so the file's
+# shape is stated in one place.
+registry_entry_base() {
+    local f="$WIGGUM_REGISTRY_DIR/$1"
+    [[ -f "$f" ]] || return 0
+    head -n1 "$f"
+    return 0
+}
+
+registry_entry_identity() {
+    local f="$WIGGUM_REGISTRY_DIR/$1"
+    [[ -f "$f" ]] || return 0
+    sed -n 2p "$f" | sed -e 's/^ *//' -e 's/ *$//'
+    return 0
+}
+
+# The pid of the only live registered run. Echoes nothing and explains itself
+# when the answer is none or many -- `--chain` exists to save reading a pid out
+# of `top` and typing it back, so it should not demand one when it can tell.
+sole_live_registered_pid() {
+    local f pid found="" count=0
+    [[ -d "$WIGGUM_REGISTRY_DIR" ]] || { echo "No runs are registered on this machine." >&2; return 1; }
+    for f in "$WIGGUM_REGISTRY_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        pid="$(basename "$f")"
+        run_pid_alive "$pid" "$(registry_entry_identity "$pid")" || continue
+        found="$pid"
+        count=$((count + 1))
+    done
+    if [[ "$count" -eq 1 ]]; then
+        printf '%s\n' "$found"
+        return 0
+    fi
+    if [[ "$count" -eq 0 ]]; then
+        echo "No runs are registered on this machine." >&2
+    else
+        echo "More than one run is live; name the pid you mean:" >&2
+        for f in "$WIGGUM_REGISTRY_DIR"/*; do
+            [[ -f "$f" ]] || continue
+            pid="$(basename "$f")"
+            run_pid_alive "$pid" "$(registry_entry_identity "$pid")" || continue
+            echo "  $pid  $(registry_entry_base "$pid").md" >&2
+        done
+    fi
+    return 1
 }
 
 # The live pid a base path is registered under, if any.
@@ -3827,9 +3906,9 @@ registered_pid_for_base() {
     local f pid
     for f in "$WIGGUM_REGISTRY_DIR"/*; do
         [[ -f "$f" ]] || continue
-        [[ "$(head -n1 "$f")" == "$want" ]] || continue
         pid="$(basename "$f")"
-        if run_pid_alive "$pid" "$(sed -n 2p "$f" | sed -e 's/^ *//' -e 's/ *$//')"; then
+        [[ "$(registry_entry_base "$pid")" == "$want" ]] || continue
+        if run_pid_alive "$pid" "$(registry_entry_identity "$pid")"; then
             printf '%s\n' "$pid"
             return 0
         fi
@@ -4401,7 +4480,91 @@ run_status() {
 # --timeout (and --kill-on-timeout) so a stuck run can be bounded. Exits 0 only
 # when the run finished "complete"; non-zero otherwise (stalled/incomplete/
 # killed). This is wiggum's "wait" primitive.
+# `wiggum watch --chain [<pid>]` -- follow a run wherever it goes.
+#
+# `watch` attaches to one plan's pidfile, which cannot answer the question a
+# chain raises: what is it working on now, and tell me when it moves. A plan
+# whose turn has not come has no pidfile at all, so watching it by name exits 1
+# immediately -- it reads as "that run finished" and means "that run has not
+# started", and people work around it by hand-rolling a process-table loop, the
+# thing this repo refuses everywhere else.
+#
+# Following the process needs no new bookkeeping: the registry already names the
+# plan a run is on and is rewritten at every transition, so re-reading one file
+# is the whole mechanism.
+run_watch_chain() {
+    local pid="${FILES[0]:-}"
+    if [[ -z "$pid" ]]; then
+        pid="$(sole_live_registered_pid)" || return "$EXIT_BAD_ARGS"
+    fi
+    case "$pid" in
+        ''|*[!0-9]*)
+            echo "Error: --chain takes a pid, not a plan path ('$pid')." >&2
+            echo "Run 'wiggum top' for the pid, or pass none when only one run is live." >&2
+            return "$EXIT_BAD_ARGS"
+            ;;
+    esac
+
+    local identity
+    identity="$(registry_entry_identity "$pid")"
+    if ! run_pid_alive "$pid" "$identity"; then
+        echo "No live run with pid $pid." >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+    echo "Following wiggum run $pid across its plans..." >&2
+
+    local base last_base="" src lines=0 waited=0 now
+    while run_pid_alive "$pid" "$identity"; do
+        base="$(registry_entry_base "$pid")"
+        if [[ -n "$base" && "$base" != "$last_base" ]]; then
+            echo "" >&2
+            echo "=== now on: ${base}.md ===" >&2
+            last_base="$base"
+            lines=0
+        fi
+        # A background run writes `.out`; a foreground or chained one writes
+        # only `.log`, which is its heartbeat either way. Between plans the
+        # registry entry is briefly absent -- that is a transition, not an end,
+        # so keep the last plan on screen and wait for the next.
+        if [[ -n "$base" ]]; then
+            src="${base}.out"
+            [[ -f "$src" ]] || src="${base}.log"
+            if [[ -f "$src" ]]; then
+                now="$(wc -l < "$src" | tr -d ' ')"
+                if (( now > lines )); then
+                    tail -n +$((lines + 1)) "$src"
+                    lines="$now"
+                fi
+            fi
+        fi
+        if [[ "$WATCH_TIMEOUT" -gt 0 && "$waited" -ge "$WATCH_TIMEOUT" ]]; then
+            echo "Watch timeout reached after ${waited}s; run $pid is still going." >&2
+            return 0
+        fi
+        sleep "$WATCH_POLL"
+        waited=$((waited + WATCH_POLL))
+    done
+
+    local final=""
+    [[ -n "$last_base" ]] && final="$(read_run_status "${last_base}.out")"
+    echo "" >&2
+    echo "Run $pid has ended." >&2
+    if [[ -n "$last_base" ]]; then
+        if [[ -n "$final" ]]; then
+            echo "Last plan: ${last_base}.md ($final)" >&2
+            [[ "$final" == complete ]] || return "$EXIT_CLAUDE_FAILED"
+        else
+            echo "Last plan: ${last_base}.md" >&2
+        fi
+    fi
+    return 0
+}
+
 run_watch() {
+    if [[ "$CHAIN_WATCH" == true ]]; then
+        run_watch_chain
+        return $?
+    fi
     local base="${FILES[0]}"
     local pidfile outfile
     pidfile="$(run_sidecar_file "$base" pid)"

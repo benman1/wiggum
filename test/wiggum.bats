@@ -7514,3 +7514,156 @@ top_table_columns() {
     done
     [ "$missing" -eq 1 ]
 }
+
+# ── watch --chain: following a run instead of a plan ─────────────────────────
+
+# Register PID as working BASE, exactly as a live run would.
+register_fake_run() {
+    local pid="$1" base="$2"
+    mkdir -p "$WIGGUM_REGISTRY_DIR"
+    printf '%s\n%s\n' "$base" "$(pid_started_at "$pid")" > "$WIGGUM_REGISTRY_DIR/$pid"
+}
+
+@test "run_watch_chain: with no pid, follows the only live run" {
+    sleep 30 &
+    local live=$!
+    register_fake_run "$live" "$TEST_DIR/a_plan"
+    printf 'first line\nsecond line\n' > a_plan.log
+    FILES=()
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    run run_watch_chain
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"Following wiggum run $live"* ]] || return 1
+    [[ "$output" == *"now on: $TEST_DIR/a_plan.md"* ]] || return 1
+    # A foreground chain writes no .out, so the log is the heartbeat to stream.
+    [[ "$output" == *"second line"* ]] || return 1
+}
+
+@test "run_watch_chain: prefers .out when the run writes one" {
+    sleep 30 &
+    local live=$!
+    register_fake_run "$live" "$TEST_DIR/a_plan"
+    printf 'from the log\n' > a_plan.log
+    printf 'from the out\n' > a_plan.out
+    FILES=()
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    run run_watch_chain
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [[ "$output" == *"from the out"* ]] || return 1
+    [[ "$output" != *"from the log"* ]] || return 1
+}
+
+@test "run_watch_chain: a gap between plans is a transition, not an end" {
+    # Between plans the chain has released one claim and not yet made the next.
+    # Concluding "over" there is the bug every hand-rolled watcher has.
+    sleep 30 &
+    local live=$!
+    mkdir -p "$WIGGUM_REGISTRY_DIR"
+    printf '\n%s\n' "$(pid_started_at "$live")" > "$WIGGUM_REGISTRY_DIR/$live"
+    FILES=("$live")
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    run run_watch_chain
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"still going"* ]] || return 1
+    [[ "$output" != *"has ended"* ]] || return 1
+}
+
+@test "run_watch_chain: returns when the process does, naming the last plan" {
+    sleep 2 &
+    local shortlived=$!
+    register_fake_run "$shortlived" "$TEST_DIR/a_plan"
+    printf 'working\n' > a_plan.log
+    FILES=("$shortlived")
+    WATCH_POLL=1
+    WATCH_TIMEOUT=0
+    run run_watch_chain
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"has ended"* ]] || return 1
+    [[ "$output" == *"Last plan: $TEST_DIR/a_plan.md"* ]] || return 1
+}
+
+@test "run_watch_chain: a last plan that did not finish complete exits non-zero" {
+    sleep 2 &
+    local shortlived=$!
+    register_fake_run "$shortlived" "$TEST_DIR/a_plan"
+    printf 'Status: stalled\n' > a_plan.out
+    FILES=("$shortlived")
+    WATCH_POLL=1
+    WATCH_TIMEOUT=0
+    run run_watch_chain
+    [ "$status" -ne 0 ] || return 1
+    [[ "$output" == *"(stalled)"* ]] || return 1
+}
+
+@test "run_watch_chain: more than one live run asks which, rather than guessing" {
+    sleep 30 &
+    local one=$!
+    sleep 30 &
+    local two=$!
+    register_fake_run "$one" "$TEST_DIR/a_plan"
+    register_fake_run "$two" "$TEST_DIR/b_plan"
+    FILES=()
+    run run_watch_chain
+    kill "$one" "$two" 2>/dev/null || true
+    wait "$one" 2>/dev/null || true
+    wait "$two" 2>/dev/null || true
+    [ "$status" -ne 0 ] || return 1
+    [[ "$output" == *"More than one run is live"* ]] || return 1
+    [[ "$output" == *"$TEST_DIR/a_plan.md"* ]] || return 1
+    [[ "$output" == *"$TEST_DIR/b_plan.md"* ]] || return 1
+}
+
+@test "run_watch_chain: no registered run says so" {
+    FILES=()
+    run run_watch_chain
+    [ "$status" -ne 0 ] || return 1
+    [[ "$output" == *"No runs are registered"* ]] || return 1
+}
+
+@test "run_watch_chain: a plan path where a pid belongs is refused" {
+    FILES=(docs/plan.md)
+    run run_watch_chain
+    [ "$status" -ne 0 ] || return 1
+    [[ "$output" == *"takes a pid, not a plan path"* ]] || return 1
+}
+
+@test "run_watch_chain: a pid that is not a live run says so" {
+    local dead
+    dead="$(spawn_dead_pid)"
+    FILES=("$dead")
+    run run_watch_chain
+    [ "$status" -ne 0 ] || return 1
+    [[ "$output" == *"No live run with pid $dead"* ]] || return 1
+}
+
+@test "parse_args: watch --chain needs neither a plan file nor an argument" {
+    run parse_args watch --chain
+    [ "$status" -eq 0 ] || return 1
+    parse_args watch --chain
+    [ "$CHAIN_WATCH" = true ] || return 1
+    wiggum_reset
+    [ "$CHAIN_WATCH" = false ]
+}
+
+@test "parse_args: watch --chain takes a pid where a plan path would go" {
+    # The pid is not a file, so it must skip the project-directory check that
+    # every plan argument goes through.
+    run parse_args watch --chain 70613
+    [ "$status" -eq 0 ] || return 1
+    parse_args watch --chain 70613
+    [ "${FILES[0]}" = "70613" ]
+}
+
+@test "docs: --chain is documented on every surface" {
+    local missing
+    missing="$(undocumented_surfaces "--chain" "watch")"
+    [ -z "$missing" ]
+}
