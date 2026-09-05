@@ -3429,8 +3429,11 @@ S
     run_plan 2>/dev/null
 
     # A feature request pays for the universal rules only, never the defect text.
+    # The ceiling tracks those rules as they grow -- it went from 8000 to 9000
+    # when the diagram guidance landed. What it guards is the line above: the
+    # defect sections must never leak into a feature prompt.
     ! grep -q '## Symptoms' "$captured"
-    [ "$(wc -c < "$captured")" -lt 8000 ]
+    [ "$(wc -c < "$captured")" -lt 9000 ]
 }
 
 @test "run_plan: defect prompt stays within budget and exceeds the feature prompt" {
@@ -4437,6 +4440,78 @@ EOF
     [[ "$body" == *read_schedule_field* ]] || return 1
 }
 
+# ── claim_run_pidfile / release_run_pidfile ──────────────────────────────────
+
+@test "claim_run_pidfile: registers this process in the plan's sidecar" {
+    mkdir -p docs
+    : > docs/p_plan.md
+    claim_run_pidfile docs/p_plan.md
+    [ "$(cat docs/p_plan.pid)" = "$$" ]
+    [ "$WIGGUM_RUN_PIDFILE" = "docs/p_plan.pid" ]
+}
+
+@test "claim_run_pidfile: a sidecar a launcher already claimed is left alone" {
+    mkdir -p docs
+    : > docs/p_plan.md
+    echo 4242 > docs/p_plan.pid
+    WIGGUM_RUN_PIDFILE=docs/p_plan.pid
+    claim_run_pidfile docs/p_plan.md
+    [ "$(cat docs/p_plan.pid)" = "4242" ]
+}
+
+@test "claim_run_pidfile: does not clobber a live run's sidecar" {
+    mkdir -p docs
+    : > docs/p_plan.md
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > docs/p_plan.pid
+    run claim_run_pidfile docs/p_plan.md
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already active"* ]] || return 1
+    [ "$(cat docs/p_plan.pid)" = "$pid" ]
+}
+
+@test "claim_run_pidfile: takes over a dead run's leftover sidecar" {
+    mkdir -p docs
+    : > docs/p_plan.md
+    sleep 1 &
+    local pid=$!
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    echo "$pid" > docs/p_plan.pid
+    claim_run_pidfile docs/p_plan.md
+    [ "$(cat docs/p_plan.pid)" = "$$" ]
+}
+
+@test "claim_run_pidfile: no plan, no sidecar" {
+    claim_run_pidfile ""
+    [ -z "$WIGGUM_RUN_PIDFILE" ]
+}
+
+@test "release_run_pidfile: removes the sidecar this process claimed" {
+    mkdir -p docs
+    : > docs/p_plan.md
+    claim_run_pidfile docs/p_plan.md
+    release_run_pidfile
+    [ ! -f docs/p_plan.pid ]
+    [ -z "$WIGGUM_RUN_PIDFILE" ]
+}
+
+@test "release_run_pidfile: leaves a sidecar that names another process" {
+    mkdir -p docs
+    : > docs/p_plan.md
+    echo 4242 > docs/p_plan.pid
+    WIGGUM_RUN_PIDFILE=docs/p_plan.pid
+    release_run_pidfile
+    [ -f docs/p_plan.pid ]
+    [ "$(cat docs/p_plan.pid)" = "4242" ]
+}
+
+@test "release_run_pidfile: no-op when nothing was claimed" {
+    run release_run_pidfile
+    [ "$status" -eq 0 ]
+}
+
 # ── launch_execute_background ─────────────────────────────────────────────────
 
 @test "launch_execute_background: writes pidfile + out, runs the loop once" {
@@ -4456,6 +4531,29 @@ EOF
     wait "$pid" 2>/dev/null || true
     [ -f docs/plan.out ]
     grep -q "loop ran for docs/plan.md" docs/plan.out
+}
+
+@test "launch_execute_background: the detached child inherits the claim, so it never rewrites the pidfile" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    # The real loop calls claim_run_pidfile; an inherited WIGGUM_RUN_PIDFILE is
+    # what makes that a no-op. Report what the child inherited, then confirm the
+    # file still names the subshell rather than this shell.
+    run_execute() { echo "claimed=[$WIGGUM_RUN_PIDFILE]"; }
+    FILES=(docs/plan.md)
+    BACKGROUND=true
+    launch_execute_background >/dev/null 2>&1
+    local pid
+    pid="$(cat docs/plan.pid)"
+    wait "$pid" 2>/dev/null || true
+    grep -q "claimed=\[docs/plan.pid\]" docs/plan.out
+    [ "$pid" != "$$" ]
+    # And the sidecar outlives the run, so `status` can still report on a
+    # background run nobody watched.
+    [ -f docs/plan.pid ]
+    [ "$(cat docs/plan.pid)" = "$pid" ]
 }
 
 @test "launch_execute_background: refuses to start over a live run" {
@@ -4540,34 +4638,95 @@ EOF
     [[ "$(cat chain.log)" != *"c.md"* ]] || return 1
 }
 
-# ── find_run_pidfiles / run_top ──────────────────────────────────────────────
+@test "run_chain: registers each plan in turn so top follows the chain" {
+    cat > a.md <<'EOF'
+- [ ] a
+EOF
+    cat > b.md <<'EOF'
+- [ ] b
+EOF
+    # Snapshot the live sidecars from inside each plan's run: the claim exists
+    # only while that plan is being worked on.
+    run_execute() {
+        claim_run_pidfile "${FILES[0]}"
+        echo "$(echo ./*.pid)" >> seen
+        release_run_pidfile
+        return 0
+    }
+    FILES=(a.md b.md)
+    run_chain >/dev/null 2>&1
+    [ "$(sed -n 1p seen)" = "./a.pid" ]
+    [ "$(sed -n 2p seen)" = "./b.pid" ]
+    # Nothing is left claiming a plan the chain has finished with.
+    [ ! -f a.pid ]
+    [ ! -f b.pid ]
+}
 
-@test "find_run_pidfiles: finds pidfiles in docs/ and cwd, sorted/deduped" {
+@test "run_chain: a plan that unwinds mid-run does not keep its claim" {
+    cat > a.md <<'EOF'
+- [ ] a
+EOF
+    cat > b.md <<'EOF'
+- [ ] b
+EOF
+    # a.md claims and then fails without releasing, the way an unwound run does.
+    run_execute() {
+        claim_run_pidfile "${FILES[0]}"
+        [[ "${FILES[0]}" == "a.md" ]] && return 1
+        return 0
+    }
+    FILES=(a.md b.md)
+    run run_chain
+    [ "$status" -eq "$EXIT_PLAN_FAILED" ]
+    [ ! -f a.pid ]
+}
+
+# ── find_run_sidecars / run_top ──────────────────────────────────────────────
+
+@test "find_run_sidecars: finds runs in docs/ and cwd, sorted/deduped" {
     mkdir -p docs
     : > docs/a_plan.pid
     : > docs/b_plan.pid
     : > c_plan.pid
-    run find_run_pidfiles
+    run find_run_sidecars
     [ "$status" -eq 0 ]
-    [[ "${lines[0]}" == "./c_plan.pid" || "${lines[0]}" == "c_plan.pid" ]] || return 1
-    [[ "$output" == *"docs/a_plan.pid"* ]] || return 1
-    [[ "$output" == *"docs/b_plan.pid"* ]] || return 1
+    [[ "${lines[0]}" == "./c_plan" || "${lines[0]}" == "c_plan" ]] || return 1
+    [[ "$output" == *"docs/a_plan"* ]] || return 1
+    [[ "$output" == *"docs/b_plan"* ]] || return 1
     [ "${#lines[@]}" -eq 3 ]
 }
 
-@test "find_run_pidfiles: empty when there are no runs" {
+@test "find_run_sidecars: empty when there are no runs" {
     mkdir -p docs
-    run find_run_pidfiles
+    run find_run_sidecars
     [ -z "$output" ]
 }
 
-@test "find_run_pidfiles: accepts a plan path or a pidfile directly" {
+@test "find_run_sidecars: accepts a plan path or a sidecar directly" {
     mkdir -p docs
     : > docs/x_plan.pid
-    run find_run_pidfiles docs/x_plan.md
-    [[ "$output" == *"docs/x_plan.pid"* ]] || return 1
-    run find_run_pidfiles docs/x_plan.pid
-    [[ "$output" == *"docs/x_plan.pid"* ]] || return 1
+    run find_run_sidecars docs/x_plan.md
+    [[ "$output" == *"docs/x_plan"* ]] || return 1
+    run find_run_sidecars docs/x_plan.pid
+    [[ "$output" == *"docs/x_plan"* ]] || return 1
+}
+
+@test "find_run_sidecars: a scheduled run counts as a known run" {
+    mkdir -p docs
+    : > docs/s_plan.scheduled
+    run find_run_sidecars
+    [ "$output" = "docs/s_plan" ]
+    run find_run_sidecars docs/s_plan.md
+    [ "$output" = "docs/s_plan" ]
+}
+
+@test "find_run_sidecars: a plan with both sidecars is listed once" {
+    mkdir -p docs
+    : > docs/both_plan.pid
+    : > docs/both_plan.scheduled
+    run find_run_sidecars
+    [ "${#lines[@]}" -eq 1 ]
+    [ "$output" = "docs/both_plan" ]
 }
 
 @test "run_top: friendly message when there are no runs" {
@@ -4616,6 +4775,43 @@ EOF
     [[ "$output" == *"2/2 done"* ]] || return 1
 }
 
+@test "run_top: lists a run that is only scheduled" {
+    mkdir -p docs
+    cat > docs/s_plan.md <<'EOF'
+- [ ] a
+- [ ] b
+EOF
+    sleep 30 &
+    local waiter=$!
+    printf 'target=%s\ntarget_human=%s\nspec=%s\npid=%s\n' \
+        "$(( $(wiggum_now_epoch) + 3600 ))" "tomorrow 01:07" "01:07" "$waiter" \
+        > docs/s_plan.scheduled
+    FILES=()
+    run run_top
+    kill "$waiter" 2>/dev/null; wait "$waiter" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"docs/s_plan.md"* ]] || return 1
+    [[ "$output" == *"scheduled for"* ]] || return 1
+    [[ "$output" == *"0/2 done, 2 left"* ]] || return 1
+}
+
+@test "run_top: a live run outranks a stale schedule for the same plan" {
+    mkdir -p docs
+    cat > docs/s_plan.md <<'EOF'
+- [ ] a
+EOF
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > docs/s_plan.pid
+    printf 'target=1\ntarget_human=then\nspec=01:07\npid=1\n' > docs/s_plan.scheduled
+    FILES=()
+    run run_top
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [[ "$output" == *"$pid"* ]] || return 1
+    [[ "$output" == *"running"* ]] || return 1
+    [[ "$output" != *"scheduled for"* ]] || return 1
+}
+
 @test "run_top: flags a blocked run" {
     mkdir -p docs
     cat > docs/b_plan.md <<'EOF'
@@ -4632,6 +4828,28 @@ EOF
 }
 
 # ── run_execute: empty / all-done guard ──────────────────────────────────────
+
+@test "run_execute: a foreground run registers itself, then releases the sidecar" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+# Plan
+- [x] already done
+EOF
+    # The claim lives only for the length of the run, so read it from inside a
+    # claude call rather than after the run has cleaned up. This is the case
+    # that used to be invisible to `top`: every plan in a chain runs this way.
+    claude() { [ -f docs/plan.pid ] && cp docs/plan.pid pid_seen; return 0; }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    run run_execute
+    [ "$status" -eq 0 ]
+    [ "$(cat pid_seen)" = "$$" ]
+    [ ! -f docs/plan.pid ]
+}
 
 @test "run_execute: skips the implement step when no tasks are pending" {
     mkdir -p docs
