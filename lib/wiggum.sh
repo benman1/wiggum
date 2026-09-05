@@ -737,7 +737,7 @@ Commands:
   watch     Follow a background run until it finishes (wait)
   kill      Stop a background run (only that run's process)
   chain     Execute several workplans back to back
-  top       List every known wiggum run at a glance
+  top       List every wiggum run on this machine at a glance
 
 Run 'wiggum help <command>' for details on a specific command.
 
