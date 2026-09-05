@@ -5,7 +5,7 @@ _wiggum() {
     local cur prev words cword
     _init_completion || return
 
-    local commands="init plan execute check docs run status watch kill chain top help"
+    local commands="init plan explain execute check docs run status watch kill chain top help"
     local presets="node next python astro bash"
     local efforts="low medium high xhigh max"
     local perms="acceptEdits auto bypassPermissions default dontAsk plan"
@@ -51,7 +51,21 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--plan-file --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--plan-file --no-feedback --effort --permission-mode --verbose --help" -- "$cur")
+            else
+                _filedir md
+            fi
+            return
+            ;;
+        explain)
+            case "$prev" in
+                --explain-file)
+                    _filedir md
+                    return
+                    ;;
+            esac
+            if [[ "$cur" == -* ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "--explain-file --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi
