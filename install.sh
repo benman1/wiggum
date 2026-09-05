@@ -23,12 +23,31 @@ if ! command -v claude &>/dev/null; then
     echo ""
 fi
 
-# Helper: run with sudo only if needed
+# Whether writing into DIR needs sudo, decided on the nearest directory that
+# actually exists: /usr/local/lib/wiggum may not be there yet, and it is
+# whoever owns /usr/local that says whether we may create it.
+needs_sudo() {
+    local dir="$1"
+    while [[ ! -d "$dir" ]]; do
+        case "$dir" in
+            */*) dir="${dir%/*}"; [[ -n "$dir" ]] || dir="/" ;;
+            *)   dir="."; break ;;
+        esac
+    done
+    [[ ! -w "$dir" ]]
+}
+
+# Run a command that writes into DIR, escalating only for that destination.
+# The directory has to be named: the decision cannot be read off the argv,
+# and one global answer would sudo the copies into $HOME too, leaving the
+# user root-owned files in their own home directory.
 run_privileged() {
-    if [[ -w "$(dirname "$1")" ]]; then
-        "$@"
-    else
+    local dir="$1"
+    shift
+    if needs_sudo "$dir"; then
         sudo "$@"
+    else
+        "$@"
     fi
 }
 
@@ -41,9 +60,10 @@ run_privileged() {
 # swaps the directory entry instead, so the live run keeps the file it started
 # with and only the next run sees the new one.
 install_file() {
-    local src="$1" dest="$2"
-    run_privileged cp "$src" "$dest.new"
-    run_privileged mv -f "$dest.new" "$dest"
+    local src="$1" dest="$2" dir
+    dir="$(dirname "$dest")"
+    run_privileged "$dir" cp "$src" "$dest.new"
+    run_privileged "$dir" mv -f "$dest.new" "$dest"
 }
 
 # The first completion directory that exists. Homebrew keeps its own tree, but
@@ -69,15 +89,15 @@ if [[ -f "$INSTALL_DIR/wiggum.sh" ]]; then
 else
     echo "Installing to $INSTALL_DIR..."
 fi
-run_privileged mkdir -p "$INSTALL_DIR/lib"
+run_privileged "$INSTALL_DIR/lib" mkdir -p "$INSTALL_DIR/lib"
 install_file "$SOURCE_DIR/wiggum.sh" "$INSTALL_DIR/wiggum.sh"
 install_file "$SOURCE_DIR/lib/wiggum.sh" "$INSTALL_DIR/lib/wiggum.sh"
-run_privileged chmod +x "$INSTALL_DIR/wiggum.sh"
+run_privileged "$INSTALL_DIR" chmod +x "$INSTALL_DIR/wiggum.sh"
 
 # Symlink into bin
 echo "Linking $BIN_DIR/$SCRIPT_NAME..."
-run_privileged mkdir -p "$BIN_DIR"
-run_privileged ln -sf "$INSTALL_DIR/wiggum.sh" "$BIN_DIR/$SCRIPT_NAME"
+run_privileged "$BIN_DIR" mkdir -p "$BIN_DIR"
+run_privileged "$BIN_DIR" ln -sf "$INSTALL_DIR/wiggum.sh" "$BIN_DIR/$SCRIPT_NAME"
 
 # Install shell completions
 ZSH_COMP_DIR="$(first_existing_dir "share/zsh/site-functions")"

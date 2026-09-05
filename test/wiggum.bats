@@ -6982,3 +6982,52 @@ inode_of() {
     grep -q 'zsh completion' "$prefix/share/zsh/site-functions/_wiggum" || return 1
     grep -q 'bash completion' "$prefix/etc/bash_completion.d/wiggum"
 }
+
+# A sudo that does nothing but record what it was asked to run, first on PATH.
+# Nothing in the suite may actually escalate, so the stub also proves the
+# absence of a call: an empty log is the assertion.
+stub_sudo() {
+    mkdir -p "$TEST_DIR/bin"
+    export SUDO_LOG="$TEST_DIR/sudo.log"
+    : > "$SUDO_LOG"
+    printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$*" >> "$SUDO_LOG"\nexit 0\n' \
+        > "$TEST_DIR/bin/sudo"
+    chmod +x "$TEST_DIR/bin/sudo"
+    PATH="$TEST_DIR/bin:$PATH"
+}
+
+@test "install: a prefix the user owns is written without sudo" {
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME"
+    local src="$TEST_DIR/src" prefix="$TEST_DIR/prefix"
+    make_install_source "$src" "echo v1"
+    stub_sudo
+
+    WIGGUM_PREFIX="$prefix" bash "$src/install.sh" >/dev/null
+
+    [ -f "$prefix/lib/wiggum/wiggum.sh" ] || return 1
+    [ ! -s "$SUDO_LOG" ]
+}
+
+@test "install: a prefix the user cannot write escalates, and \$HOME still does not" {
+    # The decision is per destination. A single global answer -- "this install
+    # needs root" -- would sudo the skill copy too and leave root-owned files
+    # in the user's own ~/.claude.
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME"
+    local src="$TEST_DIR/src" prefix="$TEST_DIR/locked/prefix"
+    make_install_source "$src" "echo v1"
+    mkdir -p "$src/.claude/skills/wiggum"
+    echo "# skill" > "$src/.claude/skills/wiggum/SKILL.md"
+    mkdir -p "$TEST_DIR/locked"
+    chmod 555 "$TEST_DIR/locked"
+    stub_sudo
+
+    WIGGUM_PREFIX="$prefix" bash "$src/install.sh" >/dev/null
+    chmod 755 "$TEST_DIR/locked"
+
+    grep -q "mkdir -p $prefix/lib/wiggum/lib" "$SUDO_LOG" || return 1
+    grep -q "cp $src/wiggum.sh $prefix/lib/wiggum/wiggum.sh.new" "$SUDO_LOG" || return 1
+    ! grep -q "$HOME" "$SUDO_LOG" || return 1
+    grep -q '# skill' "$HOME/.claude/skills/wiggum/SKILL.md"
+}
