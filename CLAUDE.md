@@ -1,3 +1,10 @@
+# OpenWolf
+
+@.wolf/OPENWOLF.md
+
+This project uses OpenWolf for context management. Read and follow .wolf/OPENWOLF.md every session. Check .wolf/cerebrum.md before generating code. Check .wolf/anatomy.md before reading files.
+
+
 # Wiggum -- Project Standards
 
 Wiggum is a **self-driving agent loop** that orchestrates Claude Code to turn issue descriptions into working, verified code. It plans, implements, verifies, self-heals, and commits -- all from a single shell command.
