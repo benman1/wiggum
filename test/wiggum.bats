@@ -6334,9 +6334,7 @@ EOF
     cat > docs/plan.md <<'EOF'
 - [ ] one
 EOF
-    sleep 30 &
-    local dead=$!
-    kill "$dead" 2>/dev/null || true; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     printf 'target=%s\ntarget_human=old\npid=%s\nspec=01:07\n' "$((WIGGUM_TEST_NOW - 86400))" "$dead" \
         > docs/plan.scheduled
     FILES=(docs/plan.md)
@@ -6377,9 +6375,7 @@ EOF
     cat > docs/plan.md <<'EOF'
 - [ ] one
 EOF
-    sleep 30 &
-    local dead=$!
-    kill "$dead" 2>/dev/null || true; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     echo "$dead" > docs/plan.pid
     FILES=(docs/plan.md)
     AT_TIME="+90m"
