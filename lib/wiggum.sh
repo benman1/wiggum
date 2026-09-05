@@ -2413,9 +2413,42 @@ wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
 stops at the first plan that fails — so a broken early step doesn't waste effort on
 the rest. Each plan registers its own `.pid` while it is the active one and drops it
 when it ends, so `wiggum top` shows a running chain as a row for the plan it is on
-right now, and nothing for the plans on either side of it. To supervise a long chain,
-background it and watch the active plan's sidecars, or run the plans one at a time
-with the supervise loop in step 3 so you can inspect and fix between stages.
+right now, and nothing for the plans on either side of it.
+
+**To add work to a chain that is already running, give it a queue instead of
+arguments.** With plans in argv the list is fixed at launch and there is nowhere to
+append; with `--queue` the file is re-read after every plan:
+
+```
+wiggum chain --queue docs/queue.txt --max-iterations 12
+echo docs/extra_plan.md >> docs/queue.txt   # picked up when the current plan ends
+```
+
+One path per line, `#` comments, blanks ignored. A plan already run is not repeated
+even if you edit the file, and a queued path that does not exist when its turn comes
+stops the chain rather than being skipped. The queue also *is* the chain's plan list,
+so a killed chain relaunches from the same command without you reconstructing it from
+your shell history.
+
+**`watch` is per-plan, not per-chain, and this bites.** `wiggum watch <plan>` attaches
+to one run's pidfile. A plan later in the chain has no pidfile until its turn comes, so
+watching it **exits 1 immediately** rather than waiting — it reads as "that run is
+finished" when it means "that run has not started". There is no `watch` for "this chain,
+whatever it is on". Until there is:
+
+- Watch the plan the chain is on **now** (`wiggum top` names it), and re-check when it
+  ends; or
+- Hold the chain's own PID from launch and poll `kill -0 "$pid"` for "is the chain still
+  going", which is a different question from "is this plan still going".
+
+**A stale pidfile can make `watch` announce a run that is gone.** It prints the pid it
+read before testing liveness, so a killed chain whose sidecar was left behind produces a
+"Watching wiggum run … (pid N)" line and then returns immediately. Read the return, not
+the banner, and confirm with `wiggum top` or `ps` before believing either.
+
+To supervise a long chain, background it and watch the active plan's sidecars, or run
+the plans one at a time with the supervise loop in step 3 so you can inspect and fix
+between stages.
 
 ## Rules
 
@@ -2442,6 +2475,13 @@ with the supervise loop in step 3 so you can inspect and fix between stages.
   healthy long run to enforce a guess.
 - **Kill scope:** only ever stop the run you started (`wiggum kill <plan>`), never
   a blanket process kill.
+- **`watch` waits on a plan, not a chain.** Watching a plan whose turn has not come
+  exits 1 at once, which reads as "finished" and means "not started". Watch the plan
+  the chain is on now, or poll the chain's own PID. And read `watch`'s return rather
+  than its opening line: a stale pidfile makes it announce a pid that is already gone.
+- **Add to a running chain with `--queue`, not by starting a second chain.** Appending
+  a line to the queue file adds a plan to the tail; two chains over the same work
+  compete for the machine.
 - **The ledger closes with the run** (step 3f): phase 3 marks the issues this run
   actually finished, with their commit refs. Name a hard-to-find ledger in the plan,
   and when you report, confirm no row marked shipped sits above a task still `[ ]`.
