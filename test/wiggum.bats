@@ -7447,3 +7447,36 @@ STALE_IDENTITY="Thu  1 Jan 00:00:00 2000"
     [[ "$output" != *"running (pid"* ]] || return 1
     [[ "$output" == *"finished: complete"* ]] || return 1
 }
+
+@test "run_last_activity: a live run counts its pidfile as a floor" {
+    mkdir -p docs
+    : > docs/a_plan.pid
+    run run_last_activity docs/a_plan live
+    [ "$status" -eq 0 ] || return 1
+    [ -n "$output" ]
+}
+
+@test "run_last_activity: a run that is over does not count its pidfile" {
+    # The pidfile's mtime is bookkeeping, not the run doing something. Your
+    # sidecar can be seconds old on a plan that finished in July.
+    mkdir -p docs
+    printf 'Status: complete\n' > docs/a_plan.out
+    touch -t 202507041200 docs/a_plan.out
+    : > docs/a_plan.pid
+    run run_last_activity docs/a_plan
+    [ "$status" -eq 0 ] || return 1
+    [ "$output" -gt 86400 ]
+}
+
+@test "run_top: a finished row ages from its output, not from a fresh pidfile" {
+    mkdir -p docs
+    printf -- '- [x] a\n' > docs/old_plan.md
+    printf 'Status: complete\n' > docs/old_plan.out
+    touch -t 202507041200 docs/old_plan.out
+    # Written now, naming a process that is alive and is not a wiggum run.
+    printf '%s\n' 1 > docs/old_plan.pid
+    FILES=()
+    run run_top
+    [[ "$output" == *"finished: complete"* ]] || return 1
+    [[ "$output" != *" 0s "* ]] || return 1
+}

@@ -381,7 +381,7 @@ docs/api_plan.md                         -        finished: complete   3d 2h    
 load 6.1 / 4 cores · swap 2.6G of 4.0G (65%) · 3 runs active
 ```
 
-Rows are ordered by state: blocked first, then running, then scheduled, then everything finished. `ACTIVITY` is the age of the newest sidecar write, which is what separates a long task from a wedged one — both read `running`, and only the clock tells them apart.
+Rows are ordered by state: blocked first, then running, then scheduled, then everything finished. `ACTIVITY` is the age of the run's newest write, which is what separates a long task from a wedged one — both read `running`, and only the clock tells them apart. A live run counts its `.pid` as well as its `.log`/`.out`, because a run that has just claimed its sidecar has written nothing else yet; a finished run ages from its output alone, so a leftover pidfile cannot make a plan that ended in July read as active seconds ago.
 
 `RSS` and `CPU` are the run's whole process tree, not the pid in the row: a run's own bash is about a megabyte and idle, and the cost is the `claude` it spawned and whatever that spawned in turn. They are an instantaneous sample, so a quiet reading is not proof a run is cheap — the run that takes a machine into swap is usually quiet by the time anyone looks. A finished run shows `-`.
 
