@@ -5436,6 +5436,81 @@ EOF
     [[ "$first" == *"running"* ]] || return 1
 }
 
+@test "run_last_activity: seconds since the newest sidecar, empty when none" {
+    mkdir -p docs
+    : > docs/a_plan.md
+    run run_last_activity docs/a_plan
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    : > docs/a_plan.log
+    run run_last_activity docs/a_plan
+    [ -n "$output" ]
+    [ "$output" -ge 0 ]
+    [ "$output" -lt 60 ]
+}
+
+@test "file_mtime_epoch: a missing file yields nothing, not a failure" {
+    run file_mtime_epoch nope.txt
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "json_escape: quotes and backslashes survive" {
+    run json_escape 'a"b\c'
+    [ "$output" = 'a\"b\\c' ]
+}
+
+@test "run_top: the table carries an activity column" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/r_plan.md
+    : > docs/r_plan.pid
+    : > docs/r_plan.log
+    FILES=()
+    run run_top
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ACTIVITY"* ]] || return 1
+}
+
+@test "run_top: --json emits parseable records with null for what is absent" {
+    mkdir -p docs
+    printf -- '- [ ] a\n- [x] b\n' > docs/j_plan.md
+    sleep 1 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    echo "$dead" > docs/j_plan.pid
+    FILES=()
+    TOP_JSON=true
+    run run_top
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"plan": "docs/j_plan.md"'* ]] || return 1
+    # Nothing is running, so pid is null rather than the string "-".
+    [[ "$output" == *'"pid": null'* ]] || return 1
+    [[ "$output" == *'"total": 2'* ]] || return 1
+    [[ "$output" == *'"done": 1'* ]] || return 1
+    printf '%s' "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert isinstance(d, list) and len(d) == 1, d"
+}
+
+@test "run_top: --json and the table agree on state and counts" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/k_plan.md
+    printf 'Status: complete\n' > docs/k_plan.out
+    : > docs/k_plan.pid
+    FILES=()
+    TOP_JSON=false
+    run run_top
+    [[ "$output" == *"finished: complete"* ]] || return 1
+    TOP_JSON=true
+    run run_top
+    [[ "$output" == *'"state": "finished: complete"'* ]] || return 1
+}
+
+@test "parse_args: --json sets TOP_JSON" {
+    parse_args top --json
+    [ "$TOP_JSON" = "true" ]
+    wiggum_reset
+    [ "$TOP_JSON" = "false" ]
+}
+
 @test "run_top: flags a blocked run" {
     mkdir -p docs
     cat > docs/b_plan.md <<'EOF'

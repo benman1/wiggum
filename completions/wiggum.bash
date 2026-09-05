@@ -103,7 +103,9 @@ _wiggum() {
             ;;
         top)
             # optional dirs or plan files
-            if [[ "$cur" != -* ]]; then
+            if [[ "$cur" == -* ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "--json --help" -- "$cur")
+            else
                 _filedir
             fi
             return
