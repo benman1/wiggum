@@ -446,15 +446,17 @@
   <section id="supervise">
     <div class="wrap">
       <h2>Start it, walk away, keep watch</h2>
-      <p class="sub">Runs last hours. <code>wiggum top</code> lists every run on the machine, whichever project it was started from, blocked and running first. The activity column is what tells a long task from a wedged one.</p>
+      <p class="sub">Runs last hours. <code>wiggum top</code> lists every run on the machine, whichever project it was started from, blocked and running first. The activity column tells a long task from a wedged one; <code>RSS</code> and <code>CPU</code> cover the run's whole process tree, because the cost is the <code>claude</code> it spawned rather than the pid in the row. The footer is the launch decision: load against cores, and swap.</p>
 
       <div class="term">
         <div class="pane-name">$ wiggum top</div>
-        <div class="body"><pre><span class="hdr">PLAN                                     PID      STATE                ACTIVITY  TASKS</span>
-docs/onboarding_plan.md                  621      <span class="warn">running (blocked)</span>    41m 12s   2/7 done, 5 left
-<span class="path">/Users/me/api/docs/rate-limit_plan.md</span>    8123     <span class="run">running</span>              12s       3/9 done, 6 left
-docs/csv-export_plan.md                  519      <span class="run">running</span>              1m 4s     4/12 done, 8 left
-docs/auth-hardening_plan.md              -        <span class="ok">finished: complete</span>   3d 2h     9/9 done</pre></div>
+        <div class="body"><pre><span class="hdr">PLAN                                     PID      STATE                ACTIVITY  RSS      CPU    TASKS</span>
+docs/onboarding_plan.md                  621      <span class="warn">running (blocked)</span>    41m 12s   288.4M   0.2%   2/7 done, 5 left
+<span class="path">/Users/me/api/docs/rate-limit_plan.md</span>    8123     <span class="run">running</span>              12s       1.2G     94.0%  3/9 done, 6 left
+docs/csv-export_plan.md                  519      <span class="run">running</span>              1m 4s     497.1M   89.4%  4/12 done, 8 left
+docs/auth-hardening_plan.md              -        <span class="ok">finished: complete</span>   3d 2h     -        -      9/9 done
+
+<span class="hdr">load 6.1 / 4 cores · swap 2.6G of 4.0G (65%) · 3 runs active</span></pre></div>
       </div>
 
       <div class="cmds">
