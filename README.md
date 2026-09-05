@@ -8,11 +8,13 @@ Kick off as many runs as you like and see all of them at once with `wiggum top` 
 
 ```console
 $ wiggum top
-PLAN                                     PID      STATE                TASKS
-/Users/me/other-project/docs/etl_plan.md 8123     running              3/9 done, 6 left
-docs/global-score_plan.md                519      running              4/12 done, 8 left
-docs/api-rate-limit_plan.md              -        finished: complete   9/9 done
-docs/onboarding-ui_plan.md               621      running (blocked)    2/7 done, 5 left
+PLAN                                     PID      STATE                ACTIVITY  RSS      CPU    TASKS
+/Users/me/other-project/docs/etl_plan.md 8123     running              12s       1.2G     94.0%  3/9 done, 6 left
+docs/global-score_plan.md                519      running              1m 4s     497.1M   89.4%  4/12 done, 8 left
+docs/api-rate-limit_plan.md              -        finished: complete   3d 2h     -        -      9/9 done
+docs/onboarding-ui_plan.md               621      running (blocked)    41m 12s   288.4M   0.2%   2/7 done, 5 left
+
+load 6.1 / 4 cores · swap 2.6G of 4.0G (65%) · 3 runs active
 ```
 
 ## Contents
@@ -364,20 +366,28 @@ Every supervision command refers to a run **by its plan file** and derives those
 | `wiggum status docs/plan.md` | Print task counts and run state: `not started`, `running`, `running but appears blocked`, or `finished: <reason>`. Read-only. |
 | `wiggum watch docs/plan.md` | Stream the run's output and **block until it finishes** — wiggum's "wait". Exits 0 only when the run finished `complete`. |
 | `wiggum kill docs/plan.md` | Stop the run — and only this run's process tree (the wiggum process and the `claude` it spawned). Never a blanket kill. |
-| `wiggum top` | An at-a-glance overview of every run on the machine: one line per run — plan, pid, state, time since last activity, and task tally. Read-only. `--json` for scripts. |
+| `wiggum top` | An at-a-glance overview of every run on the machine: one line per run — plan, pid, state, time since last activity, what the run is costing in RSS and CPU, and task tally — over a footer giving load, swap and the number of live runs. Read-only. `--json` for scripts. |
 
 Unlike `status` (one plan), `wiggum top` surveys **every** run at once — and not only the ones in this directory. Any run in flight anywhere on the machine appears, shown by its absolute path when it belongs to another project:
 
 ```
 $ wiggum top
-PLAN                                     PID      STATE                ACTIVITY  TASKS
-docs/ui_plan.md                          621      running (blocked)    41m 12s   2/7 done, 5 left
-/Users/me/other-project/docs/etl_plan.md 8123     running              12s       3/9 done, 6 left
-docs/global-score_plan.md                519      running              1m 4s     4/12 done, 8 left
-docs/api_plan.md                         -        finished: complete   3d 2h     9/9 done
+PLAN                                     PID      STATE                ACTIVITY  RSS      CPU    TASKS
+docs/ui_plan.md                          621      running (blocked)    41m 12s   288.4M   0.2%   2/7 done, 5 left
+/Users/me/other-project/docs/etl_plan.md 8123     running              12s       1.2G     94.0%  3/9 done, 6 left
+docs/global-score_plan.md                519      running              1m 4s     497.1M   89.4%  4/12 done, 8 left
+docs/api_plan.md                         -        finished: complete   3d 2h     -        -      9/9 done
+
+load 6.1 / 4 cores · swap 2.6G of 4.0G (65%) · 3 runs active
 ```
 
-Rows are ordered by state: blocked first, then running, then scheduled, then everything finished. `ACTIVITY` is the age of the newest sidecar write, which is what separates a long task from a wedged one — both read `running`, and only the clock tells them apart. `wiggum top --json` emits the same records for scripts, with `pid` and `idle_seconds` null when absent rather than `-`.
+Rows are ordered by state: blocked first, then running, then scheduled, then everything finished. `ACTIVITY` is the age of the newest sidecar write, which is what separates a long task from a wedged one — both read `running`, and only the clock tells them apart.
+
+`RSS` and `CPU` are the run's whole process tree, not the pid in the row: a run's own bash is about a megabyte and idle, and the cost is the `claude` it spawned and whatever that spawned in turn. They are an instantaneous sample, so a quiet reading is not proof a run is cheap — the run that takes a machine into swap is usually quiet by the time anyone looks. A finished run shows `-`.
+
+The footer is the launch decision: load against core count, swap used, and how many runs are live. Swap is the number that matters on a small machine — past about 90% on 16 GB, builds start timing out and tests fail differently run to run, which reads as a code failure and is not. Each piece is dropped rather than guessed when the platform will not answer.
+
+`wiggum top --json` emits the same records for scripts, with `pid`, `idle_seconds`, `rss_kb` and `cpu_percent` null when absent rather than `-`. The footer is table-only; the JSON stays a plain array of runs.
 
 Every run registers a pidfile while it works — foreground and background alike — so a plan running inside `wiggum chain` appears here too, as the row for whichever plan the chain is on right now. A scheduled run appears as `scheduled for <time>`.
 
@@ -1265,7 +1275,7 @@ Prefer that PID check over matching command lines. `pgrep -f` *errors* (rather t
 
 **Two runs on one machine compete.** wiggum runs Claude, the verify steps, and anything a task spawns. Two concurrent runs plus a training job on a 4-core machine reached a load average of 59, which tripled the time of every verify pass. Running two plans one after the other finishes both sooner than interleaving them.
 
-Run `wiggum top` before launching another one. It lists runs from every project, not just the one you are standing in, which is the case that catches people out: an idle-looking directory is not an idle machine.
+Run `wiggum top` before launching another one. It lists runs from every project, not just the one you are standing in, which is the case that catches people out: an idle-looking directory is not an idle machine. Its footer answers the rest of the question — load against cores and swap used — and its `RSS`/`CPU` columns say which of several runs is the expensive one.
 
 **Watch the verification cost.** `verify` and `autofix` run over the whole repo after every task, and again after each fix attempt (`max_validation_retries`, default 5). On a large suite that can dominate the run: check the `phase2-validate-*` timings in the `.log` before assuming the work itself is slow. `--no-verify` turns the sweep off for one run without touching your `.wiggumrc`, at the cost of the safety net, which suits a run whose own tests you are checking directly rather than one left unattended.
 

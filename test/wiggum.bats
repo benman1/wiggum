@@ -7031,3 +7031,144 @@ stub_sudo() {
     ! grep -q "$HOME" "$SUDO_LOG" || return 1
     grep -q '# skill' "$HOME/.claude/skills/wiggum/SKILL.md"
 }
+
+# ── top: what a run costs ────────────────────────────────────────────────────
+
+# A process table shaped like `ps -axo pid=,ppid=,rss=,pcpu=`: run 100 with a
+# claude child, that child's own helper, and an unrelated tree that must not be
+# counted. Listed child-before-parent, because the real table is not sorted and
+# a single pass down it would miss the grandchild.
+stub_ps_tree() {
+    ps() {
+        printf '%s\n' \
+            "  300   200 20480  1.5" \
+            "  200   100 10240  3.0" \
+            "  100     1  1024  0.5" \
+            "  400     1  4096  9.9" \
+            "  500   400  2048  0.1"
+    }
+}
+
+@test "run_group_usage: sums the whole tree, not the pid top prints" {
+    stub_ps_tree
+    run run_group_usage 100
+    [ "$output" = "31744 5.0" ]
+}
+
+@test "run_group_usage: counts no process outside the run" {
+    stub_ps_tree
+    run run_group_usage 400
+    [ "$output" = "6144 10.0" ]
+}
+
+@test "run_group_usage: says nothing for a pid the table does not have" {
+    stub_ps_tree
+    run run_group_usage 999
+    [ -z "$output" ]
+}
+
+@test "run_group_usage: says nothing when handed no pid" {
+    stub_ps_tree
+    run run_group_usage ""
+    [ -z "$output" ]
+}
+
+@test "format_rss: scales K to M to G" {
+    [ "$(format_rss 640)" = "640K" ] || return 1
+    [ "$(format_rss 297267)" = "290.3M" ] || return 1
+    [ "$(format_rss 1887437)" = "1.8G" ]
+}
+
+@test "machine_swap_summary: reads the macOS sysctl line" {
+    sysctl() { echo "total = 4096.00M  used = 2646.00M  free = 1450.00M  (encrypted)"; }
+    run machine_swap_summary
+    [ "$output" = "swap 2.6G of 4.0G (65%)" ]
+}
+
+@test "machine_swap_summary: says nothing rather than dividing by a swapless zero" {
+    sysctl() { echo "total = 0.00M  used = 0.00M  free = 0.00M"; }
+    run machine_swap_summary
+    [ -z "$output" ]
+}
+
+@test "machine_pressure_line: names load, cores, swap and the live run count" {
+    uptime() { echo "18:05  up 21:56, 7 users, load averages: 24.75 35.07 25.11"; }
+    sysctl() {
+        case "$1 $2" in
+            "-n hw.ncpu") echo 4 ;;
+            *) echo "total = 4096.00M  used = 2646.00M  free = 1450.00M  (encrypted)" ;;
+        esac
+    }
+    run machine_pressure_line 1
+    [ "$output" = "load 24.8 / 4 cores · swap 2.6G of 4.0G (65%) · 1 run active" ]
+}
+
+@test "machine_pressure_line: pluralises, and drops what the platform will not answer" {
+    uptime() { return 1; }
+    sysctl() { return 1; }
+    run machine_pressure_line 2
+    [ "$output" = "2 runs active" ]
+}
+
+@test "run_top: a live run carries its RSS and CPU, a finished one carries dashes" {
+    mkdir -p docs
+    printf -- '- [ ] a\n- [x] b\n' > docs/live_plan.md
+    printf -- '- [x] a\n' > docs/over_plan.md
+    printf 'Status: complete\n' > docs/over_plan.out
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > docs/live_plan.pid
+    local dead
+    sleep 1 &
+    dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    echo "$dead" > docs/over_plan.pid
+    FILES=()
+    run run_top
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"RSS"* && "$output" == *"CPU"* ]] || return 1
+    # The live row reports a real figure; the finished one has nothing to report.
+    local live_row over_row
+    live_row="$(printf '%s\n' "$output" | grep 'live_plan')"
+    over_row="$(printf '%s\n' "$output" | grep 'over_plan')"
+    [[ "$live_row" =~ [0-9]+(\.[0-9])?[KMG][[:space:]]+[0-9]+\.[0-9]% ]] || return 1
+    [[ "$over_row" == *" -        -      "* ]] || return 1
+    # And the footer answers the question the columns raise.
+    [[ "$output" == *"1 run active"* ]] || return 1
+}
+
+@test "run_top: --json carries rss_kb and cpu_percent, null when nothing is live" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/jr_plan.md
+    sleep 1 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    echo "$dead" > docs/jr_plan.pid
+    FILES=()
+    TOP_JSON=true
+    run run_top
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *'"rss_kb": null'* ]] || return 1
+    [[ "$output" == *'"cpu_percent": null'* ]] || return 1
+    printf '%s' "$output" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d[0]['rss_kb'] is None and d[0]['cpu_percent'] is None, d"
+}
+
+@test "run_top: --json reports a live run's usage as numbers" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/jl_plan.md
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > docs/jl_plan.pid
+    FILES=()
+    TOP_JSON=true
+    run run_top
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    printf '%s' "$output" | python3 -c "
+import json,sys
+d = json.load(sys.stdin)
+assert isinstance(d[0]['rss_kb'], int) and d[0]['rss_kb'] > 0, d
+assert isinstance(d[0]['cpu_percent'], float), d
+"
+}

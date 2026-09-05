@@ -58,8 +58,8 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
-| `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, task tally. Blocked and running sort first. Read-only. |
-| `wiggum top --json` | The same records as JSON, with `pid` and `idle_seconds` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. |
+| `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, RSS and CPU for the run's whole process tree, task tally. Blocked and running sort first. A footer gives load, swap and the live run count — read it before launching another run instead of shelling out to `uptime` and `sysctl`. Read-only. |
+| `wiggum top --json` | The same records as JSON, with `pid`, `idle_seconds`, `rss_kb` and `cpu_percent` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. The footer is table-only. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
 `docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
