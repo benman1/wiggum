@@ -4119,7 +4119,7 @@ EOF
     echo "$pid" > plan.pid
     FILES=(plan.md)
     run run_status
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [[ "$output" == *"State: running (pid $pid)"* ]] || return 1
 }
 
@@ -4341,9 +4341,7 @@ target_human=21:00:00 today
 }
 
 @test "kill_run: cleans up a stale pidfile for a dead process" {
-    sleep 1 &
-    local pid=$!
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    local pid="$(spawn_dead_pid)"
     echo "$pid" > run.pid
     run kill_run run.pid
     [ "$status" -eq 0 ]
@@ -4401,9 +4399,7 @@ EOF
     cat > plan.md <<'EOF'
 - [ ] one
 EOF
-    sleep 1 &
-    local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     sleep 30 &
     local pid=$!
     echo "$pid" > plan.pid
@@ -4425,9 +4421,7 @@ EOF
     cat > plan.md <<'EOF'
 - [ ] one
 EOF
-    sleep 1 &
-    local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     write_schedule_sidecar "$((PROTO_EPOCH + 5400))" "23:30:00 today" "$dead"
     FILES=(plan.md)
     run run_kill
@@ -4483,7 +4477,7 @@ EOF
     local pid=$!
     echo "$pid" > docs/p_plan.pid
     run claim_run_pidfile docs/p_plan.md
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [ "$status" -eq 0 ]
     [[ "$output" == *"already active"* ]] || return 1
     [ "$(cat docs/p_plan.pid)" = "$pid" ]
@@ -4492,9 +4486,7 @@ EOF
 @test "claim_run_pidfile: takes over a dead run's leftover sidecar" {
     mkdir -p docs
     : > docs/p_plan.md
-    sleep 1 &
-    local pid=$!
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    local pid="$(spawn_dead_pid)"
     echo "$pid" > docs/p_plan.pid
     claim_run_pidfile docs/p_plan.md
     [ "$(cat docs/p_plan.pid)" = "$$" ]
@@ -4545,13 +4537,11 @@ EOF
     : > docs/dead_plan.md
     sleep 30 &
     local live=$!
-    sleep 1 &
-    local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     register_run "$live" docs/live_plan.md
     register_run "$dead" docs/dead_plan.md
     run find_registered_runs
-    kill "$live" 2>/dev/null; wait "$live" 2>/dev/null || true
+    kill "$live" 2>/dev/null || true; wait "$live" 2>/dev/null || true
     [ "$output" = "$TEST_DIR/docs/live_plan" ]
     # The read is the only thing that sweeps the registry, so it has to prune.
     [ ! -f "$WIGGUM_REGISTRY_DIR/$dead" ]
@@ -4595,7 +4585,7 @@ EOF
     local pid=$!
     register_run "$pid" "$remote/docs/remote_plan.md"
     run collect_top_bases
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     rm -rf "$remote"
     [[ "$output" == *"docs/local_plan"* ]] || return 1
     [[ "$output" == *"$remote/docs/remote_plan"* ]] || return 1
@@ -4609,7 +4599,7 @@ EOF
     local pid=$!
     register_run "$pid" docs/dup_plan.md
     run collect_top_bases
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [ "${#lines[@]}" -eq 1 ]
     [ "$output" = "docs/dup_plan" ]
 }
@@ -4626,7 +4616,7 @@ EOF
     local pid=$!
     register_run "$pid" "$remote/docs/remote_plan.md"
     run collect_top_bases docs
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     rm -rf "$remote"
     [ "$output" = "docs/local_plan" ]
 }
@@ -4645,7 +4635,7 @@ EOF
     register_run "$pid" "$remote/docs/remote_plan.md"
     FILES=()
     run run_top
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [ "$status" -eq 0 ]
     # Absolute, because the row has to say which project it belongs to.
     [[ "$output" == *"$remote/docs/remote_plan.md"* ]] || return 1
@@ -4660,15 +4650,13 @@ EOF
     : > docs/r_plan.md
     sleep 30 &
     local live=$!
-    sleep 1 &
-    local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     register_run "$dead" docs/r_plan.md
     run registered_pid_for_base "$TEST_DIR/docs/r_plan"
     [ -z "$output" ]
     register_run "$live" docs/r_plan.md
     run registered_pid_for_base "$TEST_DIR/docs/r_plan"
-    kill "$live" 2>/dev/null; wait "$live" 2>/dev/null || true
+    kill "$live" 2>/dev/null || true; wait "$live" 2>/dev/null || true
     [ "$output" = "$live" ]
 }
 
@@ -4692,7 +4680,7 @@ EOF
     [ ! -f docs/orphan_plan.pid ]
     FILES=()
     run run_top
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [ "$status" -eq 0 ]
     [[ "$output" == *"docs/orphan_plan.md"* ]] || return 1
     [[ "$output" == *"$pid"* ]] || return 1
@@ -4703,9 +4691,7 @@ EOF
 @test "run_top: a stale pidfile with no registration still reads as finished" {
     mkdir -p docs
     printf -- '- [x] a\n' > docs/old_plan.md
-    sleep 1 &
-    local pid=$!
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    local pid="$(spawn_dead_pid)"
     echo "$pid" > docs/old_plan.pid
     printf 'Status: complete\n' > docs/old_plan.out
     FILES=()
@@ -4778,7 +4764,7 @@ EOF
     pid="$(cat docs/plan.pid)"
     [ "$(cat "$WIGGUM_REGISTRY_DIR/$pid")" = "$TEST_DIR/docs/plan" ]
     [ ! -f "$WIGGUM_REGISTRY_DIR/$$" ]
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     # Nothing unregisters a background run; the next read prunes it.
     run find_registered_runs
     [ -z "$output" ]
@@ -4796,7 +4782,7 @@ EOF
     FILES=(docs/plan.md)
     BACKGROUND=true
     run launch_execute_background
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [ "$status" -ne 0 ]
     [[ "$output" == *"already active"* ]] || return 1
 }
@@ -5319,7 +5305,7 @@ EOF
     echo "$pid" > docs/r_plan.pid
     FILES=()
     run run_top
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [ "$status" -eq 0 ]
     [[ "$output" == *"PLAN"* ]] || return 1
     [[ "$output" == *"docs/r_plan.md"* ]] || return 1
@@ -5334,9 +5320,7 @@ EOF
 - [x] a
 - [x] b
 EOF
-    sleep 1 &
-    local pid=$!
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    local pid="$(spawn_dead_pid)"
     echo "$pid" > docs/f_plan.pid
     printf 'Status: complete\n' > docs/f_plan.out
     FILES=()
@@ -5359,7 +5343,7 @@ EOF
         > docs/s_plan.scheduled
     FILES=()
     run run_top
-    kill "$waiter" 2>/dev/null; wait "$waiter" 2>/dev/null || true
+    kill "$waiter" 2>/dev/null || true; wait "$waiter" 2>/dev/null || true
     [ "$status" -eq 0 ]
     [[ "$output" == *"docs/s_plan.md"* ]] || return 1
     [[ "$output" == *"scheduled for"* ]] || return 1
@@ -5377,7 +5361,7 @@ EOF
     printf 'target=1\ntarget_human=then\nspec=01:07\npid=1\n' > docs/s_plan.scheduled
     FILES=()
     run run_top
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [[ "$output" == *"$pid"* ]] || return 1
     [[ "$output" == *"running"* ]] || return 1
     [[ "$output" != *"scheduled for"* ]] || return 1
@@ -5417,9 +5401,7 @@ EOF
 @test "run_top: running runs sort above finished ones" {
     mkdir -p docs
     printf -- '- [x] a\n' > docs/aaa_plan.md
-    sleep 1 &
-    local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     echo "$dead" > docs/aaa_plan.pid
     printf 'Status: complete\n' > docs/aaa_plan.out
     printf -- '- [ ] b\n' > docs/zzz_plan.md
@@ -5428,7 +5410,7 @@ EOF
     echo "$live" > docs/zzz_plan.pid
     FILES=()
     run run_top
-    kill "$live" 2>/dev/null; wait "$live" 2>/dev/null || true
+    kill "$live" 2>/dev/null || true; wait "$live" 2>/dev/null || true
     # Alphabetically aaa precedes zzz; by state the running one leads.
     local first
     first="$(printf '%s\n' "$output" | sed -n '2p')"
@@ -5474,9 +5456,7 @@ EOF
 @test "run_top: --json emits parseable records with null for what is absent" {
     mkdir -p docs
     printf -- '- [ ] a\n- [x] b\n' > docs/j_plan.md
-    sleep 1 &
-    local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     echo "$dead" > docs/j_plan.pid
     FILES=()
     TOP_JSON=true
@@ -5522,7 +5502,7 @@ EOF
     printf 'No progress detected (1 tasks remaining, stall 1 of 2).\n' > docs/b_plan.out
     FILES=()
     run run_top
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [[ "$output" == *"running (blocked)"* ]] || return 1
 }
 
@@ -6299,7 +6279,7 @@ EOF
     FILES=(docs/plan.md)
     AT_TIME="+90m"
     run launch_execute_delayed
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [ ! -f docs/plan.scheduled ]
     [[ "$output" == *"already active"* ]] || return 1
@@ -6329,7 +6309,7 @@ EOF
 EOF
     sleep 30 &
     local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    kill "$dead" 2>/dev/null || true; wait "$dead" 2>/dev/null || true
     printf 'target=%s\ntarget_human=old\npid=%s\nspec=01:07\n' "$((WIGGUM_TEST_NOW - 86400))" "$dead" \
         > docs/plan.scheduled
     FILES=(docs/plan.md)
@@ -6372,7 +6352,7 @@ EOF
 EOF
     sleep 30 &
     local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    kill "$dead" 2>/dev/null || true; wait "$dead" 2>/dev/null || true
     echo "$dead" > docs/plan.pid
     FILES=(docs/plan.md)
     AT_TIME="+90m"
@@ -6917,6 +6897,18 @@ inode_of() {
     ls -i "$1" | awk '{print $1}'
 }
 
+# A pid that has certainly exited. `sleep 1 &` then `kill` is the pattern this
+# suite grew up with, and under load the sleep sometimes wins the race, leaving
+# `kill` to fail the test it was cleaning up after.
+spawn_dead_pid() {
+    local pid
+    sleep 30 &
+    pid=$!
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    printf '%s\n' "$pid"
+}
+
 @test "install: an upgrade swaps the file, leaving a run that holds it open alone" {
     # bash reads a script by byte offset as it goes, and a wiggum run holds its
     # script open for hours. Rewriting that inode in place moves every offset
@@ -7119,13 +7111,11 @@ stub_ps_tree() {
     local pid=$!
     echo "$pid" > docs/live_plan.pid
     local dead
-    sleep 1 &
-    dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    dead="$(spawn_dead_pid)"
     echo "$dead" > docs/over_plan.pid
     FILES=()
     run run_top
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
 
     [ "$status" -eq 0 ] || return 1
     [[ "$output" == *"RSS"* && "$output" == *"CPU"* ]] || return 1
@@ -7142,9 +7132,7 @@ stub_ps_tree() {
 @test "run_top: --json carries rss_kb and cpu_percent, null when nothing is live" {
     mkdir -p docs
     printf -- '- [ ] a\n' > docs/jr_plan.md
-    sleep 1 &
-    local dead=$!
-    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    local dead="$(spawn_dead_pid)"
     echo "$dead" > docs/jr_plan.pid
     FILES=()
     TOP_JSON=true
@@ -7164,7 +7152,7 @@ stub_ps_tree() {
     FILES=()
     TOP_JSON=true
     run run_top
-    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
     printf '%s' "$output" | python3 -c "
 import json,sys
 d = json.load(sys.stdin)
