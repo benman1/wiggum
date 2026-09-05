@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wiggum — a self-driving agent loop for Claude Code</title>
+<meta name="description" content="Wiggum turns an issue into a planned, verified, committed change. It plans, implements, runs your own verify steps, fixes what fails, and commits — from one shell command.">
+<meta property="og:title" content="wiggum">
+<meta property="og:description" content="A self-driving agent loop for Claude Code. Plans, implements, verifies with your tools, self-heals, commits.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23131c28'/><path d='M8 16.5l5 5 11-11' stroke='%2357a97b' stroke-width='3.4' fill='none' stroke-linecap='square'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ground:  #131c28;
+    --surface: #1b2635;
+    --paper:   #e9eef3;
+    --paper-2: #d7e0ea;
+    --text:    #ccd8e6;
+    --bright:  #f2f7fc;
+    --dim:     #7e93ab;
+    --rule:    #2c3b4f;
+    --done:    #57a97b;
+    --blocked: #d9a441;
+    --live:    #6aa6d6;
+
+    --sans: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+    --gap: clamp(3.5rem, 8vw, 6.5rem);
+    --pad: clamp(1.25rem, 5vw, 3rem);
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    width: 100%;
+    max-width: 68rem;
+    margin: 0 auto;
+    padding-inline: var(--pad);
+  }
+
+  a { color: var(--bright); text-decoration-color: var(--dim); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--live); }
+  :focus-visible { outline: 2px solid var(--live); outline-offset: 3px; }
+
+  p { max-width: 64ch; }
+
+  /* ── header ─────────────────────────────────────────────────── */
+  .top { border-bottom: 1px solid var(--rule); }
+  .top > .wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 2rem;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-block: 1.5rem;
+  }
+  .mark {
+    font-family: var(--mono);
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--bright);
+    letter-spacing: -0.01em;
+  }
+  .mark .box { color: var(--done); }
+  .top nav {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.9rem;
+  }
+  .top nav a { color: var(--dim); text-decoration: none; }
+  .top nav a:hover { color: var(--bright); }
+
+  /* ── hero ───────────────────────────────────────────────────── */
+  .hero { padding-block: var(--gap) calc(var(--gap) * 0.7); }
+
+  h1 {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: clamp(2.4rem, 7.5vw, 4.6rem);
+    line-height: 1.04;
+    letter-spacing: -0.035em;
+    color: var(--bright);
+    margin: 0 0 1.5rem;
+    max-width: 18ch;
+  }
+  .lede {
+    font-size: clamp(1.06rem, 2.2vw, 1.3rem);
+    line-height: 1.55;
+    color: var(--text);
+    margin: 0 0 2.5rem;
+    max-width: 56ch;
+  }
+
+  /* ── the two panes ──────────────────────────────────────────── */
+  .panes {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    align-items: start;
+  }
+  @media (min-width: 60rem) {
+    .panes { grid-template-columns: 1.05fr 1fr; gap: 1.75rem; }
+  }
+
+  .pane {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    overflow: hidden;
+  }
+  .pane-name {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--dim);
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--rule);
+    background: var(--ground);
+  }
+  .pane-body {
+    font-family: var(--mono);
+    font-size: 0.83rem;
+    line-height: 1.95;
+    padding: 1rem;
+    overflow-x: auto;
+  }
+
+  .pane--plan { background: var(--paper); }
+  .pane--plan .pane-name { background: var(--paper-2); color: #4a5a6d; border-bottom-color: #c2cedb; }
+  .pane--plan .pane-body { color: #26303d; }
+
+  .task { white-space: nowrap; }
+  .task .tick { color: #8c9aa9; }
+  .task .txt { transition: color 0.25s ease; }
+  .task.is-done .tick { color: var(--done); font-weight: 600; }
+  .task.is-done .txt { color: #6d7b8a; text-decoration: line-through; text-decoration-color: #b3bfcc; }
+
+  .commit { white-space: nowrap; opacity: 0; transform: translateY(0.35rem); }
+  .commit.is-in { opacity: 1; transform: none; transition: opacity 0.35s ease, transform 0.35s ease; }
+  .commit .sha { color: var(--blocked); }
+  .commit .msg { color: var(--text); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .task .txt, .commit { transition: none; }
+    .commit { opacity: 1; transform: none; }
+  }
+
+  /* ── install ────────────────────────────────────────────────── */
+  .install { margin-top: 2.5rem; }
+  .cmd {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    padding: 0.85rem 1rem;
+    font-family: var(--mono);
+    font-size: 0.86rem;
+    overflow-x: auto;
+  }
+  .cmd .prompt { color: var(--done); user-select: none; }
+  .cmd code { color: var(--bright); white-space: nowrap; }
+  .copy {
+    margin-left: auto;
+    flex: none;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    color: var(--dim);
+    background: none;
+    border: 1px solid var(--rule);
+    padding: 0.3rem 0.6rem;
+    cursor: pointer;
+  }
+  .copy:hover { color: var(--bright); border-color: var(--dim); }
+  .note { font-size: 0.88rem; color: var(--dim); margin-top: 0.85rem; }
+
+  /* ── sections ───────────────────────────────────────────────── */
+  section { padding-block: var(--gap); border-top: 1px solid var(--rule); }
+  h2 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: clamp(1.5rem, 3.4vw, 2.05rem);
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    color: var(--bright);
+    margin: 0 0 0.9rem;
+    max-width: 22ch;
+  }
+  .sub { color: var(--dim); margin: 0 0 2.5rem; }
+
+  /* ── phases ─────────────────────────────────────────────────── */
+  .phases { display: grid; gap: 0; }
+  .phase {
+    display: grid;
+    grid-template-columns: 3.5rem 1fr;
+    gap: 0 1.25rem;
+    padding-block: 1.5rem;
+    border-top: 1px solid var(--rule);
+  }
+  .phase:first-child { border-top: none; }
+  .phase .n {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--dim);
+    padding-top: 0.35rem;
+  }
+  .phase h3 {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--bright);
+    margin: 0 0 0.35rem;
+  }
+  .phase p { margin: 0; color: var(--text); }
+  .phase .loop {
+    grid-column: 2;
+    margin-top: 0.6rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--blocked);
+  }
+  @media (max-width: 34rem) {
+    .phase { grid-template-columns: 1fr; gap: 0.35rem; }
+    .phase .loop { grid-column: 1; }
+  }
+
+  /* ── config split ───────────────────────────────────────────── */
+  .split { display: grid; grid-template-columns: 1fr; gap: 2rem; align-items: start; }
+  @media (min-width: 56rem) { .split { grid-template-columns: 1fr 1fr; gap: 3rem; } }
+
+  .file {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    font-family: var(--mono);
+    font-size: 0.83rem;
+    line-height: 1.9;
+    overflow-x: auto;
+  }
+  .file .pane-name { background: var(--ground); }
+  .file .body { padding: 1rem; }
+  .file .k { color: var(--live); }
+  .file .c { color: var(--dim); }
+
+  .stack { display: grid; gap: 1.5rem; }
+  .stack h3 { font-size: 1rem; font-weight: 600; color: var(--bright); margin: 0 0 0.3rem; }
+  .stack p { margin: 0; font-size: 0.96rem; }
+
+  /* ── top table ──────────────────────────────────────────────── */
+  .term {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    line-height: 1.95;
+    overflow-x: auto;
+  }
+  .term .body { padding: 1rem; }
+  .term pre { margin: 0; }
+  .term .hdr { color: var(--dim); }
+  .term .run { color: var(--live); }
+  .term .ok { color: var(--done); }
+  .term .warn { color: var(--blocked); }
+  .term .path { color: var(--bright); }
+
+  .cmds { margin-top: 2rem; display: grid; gap: 0.9rem; }
+  .cmds div { display: grid; grid-template-columns: 12.5rem 1fr; gap: 1.25rem; align-items: baseline; }
+  .cmds code {
+    font-family: var(--mono);
+    font-size: 0.83rem;
+    color: var(--bright);
+    white-space: nowrap;
+  }
+  .cmds span { color: var(--text); font-size: 0.95rem; }
+  @media (max-width: 40rem) {
+    .cmds div { grid-template-columns: 1fr; gap: 0.15rem; }
+    .cmds code { white-space: normal; }
+  }
+
+  /* ── requirements ───────────────────────────────────────────── */
+  .reqs { display: grid; gap: 0.6rem; margin: 2.5rem 0 0; padding: 0; list-style: none; }
+  .reqs li { display: flex; gap: 0.8rem; }
+  .reqs .tick { color: var(--done); font-family: var(--mono); flex: none; }
+
+  /* ── footer ─────────────────────────────────────────────────── */
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-block: 2.5rem 4rem;
+    color: var(--dim);
+    font-size: 0.88rem;
+  }
+  footer .row { display: flex; flex-wrap: wrap; gap: 0.75rem 2rem; justify-content: space-between; }
+  footer .links { display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="mark"><span class="box">- [x]</span> wiggum</div>
+    <nav>
+      <a href="#loop">How it runs</a>
+      <a href="#verify">Verification</a>
+      <a href="#supervise">Supervision</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/benman1/wiggum">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <h1>Start it. Read the diff when it's done.</h1>
+    <p class="lede">
+      Wiggum wraps Claude Code in a loop that plans a change, implements it one task
+      at a time, runs your project's own verify commands, fixes what fails, and commits
+      as it goes. You start it from the shell and read the diff when it's done.
+    </p>
+
+    <div class="panes">
+      <div class="pane pane--plan">
+        <div class="pane-name">docs/csv-export_plan.md</div>
+        <div class="pane-body" id="plan">
+          <div class="task" data-i="0"><span class="tick">- [ ]</span> <span class="txt">Add a CSV serializer for report rows</span></div>
+          <div class="task" data-i="1"><span class="tick">- [ ]</span> <span class="txt">Stream the export instead of buffering</span></div>
+          <div class="task" data-i="2"><span class="tick">- [ ]</span> <span class="txt">Wire the download button to the endpoint</span></div>
+          <div class="task" data-i="3"><span class="tick">- [ ]</span> <span class="txt">Cover empty and 10k-row reports</span></div>
+        </div>
+      </div>
+
+      <div class="pane">
+        <div class="pane-name">git log --oneline</div>
+        <div class="pane-body" id="log">
+          <div class="commit" data-i="0"><span class="sha">4e91c2a</span> <span class="msg">serialize report rows as CSV</span></div>
+          <div class="commit" data-i="1"><span class="sha">b7d0f18</span> <span class="msg">stream the export rather than buffering it</span></div>
+          <div class="commit" data-i="2"><span class="sha">1a5c86e</span> <span class="msg">wire the download button to the export endpoint</span></div>
+          <div class="commit" data-i="3"><span class="sha">93fb204</span> <span class="msg">cover empty and large report exports</span></div>
+          <div class="commit" data-i="4"><span class="sha">c02e7dd</span> <span class="msg">summarize the CSV export run</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="install">
+      <div class="cmd">
+        <span class="prompt">$</span>
+        <code>wiggum plan issues/csv-export.md &amp;&amp; wiggum execute docs/csv-export_plan.md</code>
+      </div>
+      <p class="note">Two commands. Read the plan in between and edit it — it's just markdown checkboxes.</p>
+    </div>
+  </div>
+
+  <!-- ── the loop ─────────────────────────────────────────────── -->
+  <section id="loop">
+    <div class="wrap">
+      <h2>What a run actually does</h2>
+      <p class="sub">Four phases, in order. Wiggum prints them as it goes, so you can read a run's log and know where it stopped.</p>
+
+      <div class="phases">
+        <div class="phase">
+          <div class="n">Phase 1</div>
+          <div>
+            <h3>Diagnostic &amp; status sync</h3>
+            <p>Reads the repository against the plan and ticks off anything already done. Re-running a plan is cheap because this phase reconciles it first.</p>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="n">Phase 2</div>
+          <div>
+            <h3>Implement, verify, fix</h3>
+            <p>One task per iteration. After each, your verify commands run in order; a failure goes back to Claude with the error output until it passes or the retry budget runs out. Then it commits.</p>
+          </div>
+          <div class="loop">↺ repeats until the boxes are ticked, the run stalls, or it hits max_iterations</div>
+        </div>
+
+        <div class="phase">
+          <div class="n">Phase 3</div>
+          <div>
+            <h3>Summary &amp; alignment</h3>
+            <p>Reconciles the plan against what was built, writes a summary of what landed, what was deferred, and why the run stopped.</p>
+          </div>
+        </div>
+
+        <div class="phase">
+          <div class="n">Phase 4</div>
+          <div>
+            <h3>Documentation update</h3>
+            <p>Optional. Pass <code>--update-docs</code> and it revises the files you name against what changed.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── verification ─────────────────────────────────────────── -->
+  <section id="verify">
+    <div class="wrap">
+      <h2>It verifies with your tools, not its own opinion</h2>
+      <p class="sub">Wiggum has no idea whether your code is correct. It runs the commands you already trust and reads their exit codes.</p>
+
+      <div class="split">
+        <div class="file">
+          <div class="pane-name">.wiggumrc</div>
+          <div class="body">
+<span class="c"># wiggum's own config, verifying wiggum</span><br>
+<span class="k">verify</span> = shellcheck -s bash lib/wiggum.sh<br>
+<span class="k">verify</span> = bats test/wiggum.bats<br>
+<span class="k">autofix</span> = shfmt -w .<br>
+<br>
+<span class="k">max_iterations</span> = 30<br>
+<span class="k">max_validation_retries</span> = 5
+          </div>
+        </div>
+
+        <div class="stack">
+          <div>
+            <h3>A waterfall, not a checklist</h3>
+            <p>Steps run in the order you write them and stop at the first failure, so a type error never costs you a full test run.</p>
+          </div>
+          <div>
+            <h3>Autofix runs first</h3>
+            <p>An <code>autofix</code> step gets one chance to correct itself before Claude is asked to look at it. Formatters fix formatting; Claude fixes logic.</p>
+          </div>
+          <div>
+            <h3>Retries are capped</h3>
+            <p>A step that can't be fixed stops the run instead of burning tokens against it. <code>wiggum check</code> runs the same waterfall on demand.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── supervision ──────────────────────────────────────────── -->
+  <section id="supervise">
+    <div class="wrap">
+      <h2>Start it, walk away, keep watch</h2>
+      <p class="sub">Runs last hours. <code>wiggum top</code> lists every run on the machine — whichever project it was started from.</p>
+
+      <div class="term">
+        <div class="pane-name">$ wiggum top</div>
+        <div class="body"><pre><span class="hdr">PLAN                                     PID      STATE                TASKS</span>
+<span class="path">/Users/me/api/docs/rate-limit_plan.md</span>    8123     <span class="run">running</span>              3/9 done, 6 left
+docs/csv-export_plan.md                  519      <span class="run">running</span>              4/12 done, 8 left
+docs/onboarding_plan.md                  621      <span class="warn">running (blocked)</span>    2/7 done, 5 left
+docs/auth-hardening_plan.md              -        <span class="ok">finished: complete</span>   9/9 done</pre></div>
+      </div>
+
+      <div class="cmds">
+        <div><code>wiggum execute &lt;plan&gt; -b</code><span>Run detached and get the shell back.</span></div>
+        <div><code>wiggum watch &lt;plan&gt;</code><span>Stream a run's output and block until it finishes.</span></div>
+        <div><code>wiggum kill &lt;plan&gt;</code><span>Stop that run's process tree, and nothing else.</span></div>
+        <div><code>wiggum chain &lt;a&gt; &lt;b&gt; &lt;c&gt;</code><span>Run plans back to back, stopping at the first failure.</span></div>
+        <div><code>wiggum execute &lt;plan&gt; --at 01:07</code><span>Start it tonight. No cron, no wake lock.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── install ──────────────────────────────────────────────── -->
+  <section id="install">
+    <div class="wrap">
+      <h2>Install</h2>
+      <p class="sub">One script. It copies the library, symlinks the CLI, and installs the <code>/wiggum</code> skill for Claude Code.</p>
+
+      <div class="cmd">
+        <span class="prompt">$</span>
+        <code id="install-cmd">git clone https://github.com/benman1/wiggum.git &amp;&amp; cd wiggum &amp;&amp; ./install.sh</code>
+        <button class="copy" type="button" data-copy="install-cmd">copy</button>
+      </div>
+      <p class="note">Then <code>wiggum init</code> in any project to generate a <code>.wiggumrc</code> from what it finds there.</p>
+
+      <ul class="reqs">
+        <li><span class="tick">- [x]</span> <span>Claude Code CLI, installed and authenticated</span></li>
+        <li><span class="tick">- [x]</span> <span>Bash 4 or newer</span></li>
+        <li><span class="tick">- [x]</span> <span>A git repository to work in</span></li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap row">
+    <div>Wiggum is a shell script. Read it before you trust it with your repository. MIT licensed.</div>
+    <div class="links">
+      <a href="https://github.com/benman1/wiggum">github.com/benman1/wiggum</a>
+      <a href="https://www.chelseaai.co.uk/">chelseaai.co.uk</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var tasks = Array.prototype.slice.call(document.querySelectorAll('.task'));
+  var commits = Array.prototype.slice.call(document.querySelectorAll('.commit'));
+  var still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function finish() {
+    tasks.forEach(function (t) { t.classList.add('is-done'); });
+    commits.forEach(function (c) { c.classList.add('is-in'); });
+  }
+
+  if (still) { finish(); return; }
+
+  // One orchestrated pass: each task ticks, its commit lands, then the next.
+  var step = 0;
+  function advance() {
+    if (step >= tasks.length) {
+      commits[commits.length - 1].classList.add('is-in');
+      return;
+    }
+    tasks[step].classList.add('is-done');
+    commits[step].classList.add('is-in');
+    step += 1;
+    setTimeout(advance, 620);
+  }
+  setTimeout(advance, 700);
+})();
+
+document.addEventListener('click', function (e) {
+  var btn = e.target.closest('[data-copy]');
+  if (!btn) return;
+  var src = document.getElementById(btn.getAttribute('data-copy'));
+  if (!src || !navigator.clipboard) return;
+  navigator.clipboard.writeText(src.textContent.trim()).then(function () {
+    var was = btn.textContent;
+    btn.textContent = 'copied';
+    setTimeout(function () { btn.textContent = was; }, 1600);
+  });
+});
+</script>
+</body>
+</html>
