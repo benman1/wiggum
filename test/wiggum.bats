@@ -7667,3 +7667,31 @@ register_fake_run() {
     missing="$(undocumented_surfaces "--chain" "watch")"
     [ -z "$missing" ]
 }
+
+@test "run_slice_start_line: the line the current run's output starts after" {
+    printf 'old line\n%s A ---\nnewer\n%s B ---\ncurrent\n' \
+        "$WIGGUM_RUN_SEPARATOR_PREFIX" "$WIGGUM_RUN_SEPARATOR_PREFIX" > out.txt
+    [ "$(run_slice_start_line out.txt)" = "3" ] || return 1
+    printf 'no separator here\n' > plain.txt
+    [ "$(run_slice_start_line plain.txt)" = "0" ] || return 1
+    [ "$(run_slice_start_line missing.txt)" = "0" ]
+}
+
+@test "run_watch_chain: starts at the current run, not the whole log history" {
+    # A chain watcher attaches to a plan mid-flight, and `.log` accumulates
+    # across runs: without a cursor it replays every earlier run of that plan
+    # before showing anything current.
+    sleep 30 &
+    local live=$!
+    register_fake_run "$live" "$TEST_DIR/a_plan"
+    printf 'ancient history\n%s 2026-09-05 20:38:09 ---\nhappening now\n' \
+        "$WIGGUM_RUN_SEPARATOR_PREFIX" > a_plan.log
+    FILES=()
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    run run_watch_chain
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [[ "$output" == *"happening now"* ]] || return 1
+    [[ "$output" != *"ancient history"* ]] || return 1
+}
