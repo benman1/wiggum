@@ -3346,6 +3346,30 @@ find_registered_runs() {
     return 0
 }
 
+# The live pid a base path is registered under, if any.
+#
+# Splits the two jobs the sidecars were doing at once: the `.pid` next to a plan
+# says *where* a run is, the registry says *whether it is alive*. They are
+# written together, so normally either answers both -- but a run whose sidecar
+# went missing under it is still a run, and reporting it as "not running" is the
+# exact failure `top` exists to prevent. The registry is the authority on
+# liveness; the sidecar is preferred only because it is the cheaper read.
+registered_pid_for_base() {
+    local want="$1"
+    [[ -n "$want" && -d "$WIGGUM_REGISTRY_DIR" ]] || return 0
+    local f pid
+    for f in "$WIGGUM_REGISTRY_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        [[ "$(head -n1 "$f")" == "$want" ]] || continue
+        pid="$(basename "$f")"
+        if process_alive "$pid"; then
+            printf '%s\n' "$pid"
+            return 0
+        fi
+    done
+    return 0
+}
+
 # Drop a run's registry entry. Takes the pid it was filed under, which is not
 # always `$$`: launch_execute_background files its detached child under the
 # child's pid.
@@ -4118,6 +4142,11 @@ top_row() {
     local pid="" pid_display state
     if [[ -f "$pidfile" ]]; then
         pid="$(tr -d '[:space:]' < "$pidfile")"
+    fi
+    # No live sidecar is not the same as no live run: ask the registry before
+    # concluding the run is over.
+    if ! process_alive "$pid"; then
+        pid="$(registered_pid_for_base "$(absolute_run_base "$plan")")"
     fi
     # A live pidfile outranks a schedule (the waiter fired between the two
     # reads); a dead one does not, because scheduling over a finished run's

@@ -4643,6 +4643,64 @@ EOF
     rm -rf "$remote"
 }
 
+@test "registered_pid_for_base: finds the live pid, ignores a dead entry" {
+    mkdir -p docs
+    : > docs/r_plan.md
+    sleep 30 &
+    local live=$!
+    sleep 1 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    register_run "$dead" docs/r_plan.md
+    run registered_pid_for_base "$TEST_DIR/docs/r_plan"
+    [ -z "$output" ]
+    register_run "$live" docs/r_plan.md
+    run registered_pid_for_base "$TEST_DIR/docs/r_plan"
+    kill "$live" 2>/dev/null; wait "$live" 2>/dev/null || true
+    [ "$output" = "$live" ]
+}
+
+@test "registered_pid_for_base: nothing for an unregistered plan" {
+    run registered_pid_for_base "$TEST_DIR/docs/never_plan"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "run_top: a registered run with no pidfile still reads as running" {
+    mkdir -p docs
+    cat > docs/orphan_plan.md <<'EOF'
+- [ ] a
+- [x] b
+EOF
+    # The sidecar is the cheaper read, but it is not the authority: a run whose
+    # `.pid` went missing under it is still a run.
+    sleep 30 &
+    local pid=$!
+    register_run "$pid" docs/orphan_plan.md
+    [ ! -f docs/orphan_plan.pid ]
+    FILES=()
+    run run_top
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"docs/orphan_plan.md"* ]] || return 1
+    [[ "$output" == *"$pid"* ]] || return 1
+    [[ "$output" == *"running"* ]] || return 1
+    [[ "$output" == *"1/2 done, 1 left"* ]] || return 1
+}
+
+@test "run_top: a stale pidfile with no registration still reads as finished" {
+    mkdir -p docs
+    printf -- '- [x] a\n' > docs/old_plan.md
+    sleep 1 &
+    local pid=$!
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    echo "$pid" > docs/old_plan.pid
+    printf 'Status: complete\n' > docs/old_plan.out
+    FILES=()
+    run run_top
+    [[ "$output" == *"finished: complete"* ]] || return 1
+}
+
 @test "run_top: says so when the machine has nothing running anywhere" {
     FILES=()
     run run_top
