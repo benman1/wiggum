@@ -41,7 +41,7 @@ wiggum_reset() {
     FILES=()
     PLAN_FILE=""
     SUMMARY_FILE=""
-    MAX_ITERATIONS=15
+    MAX_ITERATIONS=30
     MAX_VALIDATION_RETRIES=5
     MAX_STALL_COUNT=2
     CLAUDE_RETRIES=2
@@ -478,7 +478,7 @@ Usage:
   wiggum plan issue.md | wiggum execute
 
 Options:
-  --max-iterations <n>          Maximum implementation iterations (default: 15)
+  --max-iterations <n>          Maximum implementation iterations (default: 30)
   --max-validation-retries <n>  Max fix attempts per verification step (default: 5)
   --claude-retries <n>          Retries when a claude session dies mid-run,
                                 e.g. a dropped connection (default: 2; 0 disables)
@@ -1283,7 +1283,7 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-max_iterations = 15
+max_iterations = 30
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1295,7 +1295,7 @@ verify = npm test
 verify = npm run build
 autofix = npm run lint -- --fix
 
-max_iterations = 15
+max_iterations = 30
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1305,7 +1305,7 @@ RCEOF
 autofix = ruff format . && ruff check --fix .
 verify = pytest
 
-max_iterations = 15
+max_iterations = 30
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1317,7 +1317,7 @@ verify = npm test
 verify = npm run build
 autofix = npx prettier --write .
 
-max_iterations = 15
+max_iterations = 30
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1327,7 +1327,7 @@ RCEOF
 verify = shellcheck -s bash *.sh **/*.sh
 verify = bats test/
 
-max_iterations = 15
+max_iterations = 30
 max_validation_retries = 5
 RCEOF
             ;;
@@ -1838,12 +1838,12 @@ active, stop, activate it, and relaunch.
 **Size the iteration budget to the plan, on the FIRST launch.** An iteration
 completes roughly one task, so a run needs at least as many iterations as the plan
 has open checkboxes, plus headroom for the ones that need a second pass. The
-default is **3** — from `--max-iterations`'s built-in default, the `max_iterations`
+default is **30** — from `--max-iterations`'s built-in default, the `max_iterations`
 in the `.wiggumrc` templates wiggum generates, or a `.wiggumrc` written for an
-older, smaller plan — and it is almost always wrong for a real workplan. A 3-
-iteration budget on an 11-task plan does not fail loudly; it stops `incomplete`
-about a quarter of the way in, which reads like a stall and costs a supervise
-cycle to diagnose.
+older, smaller plan — and a config written for a smaller plan is almost always
+wrong for a real workplan. An undersized budget — 3 iterations on an 11-task plan
+— does not fail loudly; it stops `incomplete` about a quarter of the way in, which
+reads like a stall and costs a supervise cycle to diagnose.
 
 So count the boxes and pass the flag explicitly — **always**, even when
 `.wiggumrc` already sets `max_iterations`, because the flag overrides it and you
