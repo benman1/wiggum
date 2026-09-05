@@ -5081,6 +5081,31 @@ EOF
     [ ! -f b.pid ]
 }
 
+@test "run_chain: the registry follows the chain, not the plan it started on" {
+    # The sidecar test above proves the `.pid` moves. `top` reads the *registry*
+    # for a chain, and a stale entry there is exactly what makes it name a plan
+    # the chain finished an hour ago while reporting the live process's numbers
+    # against it.
+    cat > a.md <<'EOF'
+- [ ] a
+EOF
+    cat > b.md <<'EOF'
+- [ ] b
+EOF
+    run_execute() {
+        claim_run_pidfile "${FILES[0]}"
+        head -n1 "$WIGGUM_REGISTRY_DIR/$$" >> seen
+        release_run_pidfile
+        return 0
+    }
+    FILES=(a.md b.md)
+    run_chain >/dev/null 2>&1
+    [ "$(sed -n 1p seen)" = "$TEST_DIR/a" ] || return 1
+    [ "$(sed -n 2p seen)" = "$TEST_DIR/b" ] || return 1
+    # And the chain leaves nothing behind claiming either plan.
+    [ -z "$(ls -A "$WIGGUM_REGISTRY_DIR" 2>/dev/null)" ]
+}
+
 @test "run_chain: a plan that unwinds mid-run does not keep its claim" {
     cat > a.md <<'EOF'
 - [ ] a
