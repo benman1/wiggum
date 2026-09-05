@@ -327,7 +327,7 @@ Every supervision command refers to a run **by its plan file** and derives those
 | `wiggum status docs/plan.md` | Print task counts and run state: `not started`, `running`, `running but appears blocked`, or `finished: <reason>`. Read-only. |
 | `wiggum watch docs/plan.md` | Stream the run's output and **block until it finishes** — wiggum's "wait". Exits 0 only when the run finished `complete`. |
 | `wiggum kill docs/plan.md` | Stop the run — and only this run's process tree (the wiggum process and the `claude` it spawned). Never a blanket kill. |
-| `wiggum top` | An at-a-glance overview of every run at once: one line per known run (anything with a `.pid` sidecar) — plan, pid, state, and task tally. Read-only. |
+| `wiggum top` | An at-a-glance overview of every run at once: one line per known run (anything with a `.pid` or `.scheduled` sidecar) — plan, pid, state, and task tally. Read-only. |
 
 Unlike `status` (one plan), `wiggum top` surveys **every** run at once — handy when several are running or chained:
 
@@ -339,7 +339,9 @@ docs/api_plan.md                         -        finished: complete   9/9 done
 docs/ui_plan.md                          621      running (blocked)    2/7 done, 5 left
 ```
 
-With no arguments it scans `docs/` and the current directory; pass directories, plan files, or pidfiles to widen or narrow the scan. (`watch`/`kill` clear a run's `.pid` when it ends, so a run watched to completion drops off the list; an unwatched background run lingers as `finished: <reason>`.)
+Every run registers a pidfile while it works — foreground and background alike — so a plan running inside `wiggum chain` appears here too, as the row for whichever plan the chain is on right now. A scheduled run appears as `scheduled for <time>`.
+
+With no arguments it scans `docs/` and the current directory; pass directories, plan files, or sidecars to widen or narrow the scan. (A run drops its own pidfile when it ends, and `watch`/`kill` clear one too, so a finished foreground or chained run drops off the list; an unwatched background run lingers as `finished: <reason>`.)
 
 `watch` can bound a run so a wedged loop can't hang forever:
 
@@ -411,7 +413,7 @@ Cancelling the wiggum run scheduled for 01:07:00 tomorrow (waiter pid 41207)...
 
 - `wiggum status <plan>` reports `scheduled for <time> (in <duration>)` while it waits, then the ordinary `running` / `finished: <reason>` states once it fires. A scheduled run never reads as `running`.
 - `wiggum kill <plan>` **cancels** the schedule — it says "cancelled", not "killed", because nothing ran and there is no output to go looking for. It signals only the waiter's recorded pid, never a pattern match.
-- `wiggum top` and `wiggum watch` only know about runs that have started (they key off the `.pid` sidecar), so a run that is still waiting shows up in `status`, not in those.
+- `wiggum watch` only knows about runs that have started (it keys off the `.pid` sidecar), so a run that is still waiting shows up in `status` and `top`, not in `watch`.
 
 The pending schedule lives in one sidecar, `docs/plan.scheduled`, next to the plan; it is removed when the run fires or is cancelled.
 
@@ -1077,9 +1079,10 @@ On macOS, `launchd` is more reliable than cron for user agents — it survives r
 | `execute` | `<dir>/<basename>_summary.md` | `--summary-file` |
 | `execute` (stdin) | `docs/stdin_summary.md` | `--summary-file` |
 | `execute`/`plan`/`docs` | `<dir>/<basename>.log` | *(always created)* |
+| `execute` | `<dir>/<basename>.pid` | *(always created; removed when the run ends)* |
 | `execute --background` | `<dir>/<basename>.pid`, `<dir>/<basename>.out` | *(always created)* |
 
-The directory and basename are derived from the first input file. When reading from stdin, files default to `docs/`. The background sidecars (`.pid`, `.out`) sit next to the plan and are how `status`/`watch`/`kill` find a detached run; `watch` removes the `.pid` once the run finishes. For example:
+The directory and basename are derived from the first input file. When reading from stdin, files default to `docs/`. The sidecars sit next to the plan and are how `status`/`watch`/`kill`/`top` find a run. Every run writes a `.pid` while it is working; a foreground run removes its own when it ends, while a background run's is left behind (its `.out` holds the final status) until `watch`/`kill` clear it. For example:
 
 ```
 wiggum plan docs/auth-issue.md
@@ -1156,7 +1159,7 @@ screen -dmS wig1 bash -lc 'conda activate myenv; \
   exec wiggum execute docs/plan.md --max-iterations 12 >> docs/plan.out 2>&1'
 ```
 
-No `--background` here: the multiplexer provides the durability, and a daemonizing child would let its session exit immediately and take the run with it. The trade-off is that a foreground run writes no `.pid`, so `wiggum status` cannot find the process. Task counts still work (they come from the plan's checkboxes); for liveness use `screen -ls`, or capture the PID and check it with `kill -0 <pid>` — the same primitive wiggum's own `process_alive()` uses.
+No `--background` here: the multiplexer provides the durability, and a daemonizing child would let its session exit immediately and take the run with it. A foreground run still writes a `.pid` while it works, so `wiggum status` and `wiggum top` can find it — it just clears the sidecar when it ends rather than leaving a `finished:` row behind. For liveness across a whole `screen` session (which outlives any one plan) use `screen -ls`, or capture the PID and check it with `kill -0 <pid>` — the same primitive wiggum's own `process_alive()` uses.
 
 Prefer that PID check over matching command lines. `pgrep -f` *errors* (rather than returning empty) if any unrelated process on the machine has non-UTF-8 bytes in its command line, and `ps -eo pid,command` truncates to the terminal width, so in a background context the string you are matching can be cut off. Both failures look identical to "the job finished", so a `until ! <check>` waiter fires early. Confirm a completion by the artifact it was supposed to produce, never by the absence of a process alone.
 

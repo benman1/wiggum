@@ -57,6 +57,10 @@ wiggum_reset() {
     UPDATE_DOCS=()
     DOCS_INPUT=()
     DOCS_OUTPUT=()
+    # The `.pid` sidecar this run claimed, if it claimed one. Empty means
+    # unclaimed: the run has not started, or a launcher already wrote the
+    # sidecar on its behalf and this process must not touch it.
+    WIGGUM_RUN_PIDFILE=""
     WIGGUM_LOG_FILE=""
     STDIN_FILE=""
     CLI_PLAN_FILE=""
@@ -595,17 +599,22 @@ wiggum top - List every known wiggum run at a glance
 Usage:
   wiggum top [dirs-or-plans...]
 
-Scans for run sidecars (a '.pid' next to each plan) and prints one line per run:
-the plan, its pid (or '-' if not running), its state (running / running
-(blocked) / finished: <reason> / not running), and a task tally. Read-only --
-never starts or stops anything.
+Scans for run sidecars (a '.pid' or '.scheduled' next to each plan) and prints
+one line per run: the plan, its pid (or '-' if not running), its state (running
+/ running (blocked) / scheduled for <time> / finished: <reason> / not running),
+and a task tally. Read-only -- never starts or stops anything.
 
 With no arguments it scans 'docs/' and the current directory. Each argument may
-be a directory (scanned for '*.pid'), a plan file (its sidecar), or a pidfile.
+be a directory (scanned for '*.pid' and '*.scheduled'), a plan file (its
+sidecars), or a sidecar itself.
 
-Note: 'watch' and 'kill' remove a run's pidfile when it ends, so a run that was
-watched to completion won't appear; an unwatched background run lingers as
-'finished: <reason>' until its next run.
+Every run registers a pidfile while it works, foreground and background alike,
+so a plan running inside 'wiggum chain' shows up here too -- as the row for the
+plan the chain is on right now.
+
+Note: a run drops its own pidfile when it ends, and 'watch'/'kill' clear one
+too, so a finished foreground or chained run won't appear. An unwatched
+background run lingers as 'finished: <reason>' until its next run.
 
 Examples:
   wiggum top
@@ -1638,6 +1647,15 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 - Out of scope: <what it deliberately will not do>
 - Never do: <actions that would be wrong here>
 
+## The shape of it
+```mermaid
+flowchart TD
+    A["what somebody does"] --> B{"the decision<br/>this work changes"}
+    B -- "the ordinary case" --> C["NEW: what the work adds"]
+    B -- "the failure branch" --> D["what happens instead"]
+```
+<two or three sentences naming what the reader should take from it>
+
 <!-- defect work only — omit all four sections for feature work -->
 ## Symptoms
 - <what is observably wrong, in the terms of whoever sees it> — **observed**
@@ -1691,6 +1709,20 @@ Rules for a good plan:
 - Then, still before any phase, add a `## Constraints` section as a self-check
   — `In scope`, `Out of scope`, and `Never do` — then derive the phases so they
   stay within those bounds.
+- **Draw it before you phase it.** After the constraints and before the first
+  phase, add `## The shape of it`: one mermaid diagram of the thing the plan acts
+  on, and two or three sentences saying what to take from it. Choose by what the
+  work changes — a **user flow** (`flowchart TD`) when it changes what somebody
+  experiences, an **architecture** diagram (`flowchart LR`) when it changes how
+  components call each other, a **sequence** diagram when it is about ordering
+  across systems (a webhook, a retry, a cutover). Draw the system as it will be
+  *after* the work and mark the nodes the plan adds or changes, so the blast
+  radius is visible at a glance. Label nodes in the reader's words, not function
+  names; stay under ~20 nodes; put decisions in rhombus nodes and name every
+  branch **including the failure branch**, because the branch nobody drew is the
+  one nobody built. This is a scoping check, not decoration: a plan whose diagram
+  cannot be drawn is a plan whose scope is not yet understood, so say that in the
+  section and make the first phase the research that would let you draw it.
 - Every task is a real Markdown checkbox line — `- [ ]` (GFM `*`/`+` bullets also
   count) — with its own **Acceptance:** and **Files:** lines. This matters
   mechanically: wiggum tracks progress by *counting* `[ ]`/`[x]`/`[~]` checkboxes,
@@ -1942,11 +1974,13 @@ multiplexer supplies the durability, and a daemonizing child would let its sessi
 exit immediately and take the tree down. `tmux new -d -s wig1 '<same>'` works
 identically; macOS has `screen` at `/usr/bin/screen` and no `setsid`.
 
-The cost: a foreground run writes no `.pid`, so `wiggum status` can't find it and a
-`kill -0 $(cat <plan>.pid)` liveness check reports "gone" when the file is merely
-absent — indistinguishable from a real death. Check liveness with `screen -ls` /
-`tmux ls` and a process check instead. Task counts still work, because
-`wiggum status` reads the plan's checkboxes.
+A foreground run does register a `.pid` while it works, so `wiggum status` and
+`wiggum top` find it — but it clears the sidecar the moment it ends, and a
+`kill -0 $(cat <plan>.pid)` check then reports "gone" for a plan that merely
+finished, indistinguishable from a real death. The multiplexer session also
+outlives any one plan. Check the session with `screen -ls` / `tmux ls` and a
+process check, and read the plan's own state from `wiggum status`, which counts
+its checkboxes.
 
 **Check a PID, not a pattern.** wiggum's own `process_alive()` is `kill -0 "$pid"`
 (`lib/wiggum.sh`), and that is the primitive to copy: it asks the kernel about one
@@ -2244,9 +2278,11 @@ wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
 
 `chain` runs `wiggum execute` on each plan in order, each in a fresh session, and
 stops at the first plan that fails — so a broken early step doesn't waste effort on
-the rest. To supervise a long chain, background it and watch the active plan's
-sidecars, or run the plans one at a time with the supervise loop in step 3 so you
-can inspect and fix between stages.
+the rest. Each plan registers its own `.pid` while it is the active one and drops it
+when it ends, so `wiggum top` shows a running chain as a row for the plan it is on
+right now, and nothing for the plans on either side of it. To supervise a long chain,
+background it and watch the active plan's sidecars, or run the plans one at a time
+with the supervise loop in step 3 so you can inspect and fix between stages.
 
 ## Rules
 
@@ -2278,7 +2314,8 @@ can inspect and fix between stages.
   diagnosis instead of burning more runs.
 - **Launch durably for anything long** (step 3a): `--background` dies with the
   session that started it. Use a detached `screen`/`tmux` with wiggum in the
-  foreground inside it, and check liveness with `pgrep`, not the `.pid` file.
+  foreground inside it. `wiggum top` finds a foreground run, but the `.pid` is gone
+  the moment the plan ends — for the session as a whole, check `pgrep`.
 - **Rule out a false stall before remediating** (step 4): if a job the task spawned
   is still alive and its output still growing, wait and relaunch — don't rewrite a
   task that was working.
@@ -2931,6 +2968,7 @@ report_unfinished_run() {
         fi
         echo "=== WIGGUM RUN ABORTED ==="
     } >&2
+    release_run_pidfile
     return "$rc"
 }
 
@@ -2965,6 +3003,10 @@ run_execute() {
 
     WIGGUM_RUN_FINISHED=false
     trap 'report_unfinished_run' EXIT
+
+    # Register the run before the first phase, not after it: the plan being
+    # worked on right now is exactly what `top` is asked about.
+    claim_run_pidfile "${FILES[0]:-}"
 
     echo "=== WIGGUM EXECUTE MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
@@ -3178,6 +3220,7 @@ run_execute() {
     echo "=== WIGGUM EXECUTION COMPLETE ===" >&2
 
     WIGGUM_RUN_FINISHED=true
+    release_run_pidfile
     trap - EXIT
 }
 
@@ -3236,6 +3279,71 @@ release_pidfile() {
     return 0
 }
 
+# Record the running process in the plan's `.pid` sidecar.
+#
+# That sidecar is the only thing `top`/`status`/`watch`/`kill` look for, and it
+# used to be written exclusively by `execute --background` and the `--at`
+# waiter. A foreground `wiggum execute` wrote none -- and `run_chain` runs every
+# one of its plans in the foreground, so an entire chain was invisible to
+# supervision. Worse, `top` still rendered rows for the stale pidfiles finished
+# background runs leave behind, so the table read as "every plan finished,
+# nothing running" while two chains were working. That is the dangerous
+# direction to be wrong in: it invites launching more work onto a loaded box.
+#
+# Skipped when WIGGUM_RUN_PIDFILE is already set, which is how
+# launch_execute_background tells the detached child that the file is spoken
+# for. The launcher wrote the subshell's pid, which is the one `kill` must
+# stop; `$$` inside that subshell is the *parent's* pid (bash 3.2 has no
+# $BASHPID), so a child re-claim would aim every supervision command at the
+# wrong process.
+#
+# A sidecar naming a live process is left alone rather than clobbered. Two runs
+# on one plan is already a mistake; overwriting would orphan the first from
+# `watch` and `kill`, which is the exact failure release_pidfile exists to
+# prevent.
+claim_run_pidfile() {
+    local base="${1:-}"
+    [[ -n "$base" ]] || return 0
+    [[ -z "$WIGGUM_RUN_PIDFILE" ]] || return 0
+
+    local pidfile existing=""
+    pidfile="$(run_sidecar_file "$base" pid)"
+    if [[ -f "$pidfile" ]]; then
+        existing="$(tr -d '[:space:]' < "$pidfile")"
+    fi
+    if process_alive "$existing"; then
+        echo "Warning: another wiggum run is already active for $base (pid $existing);" \
+             "leaving its sidecar in place -- this run will not appear in 'wiggum top'." >&2
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$pidfile")"
+    printf '%s\n' "$$" > "$pidfile"
+    WIGGUM_RUN_PIDFILE="$pidfile"
+    return 0
+}
+
+# Drop the sidecar this run claimed, once the run is over.
+#
+# Releasing matters most for a chain: the plan that just finished has to stop
+# showing as running before the next one starts, or `top` reports the chain
+# against a plan it has already moved off. It also keeps finished foreground
+# runs from accumulating as rows that are neither running nor reportable -- a
+# foreground run writes no `.out`, so such a row has no status to show.
+#
+# The rule is one line of release_pidfile: remove the file only while it still
+# names *this* process. That covers three cases at once. A relaunch that reused
+# the sidecar in the meantime keeps its claim. A run that never claimed one has
+# nothing to remove. And the file launch_execute_background wrote survives,
+# because it names the detached subshell rather than `$$` -- which is what lets
+# `status` still report on a background run nobody watched.
+release_run_pidfile() {
+    [[ -n "$WIGGUM_RUN_PIDFILE" ]] || return 0
+    release_pidfile "$WIGGUM_RUN_PIDFILE" "$$"
+    WIGGUM_RUN_PIDFILE=""
+    return 0
+}
+
 read_run_status() {
     local outfile="$1"
     [[ -f "$outfile" ]] || return 0
@@ -3284,6 +3392,11 @@ launch_execute_background() {
     # Clear BACKGROUND so the detached subshell runs the real loop instead of
     # recursing back into this launcher.
     BACKGROUND=false
+    # Claim the sidecar on the child's behalf, BEFORE forking so the child
+    # inherits the claim: the pid that belongs in this file is the subshell's,
+    # which only the parent can see (`$!`), and the child would otherwise write
+    # `$$` -- this shell's pid -- over it and misdirect `watch` and `kill`.
+    WIGGUM_RUN_PIDFILE="$pidfile"
     # Append rather than truncate: relaunching a plan used to destroy the log of
     # the very run you are relaunching because of, which is the output you need
     # to diagnose it. `.log` has always appended with a per-run separator; `.out`
@@ -3874,37 +3987,43 @@ run_kill() {
     return 0
 }
 
-# Collect the pidfiles of known wiggum runs. With no args, scans `docs/` and the
-# current directory; each arg may be a directory (scanned for `*.pid`), a plan
-# file (its sidecar pidfile), or a pidfile itself. Output is sorted/deduped so
-# `top` renders deterministically. A non-matching glob yields nothing (the
-# `[[ -f ]]` guard absorbs the literal pattern under `set -u`).
-find_run_pidfiles() {
+# Collect the base paths -- a plan path minus its `.md` -- of every run wiggum
+# knows about: anything carrying a `.pid` sidecar (running, or finished and not
+# yet cleaned up) or a `.scheduled` one (waiting for its `--at` time). Scanning
+# only pidfiles left a scheduled run absent from `top` while `status` reported
+# it, so the two commands disagreed about the same run.
+#
+# With no args, scans `docs/` and the current directory; each arg may be a
+# directory, a plan file, or either sidecar. Sorted and deduped so `top` renders
+# deterministically and a plan holding both sidecars is still one row.
+find_run_sidecars() {
     local args=("$@")
     [[ ${#args[@]} -eq 0 ]] && args=(docs .)
     local a f
     for a in "${args[@]}"; do
         if [[ -d "$a" ]]; then
-            for f in "$a"/*.pid; do
-                [[ -f "$f" ]] && echo "$f"
+            for f in "$a"/*.pid "$a"/*.scheduled; do
+                [[ -f "$f" ]] && echo "${f%.*}"
             done
-        elif [[ "$a" == *.pid && -f "$a" ]]; then
-            echo "$a"
+        elif [[ "$a" == *.pid || "$a" == *.scheduled ]]; then
+            [[ -f "$a" ]] && echo "${a%.*}"
         elif [[ "$a" == *.md ]]; then
-            f="${a%.md}.pid"
-            [[ -f "$f" ]] && echo "$f"
+            f="${a%.md}"
+            [[ -f "${f}.pid" || -f "${f}.scheduled" ]] && echo "$f"
         fi
     done | sort -u
 }
 
-# Render one `top` row for a run identified by its pidfile: the plan, the pid (or
-# `-` if not running), the state, and a task tally. Derives the plan/out sidecars
-# from the pidfile name and reuses the same state logic as `status`.
+# Render one `top` row for the run at BASE (a plan path minus its `.md`): the
+# plan, the pid (or `-` if not running), the state, and a task tally. Derives
+# every sidecar from the base and resolves state in the same precedence
+# `status` uses, so the two never describe one run differently.
 top_row() {
-    local pidfile="$1"
-    local base="${pidfile%.pid}"
+    local base="$1"
     local plan="${base}.md"
     local out="${base}.out"
+    local pidfile="${base}.pid"
+    local schedfile="${base}.scheduled"
 
     local total remaining dropped done_count
     total="$(count_total_tasks "$plan")"
@@ -3912,8 +4031,13 @@ top_row() {
     dropped="$(count_dropped "$plan")"
     done_count=$((total - remaining - dropped))
 
-    local pid pid_display state
-    pid="$(tr -d '[:space:]' < "$pidfile" 2>/dev/null)"
+    local pid="" pid_display state
+    if [[ -f "$pidfile" ]]; then
+        pid="$(tr -d '[:space:]' < "$pidfile")"
+    fi
+    # A live pidfile outranks a schedule (the waiter fired between the two
+    # reads); a dead one does not, because scheduling over a finished run's
+    # leftovers is allowed. Same order run_status reads them in.
     if process_alive "$pid"; then
         pid_display="$pid"
         if detect_blocked "$out"; then
@@ -3921,6 +4045,9 @@ top_row() {
         else
             state="running"
         fi
+    elif [[ -f "$schedfile" ]]; then
+        pid_display="-"
+        state="$(describe_schedule_state "$schedfile")"
     else
         pid_display="-"
         local final
@@ -3939,22 +4066,23 @@ top_row() {
     printf '%-40s %-8s %-20s %s\n' "$plan" "$pid_display" "$state" "$tasks"
 }
 
-# `wiggum top` -- a one-shot, at-a-glance overview of every known wiggum run
-# (anything with a `.pid` sidecar). Optional args narrow or widen the scan (directories, plan
-# files, or pidfiles). Read-only; never starts or stops anything.
+# `wiggum top` -- a one-shot, at-a-glance overview of every wiggum run wiggum
+# knows about: anything carrying a `.pid` or `.scheduled` sidecar. Optional args
+# narrow or widen the scan (directories, plan files, or sidecars). Read-only;
+# never starts or stops anything.
 run_top() {
     # Portable collect (no mapfile -- wiggum targets bash 3.2+ on stock macOS).
-    local pidfiles=() f
+    local bases=() f
     while IFS= read -r f; do
-        [[ -n "$f" ]] && pidfiles+=("$f")
-    done < <(find_run_pidfiles "${FILES[@]+"${FILES[@]}"}")
-    if [[ ${#pidfiles[@]} -eq 0 ]]; then
-        echo "No wiggum runs found (no .pid sidecars in docs/ or the current directory)."
+        [[ -n "$f" ]] && bases+=("$f")
+    done < <(find_run_sidecars "${FILES[@]+"${FILES[@]}"}")
+    if [[ ${#bases[@]} -eq 0 ]]; then
+        echo "No wiggum runs found (no .pid or .scheduled sidecars in docs/ or the current directory)."
         echo "Start one with: wiggum execute <plan> --background"
         return 0
     fi
     printf '%-40s %-8s %-20s %s\n' "PLAN" "PID" "STATE" "TASKS"
-    for f in "${pidfiles[@]}"; do
+    for f in "${bases[@]}"; do
         top_row "$f"
     done
 }
@@ -3976,7 +4104,15 @@ run_chain() {
         WIGGUM_LAST_SESSION_ID=""
         FILES=("$f")
         SUMMARY_FILE="$(derive_output_file execute "$f" "")"
-        if run_execute; then
+        # A plan that unwinds mid-run never reaches its own release, and the
+        # stale claim would stop the next plan from registering -- leaving the
+        # chain reported against a plan it has already moved off. Release here,
+        # where both outcomes pass through. Harmless after a clean finish:
+        # run_execute has already dropped the claim.
+        local rc=0
+        run_execute || rc=$?
+        release_run_pidfile
+        if [[ "$rc" -eq 0 ]]; then
             echo "=== Chain plan $idx of $total complete: $f ===" >&2
         else
             echo "=== Chain plan $idx of $total FAILED: $f -- stopping chain ===" >&2

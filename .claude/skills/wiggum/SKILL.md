@@ -430,11 +430,13 @@ multiplexer supplies the durability, and a daemonizing child would let its sessi
 exit immediately and take the tree down. `tmux new -d -s wig1 '<same>'` works
 identically; macOS has `screen` at `/usr/bin/screen` and no `setsid`.
 
-The cost: a foreground run writes no `.pid`, so `wiggum status` can't find it and a
-`kill -0 $(cat <plan>.pid)` liveness check reports "gone" when the file is merely
-absent — indistinguishable from a real death. Check liveness with `screen -ls` /
-`tmux ls` and a process check instead. Task counts still work, because
-`wiggum status` reads the plan's checkboxes.
+A foreground run does register a `.pid` while it works, so `wiggum status` and
+`wiggum top` find it — but it clears the sidecar the moment it ends, and a
+`kill -0 $(cat <plan>.pid)` check then reports "gone" for a plan that merely
+finished, indistinguishable from a real death. The multiplexer session also
+outlives any one plan. Check the session with `screen -ls` / `tmux ls` and a
+process check, and read the plan's own state from `wiggum status`, which counts
+its checkboxes.
 
 **Check a PID, not a pattern.** wiggum's own `process_alive()` is `kill -0 "$pid"`
 (`lib/wiggum.sh`), and that is the primitive to copy: it asks the kernel about one
@@ -732,9 +734,11 @@ wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
 
 `chain` runs `wiggum execute` on each plan in order, each in a fresh session, and
 stops at the first plan that fails — so a broken early step doesn't waste effort on
-the rest. To supervise a long chain, background it and watch the active plan's
-sidecars, or run the plans one at a time with the supervise loop in step 3 so you
-can inspect and fix between stages.
+the rest. Each plan registers its own `.pid` while it is the active one and drops it
+when it ends, so `wiggum top` shows a running chain as a row for the plan it is on
+right now, and nothing for the plans on either side of it. To supervise a long chain,
+background it and watch the active plan's sidecars, or run the plans one at a time
+with the supervise loop in step 3 so you can inspect and fix between stages.
 
 ## Rules
 
@@ -766,7 +770,8 @@ can inspect and fix between stages.
   diagnosis instead of burning more runs.
 - **Launch durably for anything long** (step 3a): `--background` dies with the
   session that started it. Use a detached `screen`/`tmux` with wiggum in the
-  foreground inside it, and check liveness with `pgrep`, not the `.pid` file.
+  foreground inside it. `wiggum top` finds a foreground run, but the `.pid` is gone
+  the moment the plan ends — for the session as a whole, check `pgrep`.
 - **Rule out a false stall before remediating** (step 4): if a job the task spawned
   is still alive and its output still growing, wait and relaunch — don't rewrite a
   task that was working.
