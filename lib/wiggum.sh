@@ -1710,8 +1710,8 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
-| `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, task tally. Blocked and running sort first. Read-only. |
-| `wiggum top --json` | The same records as JSON, with `pid` and `idle_seconds` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. |
+| `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, RSS and CPU for the run's whole process tree, task tally. Blocked and running sort first. A footer gives load, swap and the live run count — read it before launching another run instead of shelling out to `uptime` and `sysctl`. Read-only. |
+| `wiggum top --json` | The same records as JSON, with `pid`, `idle_seconds`, `rss_kb` and `cpu_percent` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. The footer is table-only. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
 `docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
@@ -3523,6 +3523,97 @@ process_alive() {
     kill -0 "$pid" 2>/dev/null
 }
 
+# RSS in KB and %CPU for a run, summed over its pid and every descendant.
+# Echoes "<rss_kb> <pcpu>", or nothing when the pid owns nothing measurable.
+#
+# The pid `top` prints is never the number that matters: a run's own bash is
+# about a megabyte and idle, and the bill is the `claude` child and whatever it
+# spawns. One `ps` sweep feeds an awk tree walk -- asking `ps` per descendant
+# costs a process per row and races the tree changing underneath it.
+run_group_usage() {
+    local pid="$1"
+    [[ -n "$pid" ]] || return 0
+    ps -axo pid=,ppid=,rss=,pcpu= 2>/dev/null | awk -v root="$pid" '
+        { p[NR] = $1; pp[NR] = $2; rss[$1] = $3; cpu[$1] = $4; n = NR }
+        END {
+            want[root] = 1
+            # The table is not ordered parent-before-child, so sweep until a
+            # pass adds nothing rather than trusting one pass to catch a tree.
+            do {
+                added = 0
+                for (i = 1; i <= n; i++) {
+                    if (!(p[i] in want) && (pp[i] in want)) {
+                        want[p[i]] = 1
+                        added = 1
+                    }
+                }
+            } while (added)
+            found = 0
+            for (q in want) {
+                if (q in rss) { r += rss[q]; c += cpu[q]; found = 1 }
+            }
+            if (found) printf "%d %.1f\n", r, c
+        }'
+    return 0
+}
+
+# KB in, a column-width figure out: 290.2M, 1.8G, 640K.
+format_rss() {
+    local kb="${1:-0}"
+    awk -v kb="$kb" 'BEGIN {
+        if (kb >= 1048576) printf "%.1fG\n", kb / 1048576
+        else if (kb >= 1024) printf "%.1fM\n", kb / 1024
+        else printf "%dK\n", kb
+    }'
+}
+
+# The footer under `top`: load against core count, swap, and how many runs are
+# live. This is the "can I launch another run?" line, and swap is the number
+# that decides it -- past about 90% on a machine this size, builds start timing
+# out and tests fail in ways that move run to run, which reads as a code failure
+# and is not. Each piece is omitted when the platform will not answer, so the
+# line degrades rather than inventing a figure.
+machine_pressure_line() {
+    local active="${1:-0}" parts="" cores load swap
+    cores="$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || true)"
+    load="$(uptime 2>/dev/null | sed -e 's/.*load average[s]*: *//' | tr ',' ' ' \
+        | awk '{ if ($1 != "") printf "%.1f\n", $1 }')"
+    if [[ -n "$load" ]]; then
+        parts="load $load"
+        [[ -n "$cores" ]] && parts="$parts / $cores cores"
+    fi
+    swap="$(machine_swap_summary)"
+    [[ -n "$swap" ]] && parts="${parts:+$parts · }$swap"
+    local runs="run"
+    [[ "$active" -eq 1 ]] || runs="runs"
+    parts="${parts:+$parts · }$active $runs active"
+    printf '%s\n' "$parts"
+}
+
+# "swap 2.6G of 4.1G (65%)", from whichever interface this machine has.
+machine_swap_summary() {
+    local raw
+    if raw="$(sysctl -n vm.swapusage 2>/dev/null)" && [[ -n "$raw" ]]; then
+        # total = 4096.00M  used = 2646.00M  free = 1450.00M  (encrypted)
+        printf '%s\n' "$raw" | awk '{
+            t = $3; u = $6
+            sub(/[A-Za-z]$/, "", t); sub(/[A-Za-z]$/, "", u)
+            if (t + 0 <= 0) exit
+            printf "swap %.1fG of %.1fG (%.0f%%)\n", u / 1024, t / 1024, 100 * u / t
+        }'
+        return 0
+    fi
+    if [[ -r /proc/meminfo ]]; then
+        awk '/^SwapTotal:/ { t = $2 } /^SwapFree:/ { f = $2 }
+             END {
+                 if (t <= 0) exit
+                 u = t - f
+                 printf "swap %.1fG of %.1fG (%.0f%%)\n", u / 1048576, t / 1048576, 100 * u / t
+             }' /proc/meminfo
+    fi
+    return 0
+}
+
 # Echo the last execution status recorded in a run's output file. run_execute
 # prints "Status: complete|stalled|incomplete" at the end; in background mode
 # that line is captured into the .out file. Echoes nothing when the file is
@@ -4524,11 +4615,21 @@ top_row() {
         scheduled*)          rank=2 ;;
     esac
 
+    # What the run is costing, measured only for a live one: a finished run has
+    # nothing to measure, and a `ps` sweep per finished row would make `top`
+    # slower the longer a project's history gets.
+    local rss_kb="" cpu="" usage=""
+    if [[ "$pid_display" != "-" ]]; then
+        usage="$(run_group_usage "$pid")"
+        rss_kb="${usage%% *}"
+        cpu="${usage##* }"
+    fi
+
     # Tab-separated record. run_top sorts on the rank and renders the rest as a
     # table or as JSON, so the two outputs cannot describe a run differently.
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$rank" "$plan" "$pid_display" "$state" "$activity" "$tasks" \
-        "$total" "$done_count" "$remaining" "$dropped"
+        "$total" "$done_count" "$remaining" "$dropped" "$rss_kb" "$cpu"
 }
 
 # Render a run's base path the way `top` should show it: relative when the run
@@ -4593,12 +4694,24 @@ run_top() {
         return 0
     fi
 
-    printf '%-40s %-8s %-20s %-9s %s\n' "PLAN" "PID" "STATE" "ACTIVITY" "TASKS"
-    local plan pid state activity tasks
-    while IFS=$'\t' read -r plan pid state activity tasks _total _done _left _dropped; do
+    printf '%-40s %-8s %-20s %-9s %-8s %-6s %s\n' \
+        "PLAN" "PID" "STATE" "ACTIVITY" "RSS" "CPU" "TASKS"
+    local plan pid state activity tasks rss_kb cpu rss cpu_display active=0
+    while IFS=$'\t' read -r plan pid state activity tasks _total _done _left _dropped \
+        rss_kb cpu; do
         [[ -n "$plan" ]] || continue
-        printf '%-40s %-8s %-20s %-9s %s\n' "$plan" "$pid" "$state" "$activity" "$tasks"
+        [[ "$state" == running* ]] && active=$((active + 1))
+        rss="-"
+        cpu_display="-"
+        if [[ -n "$rss_kb" ]]; then
+            rss="$(format_rss "$rss_kb")"
+            cpu_display="${cpu}%"
+        fi
+        printf '%-40s %-8s %-20s %-9s %-8s %-6s %s\n' \
+            "$plan" "$pid" "$state" "$activity" "$rss" "$cpu_display" "$tasks"
     done <<< "$records"
+    echo ""
+    machine_pressure_line "$active"
 }
 
 # `wiggum top --json` -- the same records as the table, for a script that needs
@@ -4607,18 +4720,22 @@ run_top() {
 # so a caller can test for absence rather than parsing `-`.
 top_render_json() {
     local records="$1" first=true
-    local plan pid state activity tasks total done_count left dropped
+    local plan pid state activity tasks total done_count left dropped rss_kb cpu
     echo "["
-    while IFS=$'\t' read -r plan pid state activity tasks total done_count left dropped; do
+    while IFS=$'\t' read -r plan pid state activity tasks total done_count left dropped \
+        rss_kb cpu; do
         [[ -n "$plan" ]] || continue
         [[ "$first" == true ]] || echo ","
         first=false
-        local pid_json="null" idle_json="null" idle
+        local pid_json="null" idle_json="null" rss_json="null" cpu_json="null" idle
         [[ "$pid" != "-" ]] && pid_json="$pid"
         idle="$(run_last_activity "${plan%.md}")"
         [[ -n "$idle" ]] && idle_json="$idle"
-        printf '  {"plan": "%s", "pid": %s, "state": "%s", "idle_seconds": %s, "tasks": {"total": %s, "done": %s, "remaining": %s, "dropped": %s}}' \
+        [[ -n "$rss_kb" ]] && rss_json="$rss_kb"
+        [[ -n "$cpu" ]] && cpu_json="$cpu"
+        printf '  {"plan": "%s", "pid": %s, "state": "%s", "idle_seconds": %s, "rss_kb": %s, "cpu_percent": %s, "tasks": {"total": %s, "done": %s, "remaining": %s, "dropped": %s}}' \
             "$(json_escape "$plan")" "$pid_json" "$(json_escape "$state")" "$idle_json" \
+            "$rss_json" "$cpu_json" \
             "$total" "$done_count" "$left" "$dropped"
     done <<< "$records"
     echo ""
