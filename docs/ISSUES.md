@@ -26,7 +26,7 @@ split out of the columns rather than bolted onto them.
   a bare `kill -0`, the `.pid` held a number and the registry entry held only a
   path, so a sidecar naming a recycled pid made `top` invent a running run and
   made `wiggum kill` signal a stranger's process tree, children included. Fixed
-  in `e921a1d`: sidecars and registry entries record the process start time beside
+  in `295f445`: sidecars and registry entries record the process start time beside
   the pid, and `top`, `status`, `watch`, `kill`, `cancel` and the claim checks
   all compare it before believing or signalling a pid. Sidecars from older
   versions carry none and fall back to bare liveness, which `kill` says out
