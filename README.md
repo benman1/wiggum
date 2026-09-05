@@ -492,6 +492,10 @@ One path per line, `#` starts a comment, blank lines ignored. A plan appended wh
 
 Each plan in a chain registers itself while it is the active one, so `wiggum top` shows a running chain as a single row for the plan it is on right now — and drops that row when the chain moves to the next plan. To supervise a chain, run `top` (or `status` on the active plan); `watch` attaches to one plan, not to the chain as a whole.
 
+That distinction has a sharp edge. A plan later in the chain has no pidfile until its turn comes, so `wiggum watch` on it **exits 1 immediately** rather than waiting: it reads as "that run finished" and means "that run has not started". Watch the plan the chain is on now and re-check when it ends, or hold the chain's own PID from launch and poll `kill -0 "$pid"` — that answers "is the chain still going", which is a different question from "is this plan still going".
+
+`watch` also prints the pid it read before testing whether it is alive, so a killed run that left its sidecar behind produces a `Watching wiggum run ... (pid N)` line and then returns at once. Read the return value, not the opening line.
+
 ### Claude Code skill
 
 Wiggum ships a `/wiggum` slash command for Claude Code that acts as an **orchestrator** for the CLI. Instead of re-running the loop in-conversation, the skill drives the `wiggum` binary: it creates a workplan, launches `wiggum execute` (in the background), monitors progress, waits for completion, analyzes whether a run is blocked, kills a run that overruns (only that run's process), and chains workplans together.
