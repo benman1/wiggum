@@ -2446,6 +2446,14 @@ read before testing liveness, so a killed chain whose sidecar was left behind pr
 "Watching wiggum run … (pid N)" line and then returns immediately. Read the return, not
 the banner, and confirm with `wiggum top` or `ps` before believing either.
 
+**A pid alone is not an identity — never signal one you have not verified.** The kernel
+reuses pids, so a sidecar left by a crash or a reboot eventually names somebody else's
+process. Wiggum records the process start time next to the pid and compares it before
+believing or signalling anything: a reused pid reads as "not running", and `wiggum kill`
+clears the sidecar instead of firing. Do the same when you supervise a run yourself —
+capture `ps -o lstart= -p "$pid"` at launch and compare it before you `kill`, because
+`kill -0` cannot tell your run from whatever inherited its number.
+
 To supervise a long chain, background it and watch the active plan's sidecars, or run
 the plans one at a time with the supervise loop in step 3 so you can inspect and fix
 between stages.
@@ -3523,6 +3531,70 @@ process_alive() {
     kill -0 "$pid" 2>/dev/null
 }
 
+# When a pid was last seen starting, as an opaque string.
+#
+# A pid is not an identity. The kernel reuses them, so a sidecar left behind by
+# a crash, a `kill -9` or a reboot will eventually name a process that belongs
+# to somebody else -- and then every question wiggum asks of that sidecar gets
+# a confident wrong answer: `top` invents a running run, `status` agrees, and
+# `kill` signals a stranger's process tree.
+#
+# The start time is the cheap identity: `ps` reports it unchanged for the life
+# of a process, and a recycled pid always carries a later one. It is never
+# parsed, only compared to the string recorded when the run claimed its
+# sidecar, so the platform's date format does not matter -- only that the same
+# `ps` prints the same bytes for the same process.
+pid_started_at() {
+    local pid="$1"
+    [[ -n "$pid" ]] || return 0
+    ps -o lstart= -p "$pid" 2>/dev/null \
+        | tr -s '[:space:]' ' ' | sed -e 's/^ *//' -e 's/ *$//'
+    return 0
+}
+
+# Is PID still the process that recorded IDENTITY?
+#
+# An empty IDENTITY means the sidecar predates this check or was written by
+# hand. That falls back to bare liveness -- what wiggum did before -- rather
+# than declaring every older run dead: the alternative would report a run that
+# is genuinely working as finished, which is the failure `top` exists to
+# prevent. Every sidecar written from here on carries an identity, so the
+# window closes with the run that is in flight.
+run_pid_alive() {
+    local pid="$1" identity="${2:-}"
+    process_alive "$pid" || return 1
+    [[ -n "$identity" ]] || return 0
+    [[ "$(pid_started_at "$pid")" == "$identity" ]]
+}
+
+# A run's `.pid` sidecar: the pid on the first line, the identity on the
+# second. The first line keeps the shape every older reader expects.
+write_pidfile() {
+    local pidfile="$1" pid="$2"
+    mkdir -p "$(dirname "$pidfile")"
+    printf '%s\n%s\n' "$pid" "$(pid_started_at "$pid")" > "$pidfile"
+    return 0
+}
+
+read_pidfile_pid() {
+    [[ -f "$1" ]] || return 0
+    sed -n 1p "$1" | tr -d '[:space:]'
+    return 0
+}
+
+read_pidfile_identity() {
+    [[ -f "$1" ]] || return 0
+    sed -n 2p "$1" | sed -e 's/^ *//' -e 's/ *$//'
+    return 0
+}
+
+# The run named by PIDFILE is alive, and is the run that wrote it.
+pidfile_alive() {
+    local pidfile="$1"
+    [[ -f "$pidfile" ]] || return 1
+    run_pid_alive "$(read_pidfile_pid "$pidfile")" "$(read_pidfile_identity "$pidfile")"
+}
+
 # RSS in KB and %CPU for a run, summed over its pid and every descendant.
 # Echoes "<rss_kb> <pcpu>", or nothing when the pid owns nothing measurable.
 #
@@ -3656,7 +3728,7 @@ release_pidfile() {
     local pidfile="$1" expected="$2"
     [[ -f "$pidfile" ]] || return 0
     local current
-    current="$(tr -d '[:space:]' < "$pidfile")"
+    current="$(read_pidfile_pid "$pidfile")"
     if [[ "$current" == "$expected" ]]; then
         rm -f "$pidfile"
     fi
@@ -3694,7 +3766,11 @@ register_run() {
     abs="$(absolute_run_base "$base")"
     [[ -n "$abs" ]] || return 0
     mkdir -p "$WIGGUM_REGISTRY_DIR" 2>/dev/null || return 0
-    printf '%s\n' "$abs" > "$WIGGUM_REGISTRY_DIR/$pid" 2>/dev/null || return 0
+    # Path first, identity second: the pid in the filename says which process,
+    # and the identity says which process *that was*, so a recycled pid cannot
+    # inherit the entry.
+    printf '%s\n%s\n' "$abs" "$(pid_started_at "$pid")" \
+        > "$WIGGUM_REGISTRY_DIR/$pid" 2>/dev/null || return 0
     return 0
 }
 
@@ -3711,7 +3787,9 @@ find_registered_runs() {
     for f in "$WIGGUM_REGISTRY_DIR"/*; do
         [[ -f "$f" ]] || continue
         pid="$(basename "$f")"
-        if ! process_alive "$pid"; then
+        # A pid that answers is not proof the run is there: prune an entry
+        # whose pid has been recycled exactly as if the process were gone.
+        if ! run_pid_alive "$pid" "$(sed -n 2p "$f" | sed -e 's/^ *//' -e 's/ *$//')"; then
             rm -f "$f"
             continue
         fi
@@ -3737,7 +3815,7 @@ registered_pid_for_base() {
         [[ -f "$f" ]] || continue
         [[ "$(head -n1 "$f")" == "$want" ]] || continue
         pid="$(basename "$f")"
-        if process_alive "$pid"; then
+        if run_pid_alive "$pid" "$(sed -n 2p "$f" | sed -e 's/^ *//' -e 's/ *$//')"; then
             printf '%s\n' "$pid"
             return 0
         fi
@@ -3784,17 +3862,14 @@ claim_run_pidfile() {
 
     local pidfile existing=""
     pidfile="$(run_sidecar_file "$base" pid)"
-    if [[ -f "$pidfile" ]]; then
-        existing="$(tr -d '[:space:]' < "$pidfile")"
-    fi
-    if process_alive "$existing"; then
+    if pidfile_alive "$pidfile"; then
+        existing="$(read_pidfile_pid "$pidfile")"
         echo "Warning: another wiggum run is already active for $base (pid $existing);" \
              "leaving its sidecar in place -- this run will not appear in 'wiggum top'." >&2
         return 0
     fi
 
-    mkdir -p "$(dirname "$pidfile")"
-    printf '%s\n' "$$" > "$pidfile"
+    write_pidfile "$pidfile" "$$"
     WIGGUM_RUN_PIDFILE="$pidfile"
     register_run "$$" "$base"
     return 0
@@ -3890,7 +3965,7 @@ launch_execute_background() {
     printf '%s %s ---\n' "$WIGGUM_RUN_SEPARATOR_PREFIX" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$outfile"
     ( run_execute ) >>"$outfile" 2>&1 &
     local pid=$!
-    echo "$pid" > "$pidfile"
+    write_pidfile "$pidfile" "$pid"
     # File the child under its own pid, not this shell's: the CLI exits as soon
     # as this function returns, and an entry keyed to a dead launcher would be
     # pruned out from under a run that is still going. Nothing unregisters it
@@ -4088,14 +4163,12 @@ launch_execute_delayed() {
 
     # Same refusal as --background, for the same reason: a second run would
     # clobber the pidfile and orphan the first from watch/kill.
-    if [[ -f "$pidfile" ]]; then
+    if pidfile_alive "$pidfile"; then
         local existing
-        existing="$(tr -d '[:space:]' < "$pidfile")"
-        if process_alive "$existing"; then
-            echo "A wiggum run is already active for $base (pid $existing)." >&2
-            echo "Use 'wiggum watch $base' or 'wiggum kill $base' first." >&2
-            return "$EXIT_BAD_ARGS"
-        fi
+        existing="$(read_pidfile_pid "$pidfile")"
+        echo "A wiggum run is already active for $base (pid $existing)." >&2
+        echo "Use 'wiggum watch $base' or 'wiggum kill $base' first." >&2
+        return "$EXIT_BAD_ARGS"
     fi
 
     # And refuse a second schedule over a live waiter, which would queue two
@@ -4103,7 +4176,7 @@ launch_execute_delayed() {
     # is stale rather than a conflict -- a machine that was off at the target
     # time is the ordinary case -- so it is overwritten below.
     waiting="$(read_schedule_field "$schedfile" pid)"
-    if process_alive "$waiting"; then
+    if run_pid_alive "$waiting" "$(read_schedule_field "$schedfile" pid_started)"; then
         echo "A wiggum run is already scheduled for $base (pid $waiting)." >&2
         echo "  when:   $(read_schedule_field "$schedfile" target_human)" >&2
         echo "Use 'wiggum status $base' or 'wiggum kill $base' first." >&2
@@ -4197,6 +4270,12 @@ launch_execute_delayed() {
         return "$EXIT_BAD_ARGS"
     fi
 
+    # The waiter claims the schedule before it sources the library, so it has
+    # no way to record what it is. Append that here, now that the claim is in
+    # hand: without it a `.scheduled` left behind by a machine that was off at
+    # the target time would let `kill` cancel whatever inherited the pid.
+    printf 'pid_started=%s\n' "$(pid_started_at "$waiter")" >> "$schedfile"
+
     echo "Scheduled wiggum execute for $human (in $(format_duration $((target - now))))." >&2
     echo "  plan:    $base" >&2
     echo "  pid:     $waiter" >&2
@@ -4271,16 +4350,17 @@ run_status() {
     echo "Plan: $base"
     format_progress "$total" "$done_count" "$remaining" "$dropped"
 
-    local state="not started" pid=""
+    local state="not started" pid="" identity=""
     if [[ -f "$pidfile" ]]; then
-        pid="$(tr -d '[:space:]' < "$pidfile")"
+        pid="$(read_pidfile_pid "$pidfile")"
+        identity="$(read_pidfile_identity "$pidfile")"
     fi
 
     # A live pidfile outranks a schedule: both present means the waiter fired
     # between the two reads, and the pidfile is the newer fact. A dead one does
     # not, because scheduling is allowed over a finished run's pidfile and the
     # leftover must not shadow the schedule that replaced it.
-    if process_alive "$pid"; then
+    if run_pid_alive "$pid" "$identity"; then
         if detect_blocked "$outfile"; then
             state="running but appears blocked (pid $pid)"
         else
@@ -4319,8 +4399,9 @@ run_watch() {
         echo "Start one with: wiggum execute $base --background" >&2
         return "$EXIT_BAD_ARGS"
     fi
-    local pid
-    pid="$(tr -d '[:space:]' < "$pidfile")"
+    local pid identity
+    pid="$(read_pidfile_pid "$pidfile")"
+    identity="$(read_pidfile_identity "$pidfile")"
 
     echo "Watching wiggum run for $base (pid $pid)..." >&2
     if [[ "$WATCH_TIMEOUT" -gt 0 ]]; then
@@ -4334,7 +4415,7 @@ run_watch() {
     if [[ -n "$sep_line" ]]; then
         last_lines=$((sep_line - 1))
     fi
-    while process_alive "$pid"; do
+    while run_pid_alive "$pid" "$identity"; do
         if [[ -f "$outfile" ]]; then
             local now
             now="$(wc -l < "$outfile" | tr -d ' ')"
@@ -4379,17 +4460,30 @@ kill_run() {
         echo "No run pidfile found: $pidfile" >&2
         return "$EXIT_BAD_ARGS"
     fi
-    local pid
-    pid="$(tr -d '[:space:]' < "$pidfile")"
+    local pid identity
+    pid="$(read_pidfile_pid "$pidfile")"
+    identity="$(read_pidfile_identity "$pidfile")"
     if [[ -z "$pid" ]]; then
         echo "Pidfile is empty: $pidfile" >&2
         rm -f "$pidfile"
         return "$EXIT_BAD_ARGS"
     fi
-    if ! process_alive "$pid"; then
-        echo "Wiggum run (pid $pid) is not running; cleaning up pidfile." >&2
+    # The check that keeps this from being a footgun. A sidecar naming a pid
+    # the kernel has since handed to somebody else looks exactly like a live
+    # run, and everything below signals a whole process tree.
+    if ! run_pid_alive "$pid" "$identity"; then
+        if [[ -n "$identity" ]] && process_alive "$pid"; then
+            echo "Pid $pid is alive but is not the run this sidecar recorded" \
+                 "(the pid was reused); signalling nothing and cleaning up." >&2
+        else
+            echo "Wiggum run (pid $pid) is not running; cleaning up pidfile." >&2
+        fi
         release_pidfile "$pidfile" "$pid"
         return 0
+    fi
+    if [[ -z "$identity" ]]; then
+        echo "Warning: this sidecar records no start time, so pid $pid cannot be" \
+             "verified as the run it names (it predates the check)." >&2
     fi
     echo "Killing wiggum run (pid $pid) and its children..." >&2
     pkill -TERM -P "$pid" 2>/dev/null || true
@@ -4417,10 +4511,12 @@ cancel_schedule() {
     local schedfile="$1"
     local waiter human
     waiter="$(read_schedule_field "$schedfile" pid)"
+    local waiter_identity
+    waiter_identity="$(read_schedule_field "$schedfile" pid_started)"
     human="$(read_schedule_field "$schedfile" target_human)"
     [[ -n "$human" ]] || human="an unrecorded time"
 
-    if process_alive "$waiter"; then
+    if run_pid_alive "$waiter" "$waiter_identity"; then
         echo "Cancelling the wiggum run scheduled for $human (waiter pid $waiter)..." >&2
         pkill -TERM -P "$waiter" 2>/dev/null || true
         kill -TERM "$waiter" 2>/dev/null || true
@@ -4452,10 +4548,10 @@ run_kill() {
     schedfile="$(run_sidecar_file "$base" scheduled)"
 
     if [[ -f "$pidfile" ]]; then
-        pid="$(tr -d '[:space:]' < "$pidfile")"
+        pid="$(read_pidfile_pid "$pidfile")"
     fi
 
-    if process_alive "$pid"; then
+    if pidfile_alive "$pidfile"; then
         kill_run "$pidfile"
         return
     fi
@@ -4559,19 +4655,22 @@ top_row() {
     dropped="$(count_dropped "$plan")"
     done_count=$((total - remaining - dropped))
 
-    local pid="" pid_display state
+    local pid="" identity="" pid_display state
     if [[ -f "$pidfile" ]]; then
-        pid="$(tr -d '[:space:]' < "$pidfile")"
+        pid="$(read_pidfile_pid "$pidfile")"
+        identity="$(read_pidfile_identity "$pidfile")"
     fi
     # No live sidecar is not the same as no live run: ask the registry before
-    # concluding the run is over.
-    if ! process_alive "$pid"; then
+    # concluding the run is over. A pid it hands back has already been checked
+    # against its own recorded identity, so it needs no second one here.
+    if ! run_pid_alive "$pid" "$identity"; then
         pid="$(registered_pid_for_base "$(absolute_run_base "$plan")")"
+        identity=""
     fi
     # A live pidfile outranks a schedule (the waiter fired between the two
     # reads); a dead one does not, because scheduling over a finished run's
     # leftovers is allowed. Same order run_status reads them in.
-    if process_alive "$pid"; then
+    if run_pid_alive "$pid" "$identity"; then
         pid_display="$pid"
         if detect_blocked "$out"; then
             state="running (blocked)"
