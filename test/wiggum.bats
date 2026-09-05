@@ -6899,3 +6899,86 @@ date_flag_calls() {
         date_flag_calls)"
     [ -z "$found" ]
 }
+
+# ── install.sh ───────────────────────────────────────────────────────────────
+
+# A source tree holding the two files the installer insists on, plus a copy of
+# install.sh: SOURCE_DIR is the installer's own directory, so a fake source has
+# to carry the installer itself.
+make_install_source() {
+    local dir="$1" body="$2"
+    mkdir -p "$dir/lib"
+    printf '#!/usr/bin/env bash\n%s\n' "$body" > "$dir/wiggum.sh"
+    printf '# lib: %s\n' "$body" > "$dir/lib/wiggum.sh"
+    cp "$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/install.sh" "$dir/install.sh"
+}
+
+inode_of() {
+    ls -i "$1" | awk '{print $1}'
+}
+
+@test "install: an upgrade swaps the file, leaving a run that holds it open alone" {
+    # bash reads a script by byte offset as it goes, and a wiggum run holds its
+    # script open for hours. Rewriting that inode in place moves every offset
+    # under a live run: bash resumes inside the new text and dies on the
+    # fragment it lands in -- "syntax error near unexpected token", exit 2, on a
+    # plan that was doing fine. Installing by rename leaves the old inode for
+    # the run that started on it.
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME"
+    local src="$TEST_DIR/src" prefix="$TEST_DIR/prefix" installed
+    installed="$prefix/lib/wiggum/wiggum.sh"
+
+    make_install_source "$src" "echo v1"
+    WIGGUM_PREFIX="$prefix" bash "$src/install.sh" >/dev/null
+
+    local before after held
+    before="$(inode_of "$installed")"
+    exec 9< "$installed"
+
+    make_install_source "$src" "echo v2 -- longer, so every byte offset moves"
+    WIGGUM_PREFIX="$prefix" bash "$src/install.sh" >/dev/null
+
+    after="$(inode_of "$installed")"
+    held="$(cat <&9)"
+    exec 9<&-
+
+    [ "$before" != "$after" ] || return 1
+    grep -q 'echo v1' <<< "$held" || return 1
+    ! grep -q 'v2' <<< "$held" || return 1
+    grep -q 'echo v2' "$installed"
+}
+
+@test "install: no half-written file is ever visible at the installed path" {
+    # The temp the installer renames from must sit beside the destination, not
+    # be the destination -- and it must not be left behind.
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME"
+    local src="$TEST_DIR/src" prefix="$TEST_DIR/prefix"
+    make_install_source "$src" "echo v1"
+    WIGGUM_PREFIX="$prefix" bash "$src/install.sh" >/dev/null
+    WIGGUM_PREFIX="$prefix" bash "$src/install.sh" >/dev/null
+
+    [ ! -e "$prefix/lib/wiggum/wiggum.sh.new" ] || return 1
+    [ ! -e "$prefix/lib/wiggum/lib/wiggum.sh.new" ] || return 1
+    [ -x "$prefix/lib/wiggum/wiggum.sh" ] || return 1
+    [ -L "$prefix/bin/wiggum" ]
+}
+
+@test "install: a prefix that is not /usr/local writes nothing outside itself" {
+    # The suite installs into a temp prefix, so completion files must follow the
+    # prefix rather than landing in the developer's real site-functions dir.
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME"
+    local src="$TEST_DIR/src" prefix="$TEST_DIR/prefix"
+    make_install_source "$src" "echo v1"
+    mkdir -p "$src/completions" "$prefix/share/zsh/site-functions" \
+             "$prefix/etc/bash_completion.d"
+    echo "# zsh completion" > "$src/completions/wiggum.zsh"
+    echo "# bash completion" > "$src/completions/wiggum.bash"
+
+    WIGGUM_PREFIX="$prefix" bash "$src/install.sh" >/dev/null
+
+    grep -q 'zsh completion' "$prefix/share/zsh/site-functions/_wiggum" || return 1
+    grep -q 'bash completion' "$prefix/etc/bash_completion.d/wiggum"
+}
