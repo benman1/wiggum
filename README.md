@@ -1204,7 +1204,7 @@ dependencies. Open it directly to preview it:
 open site/index.html
 ```
 
-Pushing any change under `site/` deploys it to <https://benman1.github.io/wiggum/> via
+Pushing any change under `site/` deploys it to <http://benauffarth.com/wiggum/> via
 `.github/workflows/pages.yml`. It is served from `site/` rather than `docs/` because
 `docs/` is where wiggum keeps its own plans, summaries and run sidecars — publishing
 that directory would put every workplan in the repo on the web.
