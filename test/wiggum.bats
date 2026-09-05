@@ -7362,3 +7362,92 @@ STALE_IDENTITY="Thu  1 Jan 00:00:00 2000"
     [[ "$output" == *"no longer waiting"* ]] || return 1
     [ ! -f docs/s_plan.scheduled ]
 }
+
+# ── a run's own verdict outranks its pid ─────────────────────────────────────
+
+@test "pidfile_alive: a recorded final status ends the run, whatever the pid says" {
+    # The case that needs no identity, and so is the only one that reaches the
+    # sidecars written before wiggum recorded them: a background run that
+    # finished in August, whose pid the kernel has since handed to a browser.
+    mkdir -p docs
+    sleep 30 &
+    local heir=$!
+    echo "$heir" > docs/old_plan.pid
+    printf 'Status: complete\n' > docs/old_plan.out
+    run pidfile_alive docs/old_plan.pid
+    kill "$heir" 2>/dev/null || true
+    wait "$heir" 2>/dev/null || true
+    [ "$status" -ne 0 ]
+}
+
+@test "pidfile_alive: a run that has not recorded a status yet is alive" {
+    mkdir -p docs
+    sleep 30 &
+    local live=$!
+    write_pidfile docs/live_plan.pid "$live"
+    printf 'working\n' > docs/live_plan.out
+    run pidfile_alive docs/live_plan.pid
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+}
+
+@test "pidfile_alive: a relaunch is not read as the last run's finish" {
+    # `.out` appends across runs. Reading the whole file would find the previous
+    # run's status and declare the new run over before it has done anything.
+    mkdir -p docs
+    sleep 30 &
+    local live=$!
+    write_pidfile docs/re_plan.pid "$live"
+    printf 'Status: complete\n%s 2026-09-05 19:00:00 ---\n' \
+        "$WIGGUM_RUN_SEPARATOR_PREFIX" > docs/re_plan.out
+    run pidfile_alive docs/re_plan.pid
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+}
+
+@test "kill_run: a finished run's sidecar signals nothing when its pid answers" {
+    mkdir -p docs
+    sleep 30 &
+    local heir=$!
+    echo "$heir" > docs/old_plan.pid
+    printf 'Status: complete\n' > docs/old_plan.out
+    run kill_run docs/old_plan.pid
+    local survived=0
+    kill -0 "$heir" 2>/dev/null && survived=1
+    kill "$heir" 2>/dev/null || true
+    wait "$heir" 2>/dev/null || true
+    [ "$survived" -eq 1 ] || return 1
+    [[ "$output" == *"finished (complete)"* ]] || return 1
+    [ ! -f docs/old_plan.pid ]
+}
+
+@test "top_row: a finished run whose pid was reused does not read as running" {
+    mkdir -p docs
+    printf -- '- [x] a\n' > docs/old_plan.md
+    sleep 30 &
+    local heir=$!
+    echo "$heir" > docs/old_plan.pid
+    printf 'Status: complete\n' > docs/old_plan.out
+    run top_row docs/old_plan
+    kill "$heir" 2>/dev/null || true
+    wait "$heir" 2>/dev/null || true
+    [[ "$output" == *"finished: complete"* ]] || return 1
+    [[ "$output" != *"$heir"* ]] || return 1
+}
+
+@test "run_status: a finished run whose pid was reused is not called running" {
+    mkdir -p docs
+    printf -- '- [x] a\n' > docs/old_plan.md
+    sleep 30 &
+    local heir=$!
+    echo "$heir" > docs/old_plan.pid
+    printf 'Status: complete\n' > docs/old_plan.out
+    FILES=(docs/old_plan.md)
+    run run_status
+    kill "$heir" 2>/dev/null || true
+    wait "$heir" 2>/dev/null || true
+    [[ "$output" != *"running (pid"* ]] || return 1
+    [[ "$output" == *"finished: complete"* ]] || return 1
+}

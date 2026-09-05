@@ -802,6 +802,11 @@ clears the sidecar instead of firing. Do the same when you supervise a run yours
 capture `ps -o lstart= -p "$pid"` at launch and compare it before you `kill`, because
 `kill -0` cannot tell your run from whatever inherited its number.
 
+A run whose `.out` records a final status is finished whatever its pid answers, which is
+the check that also covers sidecars written before wiggum recorded start times. If you
+are judging a run yourself, read its status before its pid: `Status: complete` plus a
+live pid means the number was reused, not that the run came back.
+
 To supervise a long chain, background it and watch the active plan's sidecars, or run
 the plans one at a time with the supervise loop in step 3 so you can inspect and fix
 between stages.
