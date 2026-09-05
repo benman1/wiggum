@@ -2454,6 +2454,11 @@ clears the sidecar instead of firing. Do the same when you supervise a run yours
 capture `ps -o lstart= -p "$pid"` at launch and compare it before you `kill`, because
 `kill -0` cannot tell your run from whatever inherited its number.
 
+A run whose `.out` records a final status is finished whatever its pid answers, which is
+the check that also covers sidecars written before wiggum recorded start times. If you
+are judging a run yourself, read its status before its pid: `Status: complete` plus a
+live pid means the number was reused, not that the run came back.
+
 To supervise a long chain, background it and watch the active plan's sidecars, or run
 the plans one at a time with the supervise loop in step 3 so you can inspect and fix
 between stages.
@@ -3589,9 +3594,16 @@ read_pidfile_identity() {
 }
 
 # The run named by PIDFILE is alive, and is the run that wrote it.
+#
+# A run that recorded a final status is over, whatever its pid now answers: the
+# number has been handed to somebody else. That check needs no identity, so it
+# is the one thing that also protects the sidecars written before wiggum
+# recorded them -- and `.out` is read for the current run only, so a relaunch
+# over the same sidecars is not mistaken for the finish of the last one.
 pidfile_alive() {
     local pidfile="$1"
     [[ -f "$pidfile" ]] || return 1
+    [[ -z "$(read_run_status "${pidfile%.pid}.out")" ]] || return 1
     run_pid_alive "$(read_pidfile_pid "$pidfile")" "$(read_pidfile_identity "$pidfile")"
 }
 
@@ -4350,17 +4362,16 @@ run_status() {
     echo "Plan: $base"
     format_progress "$total" "$done_count" "$remaining" "$dropped"
 
-    local state="not started" pid="" identity=""
+    local state="not started" pid=""
     if [[ -f "$pidfile" ]]; then
         pid="$(read_pidfile_pid "$pidfile")"
-        identity="$(read_pidfile_identity "$pidfile")"
     fi
 
     # A live pidfile outranks a schedule: both present means the waiter fired
     # between the two reads, and the pidfile is the newer fact. A dead one does
     # not, because scheduling is allowed over a finished run's pidfile and the
     # leftover must not shadow the schedule that replaced it.
-    if run_pid_alive "$pid" "$identity"; then
+    if pidfile_alive "$pidfile"; then
         if detect_blocked "$outfile"; then
             state="running but appears blocked (pid $pid)"
         else
@@ -4471,12 +4482,17 @@ kill_run() {
     # The check that keeps this from being a footgun. A sidecar naming a pid
     # the kernel has since handed to somebody else looks exactly like a live
     # run, and everything below signals a whole process tree.
-    if ! run_pid_alive "$pid" "$identity"; then
-        if [[ -n "$identity" ]] && process_alive "$pid"; then
+    if ! pidfile_alive "$pidfile"; then
+        local finished
+        finished="$(read_run_status "${pidfile%.pid}.out")"
+        if ! process_alive "$pid"; then
+            echo "Wiggum run (pid $pid) is not running; cleaning up pidfile." >&2
+        elif [[ -n "$finished" ]]; then
+            echo "The run this sidecar names finished ($finished), so pid $pid is" \
+                 "somebody else's now; signalling nothing and cleaning up." >&2
+        else
             echo "Pid $pid is alive but is not the run this sidecar recorded" \
                  "(the pid was reused); signalling nothing and cleaning up." >&2
-        else
-            echo "Wiggum run (pid $pid) is not running; cleaning up pidfile." >&2
         fi
         release_pidfile "$pidfile" "$pid"
         return 0
@@ -4655,22 +4671,21 @@ top_row() {
     dropped="$(count_dropped "$plan")"
     done_count=$((total - remaining - dropped))
 
-    local pid="" identity="" pid_display state
-    if [[ -f "$pidfile" ]]; then
+    local pid="" pid_display state
+    if pidfile_alive "$pidfile"; then
         pid="$(read_pidfile_pid "$pidfile")"
-        identity="$(read_pidfile_identity "$pidfile")"
-    fi
-    # No live sidecar is not the same as no live run: ask the registry before
-    # concluding the run is over. A pid it hands back has already been checked
-    # against its own recorded identity, so it needs no second one here.
-    if ! run_pid_alive "$pid" "$identity"; then
+    else
+        # No live sidecar is not the same as no live run: ask the registry
+        # before concluding the run is over. A pid it hands back has already
+        # been checked against its own recorded identity.
         pid="$(registered_pid_for_base "$(absolute_run_base "$plan")")"
-        identity=""
     fi
     # A live pidfile outranks a schedule (the waiter fired between the two
     # reads); a dead one does not, because scheduling over a finished run's
-    # leftovers is allowed. Same order run_status reads them in.
-    if run_pid_alive "$pid" "$identity"; then
+    # leftovers is allowed. Same order run_status reads them in. Both sources
+    # above hand back a pid they have already verified, so liveness is all that
+    # is left to ask.
+    if process_alive "$pid"; then
         pid_display="$pid"
         if detect_blocked "$out"; then
             state="running (blocked)"
