@@ -364,18 +364,20 @@ Every supervision command refers to a run **by its plan file** and derives those
 | `wiggum status docs/plan.md` | Print task counts and run state: `not started`, `running`, `running but appears blocked`, or `finished: <reason>`. Read-only. |
 | `wiggum watch docs/plan.md` | Stream the run's output and **block until it finishes** — wiggum's "wait". Exits 0 only when the run finished `complete`. |
 | `wiggum kill docs/plan.md` | Stop the run — and only this run's process tree (the wiggum process and the `claude` it spawned). Never a blanket kill. |
-| `wiggum top` | An at-a-glance overview of every run on the machine: one line per run — plan, pid, state, and task tally. Read-only. |
+| `wiggum top` | An at-a-glance overview of every run on the machine: one line per run — plan, pid, state, time since last activity, and task tally. Read-only. `--json` for scripts. |
 
 Unlike `status` (one plan), `wiggum top` surveys **every** run at once — and not only the ones in this directory. Any run in flight anywhere on the machine appears, shown by its absolute path when it belongs to another project:
 
 ```
 $ wiggum top
-PLAN                                     PID      STATE                TASKS
-/Users/me/other-project/docs/etl_plan.md 8123     running              3/9 done, 6 left
-docs/global-score_plan.md                519      running              4/12 done, 8 left
-docs/api_plan.md                         -        finished: complete   9/9 done
-docs/ui_plan.md                          621      running (blocked)    2/7 done, 5 left
+PLAN                                     PID      STATE                ACTIVITY  TASKS
+docs/ui_plan.md                          621      running (blocked)    41m 12s   2/7 done, 5 left
+/Users/me/other-project/docs/etl_plan.md 8123     running              12s       3/9 done, 6 left
+docs/global-score_plan.md                519      running              1m 4s     4/12 done, 8 left
+docs/api_plan.md                         -        finished: complete   3d 2h     9/9 done
 ```
+
+Rows are ordered by state: blocked first, then running, then scheduled, then everything finished. `ACTIVITY` is the age of the newest sidecar write, which is what separates a long task from a wedged one — both read `running`, and only the clock tells them apart. `wiggum top --json` emits the same records for scripts, with `pid` and `idle_seconds` null when absent rather than `-`.
 
 Every run registers a pidfile while it works — foreground and background alike — so a plan running inside `wiggum chain` appears here too, as the row for whichever plan the chain is on right now. A scheduled run appears as `scheduled for <time>`.
 
@@ -695,6 +697,7 @@ Options:
   --explain-file <path>    Write the explanation to a file instead of stdout (explain mode)
   --no-feedback            Skip the feedback pass over the finished plan (plan mode)
   --queue <file>           Read the plan list from a file, re-read after each plan (chain mode)
+  --json                   Emit runs as JSON instead of a table (top mode)
   --max-iterations <n>    Maximum implementation iterations (execute/chain, default: 30)
   --benchmark <script>    Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)

@@ -43,6 +43,7 @@ wiggum_reset() {
     SUMMARY_FILE=""
     EXPLAIN_FILE=""
     QUEUE_FILE=""
+    TOP_JSON=false
     NO_FEEDBACK=false
     MAX_ITERATIONS=30
     MAX_VALIDATION_RETRIES=5
@@ -658,7 +659,16 @@ Usage:
 
 Prints one line per run: the plan, its pid (or '-' if not running), its state
 (running / running (blocked) / scheduled for <time> / finished: <reason> / not
-running), and a task tally. Read-only -- never starts or stops anything.
+running), how long since the run last wrote anything, and a task tally.
+Read-only -- never starts or stops anything.
+
+Options:
+  --json               Emit the same records as JSON instead of a table
+
+ACTIVITY is the age of the newest sidecar write. It is what separates a long
+task from a wedged one: both read 'running', and only the clock tells them
+apart. With --json, 'pid' and 'idle_seconds' are null when absent rather than
+'-', so a script can test for absence instead of parsing the table.
 
 With no arguments it shows every run in flight anywhere on this machine,
 whichever directory it was started from, plus every run with a sidecar in
@@ -681,6 +691,7 @@ background run lingers as 'finished: <reason>' until its next run.
 Examples:
   wiggum top                # everything running, anywhere
   wiggum top plans/         # only what is in plans/
+  wiggum top --json | jq -r '.[] | select(.state == "running") | .plan'
 EOF
             ;;
         docs)
@@ -928,6 +939,10 @@ parse_args() {
             --queue)
                 QUEUE_FILE="$2"
                 shift 2
+                ;;
+            --json)
+                TOP_JSON=true
+                shift
                 ;;
             --no-feedback)
                 NO_FEEDBACK=true
@@ -1695,7 +1710,8 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum kill <plan>` | Stop the run (only that run's process tree). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
-| `wiggum top` | Every run at a glance: one line per known run (plan, pid, state, task tally). Read-only — use it to see them all at once. |
+| `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, task tally. Blocked and running sort first. Read-only. |
+| `wiggum top --json` | The same records as JSON, with `pid` and `idle_seconds` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
 `docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
@@ -4356,9 +4372,48 @@ find_run_sidecars() {
     done | sort -u
 }
 
-# Render one `top` row for the run at BASE (a plan path minus its `.md`): the
-# plan, the pid (or `-` if not running), the state, and a task tally. Derives
-# every sidecar from the base and resolves state in the same precedence
+# Modification time of a file, in epoch seconds. BSD and GNU `stat` disagree on
+# the flag, and neither is present everywhere, so fall back to nothing rather
+# than to a wrong number: a missing timestamp hides a column, a wrong one is
+# read as activity that did not happen.
+file_mtime_epoch() {
+    local f="$1"
+    [[ -f "$f" ]] || return 0
+    stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || true
+}
+
+# Seconds since a run last wrote to any of its sidecars, or nothing when it has
+# never written one.
+#
+# This is the column that separates a long task from a wedged one. `running`
+# alone cannot: a chain whose claude session is stuck looks exactly like a chain
+# doing an hour of real work, and the only way to tell them apart used to be
+# diffing log tails by hand.
+run_last_activity() {
+    local base="$1" newest="" f m
+    for f in "${base}.log" "${base}.out" "${base}.pid"; do
+        m="$(file_mtime_epoch "$f")"
+        [[ -n "$m" ]] || continue
+        if [[ -z "$newest" || "$m" -gt "$newest" ]]; then
+            newest="$m"
+        fi
+    done
+    [[ -n "$newest" ]] || return 0
+    local now
+    now="$(wiggum_now_epoch)"
+    echo $((now - newest))
+}
+
+# Minimal JSON string escaping: the only values wiggum emits are file paths and
+# short states, so backslash, quote and control characters are the whole set.
+json_escape() {
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e 's/\t/\\t/g'
+}
+
+# One `top` record for the run at BASE (a plan path minus its `.md`), emitted
+# tab-separated for run_top to sort and render: rank, plan, pid (or `-`), state,
+# time since the run last wrote anything, a task tally, then the raw counts.
+# Derives every sidecar from the base and resolves state in the same precedence
 # `status` uses, so the two never describe one run differently.
 top_row() {
     local base="$1"
@@ -4410,6 +4465,15 @@ top_row() {
     [[ "$remaining" -gt 0 ]] && tasks="${tasks}, ${remaining} left"
     [[ "$dropped" -gt 0 ]] && tasks="${tasks}, ${dropped} dropped"
 
+    local idle activity
+    idle="$(run_last_activity "$base")"
+    if [[ -n "$idle" ]]; then
+        activity="$(format_duration "$idle")"
+    else
+        idle=""
+        activity="-"
+    fi
+
     # Leading rank, stripped by run_top after sorting. Without it the table is
     # alphabetical, which buries the one running job among a dozen finished
     # ones -- the opposite of what someone types `top` to find out.
@@ -4420,7 +4484,11 @@ top_row() {
         scheduled*)          rank=2 ;;
     esac
 
-    printf '%s\t%-40s %-8s %-20s %s\n' "$rank" "$plan" "$pid_display" "$state" "$tasks"
+    # Tab-separated record. run_top sorts on the rank and renders the rest as a
+    # table or as JSON, so the two outputs cannot describe a run differently.
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$rank" "$plan" "$pid_display" "$state" "$activity" "$tasks" \
+        "$total" "$done_count" "$remaining" "$dropped"
 }
 
 # Render a run's base path the way `top` should show it: relative when the run
@@ -4474,13 +4542,47 @@ run_top() {
         echo "Start one with: wiggum execute <plan> --background"
         return 0
     fi
-    printf '%-40s %-8s %-20s %s\n' "PLAN" "PID" "STATE" "TASKS"
     # Blocked first, then running, then scheduled, then everything finished.
     # `sort -s` keeps the alphabetical order collect_top_bases produced within
     # each group.
-    for f in "${bases[@]}"; do
-        top_row "$f"
-    done | sort -s -k1,1n | cut -f2-
+    local records
+    records="$(for f in "${bases[@]}"; do top_row "$f"; done | sort -s -k1,1n | cut -f2-)"
+
+    if [[ "$TOP_JSON" == true ]]; then
+        top_render_json "$records"
+        return 0
+    fi
+
+    printf '%-40s %-8s %-20s %-9s %s\n' "PLAN" "PID" "STATE" "ACTIVITY" "TASKS"
+    local plan pid state activity tasks
+    while IFS=$'\t' read -r plan pid state activity tasks _total _done _left _dropped; do
+        [[ -n "$plan" ]] || continue
+        printf '%-40s %-8s %-20s %-9s %s\n' "$plan" "$pid" "$state" "$activity" "$tasks"
+    done <<< "$records"
+}
+
+# `wiggum top --json` -- the same records as the table, for a script that needs
+# to decide something rather than read something. `idle_seconds` is null when a
+# run has never written a sidecar, and `pid` is null when nothing is running,
+# so a caller can test for absence rather than parsing `-`.
+top_render_json() {
+    local records="$1" first=true
+    local plan pid state activity tasks total done_count left dropped
+    echo "["
+    while IFS=$'\t' read -r plan pid state activity tasks total done_count left dropped; do
+        [[ -n "$plan" ]] || continue
+        [[ "$first" == true ]] || echo ","
+        first=false
+        local pid_json="null" idle_json="null" idle
+        [[ "$pid" != "-" ]] && pid_json="$pid"
+        idle="$(run_last_activity "${plan%.md}")"
+        [[ -n "$idle" ]] && idle_json="$idle"
+        printf '  {"plan": "%s", "pid": %s, "state": "%s", "idle_seconds": %s, "tasks": {"total": %s, "done": %s, "remaining": %s, "dropped": %s}}' \
+            "$(json_escape "$plan")" "$pid_json" "$(json_escape "$state")" "$idle_json" \
+            "$total" "$done_count" "$left" "$dropped"
+    done <<< "$records"
+    echo ""
+    echo "]"
 }
 
 # Plan paths listed in a queue file: one per line, `#` starts a comment, blank

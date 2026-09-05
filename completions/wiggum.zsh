@@ -82,6 +82,7 @@ _wiggum() {
             _arguments '*:plan file:_files -g "*.md"'
             ;;
         top)
+            _arguments '--json[Emit runs as JSON instead of a table]' '*:dirs or plans:_files' && return
             _arguments '*:dir or plan:_files'
             ;;
         watch)
