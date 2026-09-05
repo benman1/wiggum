@@ -665,9 +665,11 @@ Read-only -- never starts or stops anything.
 Options:
   --json               Emit the same records as JSON instead of a table
 
-ACTIVITY is the age of the newest sidecar write. It is what separates a long
+ACTIVITY is the age of the run's newest write. It is what separates a long
 task from a wedged one: both read 'running', and only the clock tells them
-apart. With --json, 'pid' and 'idle_seconds' are null when absent rather than
+apart. A live run counts its pidfile too, since one just claimed has written
+nothing else yet; a finished run ages from its output alone, so a leftover
+pidfile cannot make a plan that ended in July look seconds old. With --json, 'pid' and 'idle_seconds' are null when absent rather than
 '-', so a script can test for absence instead of parsing the table.
 
 With no arguments it shows every run in flight anywhere on this machine,
@@ -4633,8 +4635,15 @@ file_mtime_epoch() {
 # doing an hour of real work, and the only way to tell them apart used to be
 # diffing log tails by hand.
 run_last_activity() {
-    local base="$1" newest="" f m
-    for f in "${base}.log" "${base}.out" "${base}.pid"; do
+    local base="$1" live="${2:-}" newest="" f m
+    local -a sidecars=("${base}.log" "${base}.out")
+    # The `.pid` counts only while the run is live, where it is the floor for a
+    # run that has claimed its sidecar but not written output yet. For a run
+    # that is over it records when bookkeeping happened, not when the run last
+    # did anything -- and a leftover pidfile newer than the output would report
+    # a plan that finished weeks ago as active seconds ago.
+    [[ "$live" == live ]] && sidecars+=("${base}.pid")
+    for f in "${sidecars[@]}"; do
         m="$(file_mtime_epoch "$f")"
         [[ -n "$m" ]] || continue
         if [[ -z "$newest" || "$m" -gt "$newest" ]]; then
@@ -4710,8 +4719,9 @@ top_row() {
     [[ "$remaining" -gt 0 ]] && tasks="${tasks}, ${remaining} left"
     [[ "$dropped" -gt 0 ]] && tasks="${tasks}, ${dropped} dropped"
 
-    local idle activity
-    idle="$(run_last_activity "$base")"
+    local idle activity live=""
+    [[ "$pid_display" != "-" ]] && live=live
+    idle="$(run_last_activity "$base" "$live")"
     if [[ -n "$idle" ]]; then
         activity="$(format_duration "$idle")"
     else
@@ -4843,7 +4853,9 @@ top_render_json() {
         first=false
         local pid_json="null" idle_json="null" rss_json="null" cpu_json="null" idle
         [[ "$pid" != "-" ]] && pid_json="$pid"
-        idle="$(run_last_activity "${plan%.md}")"
+        local live=""
+        [[ "$pid" != "-" ]] && live=live
+        idle="$(run_last_activity "${plan%.md}" "$live")"
         [[ -n "$idle" ]] && idle_json="$idle"
         [[ -n "$rss_kb" ]] && rss_json="$rss_kb"
         [[ -n "$cpu" ]] && cpu_json="$cpu"
