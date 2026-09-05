@@ -33,26 +33,25 @@ protect.
 verify it before believing a pidfile or signalling anything. Bare pidfiles
 written by older versions must degrade to "unknown", not to "alive".
 
-### 2. `top` shows no resource cost, which is the question it is asked
+### 2. `top` samples, and the expensive moment is usually over
 
-`top` answers "what is running" but not "what is it costing", so "is it safe to
-launch another run?" still means shelling out to `ps`, `uptime` and
-`sysctl vm.swapusage` and correlating by hand. Two separate wants:
+The `RSS`/`CPU` columns added in `6fb6ba3` read the process tree at the instant
+you look. The run that took this machine to 84% swap was quiet by the time
+anyone looked at it, so a cheap-looking row is not evidence a run is cheap.
 
-- **Per-run `RSS` and `%CPU`**, summed over the run's process group. Measured on
-  pid 70613 at 18:05: the run's own bash is 1.3 MB at 0.0%, its `claude` child is
-  288.9 MB — 290.2 MB for the group. `ps` on the pid `top` already prints tells
-  you nothing about what the run costs.
-- **A machine footer** — load against core count, and swap used — because that
-  is the launch decision, and this box degrades badly above ~90% swap.
-
-Caveat for whoever builds it: an instantaneous sample misses the expensive
-moment. The run that pushed this machine to 84% swap was quiet by the time it
-was looked at. A high-water figure recorded by the run beats a live one read by
-`top`, and that means `execute` has to sample, not just `top`.
+**A fix means `execute` sampling its own process group each iteration** and
+recording a high-water mark into the run's sidecar, for `top` to show beside the
+live figure. That is a change to the run loop, not to `top`, which is why it was
+split out of the columns rather than bolted onto them.
 
 ## Closed
 
+- **`top` said nothing about what a run costs.** Answering "which run is
+  expensive" or "can I launch another" meant shelling out to `ps`, `uptime` and
+  `sysctl` and correlating by hand. Fixed in `6fb6ba3`: `RSS` and `CPU` columns
+  summed over each run's whole process tree, over a footer giving load against
+  cores, swap used, and the live run count. Still an instantaneous sample — the
+  high-water mark stays open below.
 - **`install.sh` rewrote the installed script in place, killing live runs.**
   `cp` truncates and rewrites the same inode; bash reads a script by byte offset
   as it goes, so a run that started before the install resumed inside the new
