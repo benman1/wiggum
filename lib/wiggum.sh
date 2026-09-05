@@ -594,31 +594,36 @@ EOF
             ;;
         top)
             cat <<EOF
-wiggum top - List every known wiggum run at a glance
+wiggum top - List every wiggum run on this machine at a glance
 
 Usage:
   wiggum top [dirs-or-plans...]
 
-Scans for run sidecars (a '.pid' or '.scheduled' next to each plan) and prints
-one line per run: the plan, its pid (or '-' if not running), its state (running
-/ running (blocked) / scheduled for <time> / finished: <reason> / not running),
-and a task tally. Read-only -- never starts or stops anything.
+Prints one line per run: the plan, its pid (or '-' if not running), its state
+(running / running (blocked) / scheduled for <time> / finished: <reason> / not
+running), and a task tally. Read-only -- never starts or stops anything.
 
-With no arguments it scans 'docs/' and the current directory. Each argument may
-be a directory (scanned for '*.pid' and '*.scheduled'), a plan file (its
-sidecars), or a sidecar itself.
+With no arguments it shows every run in flight anywhere on this machine,
+whichever directory it was started from, plus every run with a sidecar in
+'docs/' or the current directory (which is where finished runs are recorded).
+A run outside the current project is shown by its absolute path, so the row
+says which project it belongs to.
 
-Every run registers a pidfile while it works, foreground and background alike,
-so a plan running inside 'wiggum chain' shows up here too -- as the row for the
-plan the chain is on right now.
+Every run announces itself while it works, foreground and background alike, so
+a plan running inside 'wiggum chain' shows up too -- as the row for the plan
+the chain is on right now.
+
+Pass arguments to narrow the view to one place: a directory (scanned for
+'*.pid' and '*.scheduled'), a plan file (its sidecars), or a sidecar itself.
+Arguments turn the machine-wide listing off.
 
 Note: a run drops its own pidfile when it ends, and 'watch'/'kill' clear one
 too, so a finished foreground or chained run won't appear. An unwatched
 background run lingers as 'finished: <reason>' until its next run.
 
 Examples:
-  wiggum top
-  wiggum top plans/
+  wiggum top                # everything running, anywhere
+  wiggum top plans/         # only what is in plans/
 EOF
             ;;
         docs)
@@ -1620,8 +1625,10 @@ they fail with `command not found`. The `wiggum` binary is the only entry point.
   wait for / report on a run, or `wiggum status <plan>` shows `running`: do **not**
   start a new run. Attach to it with `wiggum watch <plan>` to follow it to
   completion (your "wait"), then report a summary (step 5). If you don't know which
-  plan, run `wiggum top` to list every active run, or look for a `docs/*.pid`
-  sidecar. This is the common "what's my background run doing?" case.
+  plan, run `wiggum top` — with no arguments it lists every run in flight
+  anywhere on this machine, not only the ones under the current directory, so a
+  run you started from another project still shows up. This is the common
+  "what's my background run doing?" case.
 - **An existing plan file** (path ending in `_plan.md`, or a markdown file full of
   `- [ ]` tasks): skip to step 3.
 - **"chain: a.md b.md c.md"** or several plan paths: this is a chain — go to
@@ -1974,8 +1981,9 @@ multiplexer supplies the durability, and a daemonizing child would let its sessi
 exit immediately and take the tree down. `tmux new -d -s wig1 '<same>'` works
 identically; macOS has `screen` at `/usr/bin/screen` and no `setsid`.
 
-A foreground run does register a `.pid` while it works, so `wiggum status` and
-`wiggum top` find it — but it clears the sidecar the moment it ends, and a
+A foreground run does register itself while it works — a `.pid` next to the plan
+and an entry in the machine-wide registry — so `wiggum status` and `wiggum top`
+find it from anywhere. But it clears both the moment it ends, and a
 `kill -0 $(cat <plan>.pid)` check then reports "gone" for a plan that merely
 finished, indistinguishable from a real death. The multiplexer session also
 outlives any one plan. Check the session with `screen -ls` / `tmux ls` and a
@@ -2314,8 +2322,9 @@ with the supervise loop in step 3 so you can inspect and fix between stages.
   diagnosis instead of burning more runs.
 - **Launch durably for anything long** (step 3a): `--background` dies with the
   session that started it. Use a detached `screen`/`tmux` with wiggum in the
-  foreground inside it. `wiggum top` finds a foreground run, but the `.pid` is gone
-  the moment the plan ends — for the session as a whole, check `pgrep`.
+  foreground inside it. `wiggum top` finds a foreground run from any directory, but
+  the registration goes the moment the plan ends — for the session as a whole,
+  check `pgrep`.
 - **Rule out a false stall before remediating** (step 4): if a job the task spawned
   is still alive and its output still growing, wait and relaunch — don't rewrite a
   task that was working.
@@ -3279,6 +3288,74 @@ release_pidfile() {
     return 0
 }
 
+# Where runs announce themselves machine-wide, one file per run, named by pid
+# and holding the absolute base path of the plan it is working on.
+#
+# The `.pid` sidecar alone can only ever answer "what is running *here*",
+# because finding one means already knowing which directory to look in. `top`
+# is asked the other question -- "what is running" -- and answering it from the
+# current directory made an idle project look like an idle machine. The process
+# table would answer it too, but only by matching command lines, which is the
+# liveness guess this repo refuses everywhere else.
+#
+# Overridable so a test never writes into the real home directory.
+WIGGUM_REGISTRY_DIR="${WIGGUM_REGISTRY_DIR:-${HOME:-/tmp}/.wiggum/runs}"
+
+# Absolute base path (the plan minus its `.md`) for a plan given by any path.
+# `top` prints these for runs outside the current directory, so a row says
+# which project it belongs to rather than just which plan.
+absolute_run_base() {
+    local base="$1" dir name
+    dir="$(cd "$(dirname "$base")" 2>/dev/null && pwd)" || return 0
+    name="$(basename "$base" .md)"
+    printf '%s/%s\n' "$dir" "$name"
+}
+
+# Announce a run in the machine-wide registry. Keyed by the pid that is doing
+# the work, so a dead entry is self-evident and can be pruned on sight.
+register_run() {
+    local pid="$1" base="$2" abs
+    [[ -n "$pid" && -n "$base" ]] || return 0
+    abs="$(absolute_run_base "$base")"
+    [[ -n "$abs" ]] || return 0
+    mkdir -p "$WIGGUM_REGISTRY_DIR" 2>/dev/null || return 0
+    printf '%s\n' "$abs" > "$WIGGUM_REGISTRY_DIR/$pid" 2>/dev/null || return 0
+    return 0
+}
+
+# Every run registered anywhere on this machine, as absolute base paths.
+#
+# Reading prunes: an entry whose pid is gone belongs to a run that ended, or
+# one killed before it could clean up after itself. Nothing else sweeps this
+# directory, so the read has to, or a crash would leave a phantom run listed
+# forever -- and a `top` that invents runs is no better than one that hides
+# them.
+find_registered_runs() {
+    [[ -d "$WIGGUM_REGISTRY_DIR" ]] || return 0
+    local f pid base
+    for f in "$WIGGUM_REGISTRY_DIR"/*; do
+        [[ -f "$f" ]] || continue
+        pid="$(basename "$f")"
+        if ! process_alive "$pid"; then
+            rm -f "$f"
+            continue
+        fi
+        base="$(head -n1 "$f")"
+        [[ -n "$base" ]] && echo "$base"
+    done
+    return 0
+}
+
+# Drop a run's registry entry. Takes the pid it was filed under, which is not
+# always `$$`: launch_execute_background files its detached child under the
+# child's pid.
+unregister_run() {
+    local pid="$1"
+    [[ -n "$pid" ]] || return 0
+    rm -f "$WIGGUM_REGISTRY_DIR/$pid"
+    return 0
+}
+
 # Record the running process in the plan's `.pid` sidecar.
 #
 # That sidecar is the only thing `top`/`status`/`watch`/`kill` look for, and it
@@ -3320,6 +3397,7 @@ claim_run_pidfile() {
     mkdir -p "$(dirname "$pidfile")"
     printf '%s\n' "$$" > "$pidfile"
     WIGGUM_RUN_PIDFILE="$pidfile"
+    register_run "$$" "$base"
     return 0
 }
 
@@ -3340,6 +3418,7 @@ claim_run_pidfile() {
 release_run_pidfile() {
     [[ -n "$WIGGUM_RUN_PIDFILE" ]] || return 0
     release_pidfile "$WIGGUM_RUN_PIDFILE" "$$"
+    unregister_run "$$"
     WIGGUM_RUN_PIDFILE=""
     return 0
 }
@@ -3407,6 +3486,11 @@ launch_execute_background() {
     ( run_execute ) >>"$outfile" 2>&1 &
     local pid=$!
     echo "$pid" > "$pidfile"
+    # File the child under its own pid, not this shell's: the CLI exits as soon
+    # as this function returns, and an entry keyed to a dead launcher would be
+    # pruned out from under a run that is still going. Nothing unregisters it
+    # when the run ends -- find_registered_runs prunes it when the pid goes.
+    register_run "$pid" "$base"
 
     echo "Started wiggum execute in the background." >&2
     echo "  pid:     $pid" >&2
@@ -4066,18 +4150,54 @@ top_row() {
     printf '%-40s %-8s %-20s %s\n' "$plan" "$pid_display" "$state" "$tasks"
 }
 
-# `wiggum top` -- a one-shot, at-a-glance overview of every wiggum run wiggum
-# knows about: anything carrying a `.pid` or `.scheduled` sidecar. Optional args
-# narrow or widen the scan (directories, plan files, or sidecars). Read-only;
-# never starts or stops anything.
+# Render a run's base path the way `top` should show it: relative when the run
+# belongs to the current directory, absolute when it does not.
+#
+# It also makes the two discovery sources dedupe against each other by plain
+# string comparison, so a local run found both in the registry and by the
+# directory scan is one row rather than two.
+relativize_run_base() {
+    local base="$1"
+    case "$base" in
+        "$PWD"/*) base="${base#"$PWD"/}" ;;
+        ./*)      base="${base#./}" ;;
+    esac
+    printf '%s\n' "$base"
+}
+
+# The set of runs `wiggum top` should show.
+#
+# With no arguments, that is every run registered anywhere on this machine plus
+# every run with a sidecar in `docs/` or the current directory. The registry
+# supplies what is running elsewhere; the directory scan supplies local history,
+# which the registry deliberately drops as soon as a run's process is gone.
+#
+# With arguments, it is exactly what was asked for and nothing else -- that is
+# what makes `wiggum top <dir>` a way to narrow the view rather than a second
+# way to widen it.
+collect_top_bases() {
+    local f
+    if [[ $# -gt 0 ]]; then
+        find_run_sidecars "$@"
+        return 0
+    fi
+    { find_registered_runs; find_run_sidecars; } | while IFS= read -r f; do
+        relativize_run_base "$f"
+    done | sort -u
+}
+
+# `wiggum top` -- a one-shot, at-a-glance overview of every wiggum run on this
+# machine, wherever it was started from, plus any run with a sidecar here.
+# Optional args narrow the view to given directories, plan files, or sidecars.
+# Read-only; never starts or stops anything.
 run_top() {
     # Portable collect (no mapfile -- wiggum targets bash 3.2+ on stock macOS).
     local bases=() f
     while IFS= read -r f; do
         [[ -n "$f" ]] && bases+=("$f")
-    done < <(find_run_sidecars "${FILES[@]+"${FILES[@]}"}")
+    done < <(collect_top_bases "${FILES[@]+"${FILES[@]}"}")
     if [[ ${#bases[@]} -eq 0 ]]; then
-        echo "No wiggum runs found (no .pid or .scheduled sidecars in docs/ or the current directory)."
+        echo "No wiggum runs found (nothing registered on this machine, and no .pid or .scheduled sidecars in docs/ or the current directory)."
         echo "Start one with: wiggum execute <plan> --background"
         return 0
     fi

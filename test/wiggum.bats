@@ -15,6 +15,11 @@ setup() {
     # Source the library (sets defaults via wiggum_reset)
     source "$WIGGUM_LIB"
 
+    # Keep the machine-wide run registry inside the temp dir: a test that starts
+    # a run must never announce it in the real ~/.wiggum, nor read runs the
+    # developer actually has going.
+    WIGGUM_REGISTRY_DIR="$TEST_DIR/registry"
+
     # Stub claude so it never actually runs
     claude() { return 0; }
     export -f claude
@@ -4512,6 +4517,139 @@ EOF
     [ "$status" -eq 0 ]
 }
 
+# ── run registry (machine-wide discovery) ────────────────────────────────────
+
+@test "register_run: files a run under its pid with an absolute base path" {
+    mkdir -p docs
+    : > docs/r_plan.md
+    register_run 4242 docs/r_plan.md
+    [ -f "$WIGGUM_REGISTRY_DIR/4242" ]
+    [ "$(cat "$WIGGUM_REGISTRY_DIR/4242")" = "$TEST_DIR/docs/r_plan" ]
+}
+
+@test "find_registered_runs: lists live runs and prunes dead ones" {
+    mkdir -p docs
+    : > docs/live_plan.md
+    : > docs/dead_plan.md
+    sleep 30 &
+    local live=$!
+    sleep 1 &
+    local dead=$!
+    kill "$dead" 2>/dev/null; wait "$dead" 2>/dev/null || true
+    register_run "$live" docs/live_plan.md
+    register_run "$dead" docs/dead_plan.md
+    run find_registered_runs
+    kill "$live" 2>/dev/null; wait "$live" 2>/dev/null || true
+    [ "$output" = "$TEST_DIR/docs/live_plan" ]
+    # The read is the only thing that sweeps the registry, so it has to prune.
+    [ ! -f "$WIGGUM_REGISTRY_DIR/$dead" ]
+}
+
+@test "find_registered_runs: empty when nothing is registered" {
+    run find_registered_runs
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "claim_run_pidfile: announces the run machine-wide, release withdraws it" {
+    mkdir -p docs
+    : > docs/r_plan.md
+    claim_run_pidfile docs/r_plan.md
+    [ "$(cat "$WIGGUM_REGISTRY_DIR/$$")" = "$TEST_DIR/docs/r_plan" ]
+    release_run_pidfile
+    [ ! -f "$WIGGUM_REGISTRY_DIR/$$" ]
+}
+
+@test "relativize_run_base: local runs render relative, others absolute" {
+    run relativize_run_base "$PWD/docs/here_plan"
+    [ "$output" = "docs/here_plan" ]
+    run relativize_run_base "./cwd_plan"
+    [ "$output" = "cwd_plan" ]
+    run relativize_run_base "/elsewhere/proj/docs/there_plan"
+    [ "$output" = "/elsewhere/proj/docs/there_plan" ]
+}
+
+@test "collect_top_bases: with no args, unions the registry with the local scan" {
+    mkdir -p docs
+    : > docs/local_plan.md
+    : > docs/local_plan.pid
+    # A genuinely different project, outside this one -- the case the directory
+    # scan cannot see and the registry exists for.
+    local remote
+    remote="$(mktemp -d)"
+    mkdir -p "$remote/docs"
+    : > "$remote/docs/remote_plan.md"
+    sleep 30 &
+    local pid=$!
+    register_run "$pid" "$remote/docs/remote_plan.md"
+    run collect_top_bases
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    rm -rf "$remote"
+    [[ "$output" == *"docs/local_plan"* ]] || return 1
+    [[ "$output" == *"$remote/docs/remote_plan"* ]] || return 1
+}
+
+@test "collect_top_bases: a local run found twice is one row" {
+    mkdir -p docs
+    : > docs/dup_plan.md
+    : > docs/dup_plan.pid
+    sleep 30 &
+    local pid=$!
+    register_run "$pid" docs/dup_plan.md
+    run collect_top_bases
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [ "${#lines[@]}" -eq 1 ]
+    [ "$output" = "docs/dup_plan" ]
+}
+
+@test "collect_top_bases: arguments narrow the view instead of widening it" {
+    mkdir -p docs
+    : > docs/local_plan.md
+    : > docs/local_plan.pid
+    local remote
+    remote="$(mktemp -d)"
+    mkdir -p "$remote/docs"
+    : > "$remote/docs/remote_plan.md"
+    sleep 30 &
+    local pid=$!
+    register_run "$pid" "$remote/docs/remote_plan.md"
+    run collect_top_bases docs
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    rm -rf "$remote"
+    [ "$output" = "docs/local_plan" ]
+}
+
+@test "run_top: shows a run started from another directory" {
+    local remote
+    remote="$(mktemp -d)"
+    mkdir -p "$remote/docs"
+    cat > "$remote/docs/remote_plan.md" <<'EOF'
+- [ ] a
+- [x] b
+EOF
+    sleep 30 &
+    local pid=$!
+    echo "$pid" > "$remote/docs/remote_plan.pid"
+    register_run "$pid" "$remote/docs/remote_plan.md"
+    FILES=()
+    run run_top
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    [ "$status" -eq 0 ]
+    # Absolute, because the row has to say which project it belongs to.
+    [[ "$output" == *"$remote/docs/remote_plan.md"* ]] || return 1
+    [[ "$output" == *"$pid"* ]] || return 1
+    [[ "$output" == *"running"* ]] || return 1
+    [[ "$output" == *"1/2 done, 1 left"* ]] || return 1
+    rm -rf "$remote"
+}
+
+@test "run_top: says so when the machine has nothing running anywhere" {
+    FILES=()
+    run run_top
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"nothing registered on this machine"* ]] || return 1
+}
+
 # ── launch_execute_background ─────────────────────────────────────────────────
 
 @test "launch_execute_background: writes pidfile + out, runs the loop once" {
@@ -4554,6 +4692,27 @@ EOF
     # background run nobody watched.
     [ -f docs/plan.pid ]
     [ "$(cat docs/plan.pid)" = "$pid" ]
+}
+
+@test "launch_execute_background: registers the detached child, not the launcher" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    # Hold the child open long enough to read the registry while it is alive.
+    run_execute() { sleep 5; }
+    FILES=(docs/plan.md)
+    BACKGROUND=true
+    launch_execute_background >/dev/null 2>&1
+    local pid
+    pid="$(cat docs/plan.pid)"
+    [ "$(cat "$WIGGUM_REGISTRY_DIR/$pid")" = "$TEST_DIR/docs/plan" ]
+    [ ! -f "$WIGGUM_REGISTRY_DIR/$$" ]
+    kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    # Nothing unregisters a background run; the next read prunes it.
+    run find_registered_runs
+    [ -z "$output" ]
+    [ ! -f "$WIGGUM_REGISTRY_DIR/$pid" ]
 }
 
 @test "launch_execute_background: refuses to start over a live run" {
