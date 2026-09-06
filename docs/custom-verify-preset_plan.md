@@ -1,5 +1,12 @@
 # Custom verify preset for projects with no detectable toolchain
 
+> **Stale as of the init simplification.** `prompt_permission_mode` and
+> `setup_claude_permissions` no longer exist: `init` writes `permission_mode = auto`
+> without asking, and stopped writing a `.claude/settings.local.json` allow list at
+> all. The two tasks citing them need rewriting before this plan runs, and the
+> "Never do" note about following the permission-mode prompt's pattern no longer has
+> a pattern to follow — a fresh `init` now asks nothing.
+
 ## Constraints
 
 - **In scope:** Let `wiggum init` fall back to asking for a verification command when

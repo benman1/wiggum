@@ -834,8 +834,8 @@ between stages.
 - **Refer to runs by their plan file** — that's how status/watch/kill find the
   sidecars.
 - **Always pass `--max-iterations`, sized to the plan's open checkboxes** (step 3).
-  The 3-iteration default is a floor for toy plans, not a budget for a real
-  workplan, and under-sizing it turns a working run into a false `incomplete`.
+  The default of 30 is a round number, not a budget derived from this plan, and
+  under-sizing it turns a working run into a false `incomplete`.
   Check any human-suggested number against the box count before using it.
 - **Size the watch timeout too, and separately** (step 3): `--max-iterations`
   bounds tasks, `watch --timeout` bounds your wall clock. Drop

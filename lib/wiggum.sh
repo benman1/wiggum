@@ -445,10 +445,10 @@ Presets:
   bash      Bash project (shellcheck, bats)
   (none)    Auto-detect from project files
 
-Asks which Claude permission mode to write into .wiggumrc (auto, the
-guardrailed default, or bypassPermissions). Also offers to set up Claude Code
-permissions in .claude/settings.local.json and reminds you to create a
-CLAUDE.md if one is missing.
+Also installs two Claude Code files: the /wiggum skill at
+.claude/skills/wiggum/SKILL.md and the always-loaded project rule at
+.claude/rules/wiggum.md. It asks only before overwriting something that is
+already there, and reminds you to create a CLAUDE.md if one is missing.
 EOF
             ;;
         plan)
@@ -1482,24 +1482,6 @@ RCEOF
     esac
 }
 
-# Ask which Claude permission mode wiggum should bake into .wiggumrc. Prints the
-# chosen mode to stdout; all prompts go to stderr so the value can be captured
-# with $(...). Defaults to `auto` (the recommended guardrailed mode) -- only an
-# explicit `2`/`bypass`/`bypassPermissions` selects bypassPermissions.
-prompt_permission_mode() {
-    echo "" >&2
-    echo "Which permission mode should wiggum use for its Claude runs?" >&2
-    echo "  1) auto              Claude's auto-mode classifier decides each action (recommended)" >&2
-    echo "  2) bypassPermissions runs every action with no checks (fastest, no guardrails)" >&2
-    echo "Choose [1]: " >&2
-    local answer
-    read -r answer
-    case "$answer" in
-        2|bypass|bypassPermissions) echo "bypassPermissions" ;;
-        *)                          echo "auto" ;;
-    esac
-}
-
 run_init() {
     local preset="$INIT_PRESET"
 
@@ -1507,12 +1489,15 @@ run_init() {
         preset=$(detect_preset)
         if [[ -z "$preset" ]]; then
             echo "Could not auto-detect project type." >&2
-            echo "Specify a preset: wiggum init <node|next|python|astro>" >&2
+            echo "Specify a preset: wiggum init <node|next|python|astro|bash>" >&2
             return "$EXIT_BAD_ARGS"
         fi
         echo "Detected project type: $preset"
     fi
 
+    # The only question init asks on a fresh project, and only because the answer
+    # is destructive. Everything else it writes is either absent (so writing it
+    # takes nothing away) or identical to what is already there.
     if [[ -f ".wiggumrc" ]]; then
         echo "A .wiggumrc already exists in this directory. Overwrite? [y/N]"
         read -r answer
@@ -1522,18 +1507,21 @@ run_init() {
         fi
     fi
 
-    local perm_mode
-    perm_mode="$(prompt_permission_mode)"
-
     generate_rc "$preset" > .wiggumrc
-    printf '\npermission_mode = %s\n' "$perm_mode" >> .wiggumrc
-    echo "Created .wiggumrc ($preset preset, permission_mode = $perm_mode)"
+    cat >> .wiggumrc <<'RCEOF'
 
-    # Offer to set up Claude Code permissions for verification commands
-    setup_claude_permissions "$preset"
+# How wiggum's claude calls are gated. "auto" lets Claude's auto-mode classifier
+# decide each action, which keeps a guardrail on an unattended run.
+# "bypassPermissions" runs everything unchecked. Override for a single run with
+# `wiggum execute --permission-mode <mode>`.
+permission_mode = auto
+RCEOF
+    echo "Created .wiggumrc ($preset preset, permission_mode = auto)"
 
-    # Install the /wiggum skill for Claude Code
+    # Two Claude Code surfaces: the skill is the on-demand playbook for driving a
+    # run, the rule is the handful of facts that must hold in every session.
     setup_wiggum_skill
+    setup_wiggum_rules
 
     if [[ ! -f "CLAUDE.md" ]]; then
         echo ""
@@ -1541,134 +1529,6 @@ run_init() {
         echo "conventions. Wiggum passes it to Claude Code automatically, which helps"
         echo "Claude write code that fits your project. See the wiggum README for details."
     fi
-}
-
-setup_claude_permissions() {
-    local preset="$1"
-    local settings_file=".claude/settings.local.json"
-
-    # Build the allow list based on preset
-    local rules=()
-    rules+=("Bash(git add *)")
-    rules+=("Bash(git commit *)")
-    rules+=("Bash(git status)")
-    rules+=("Bash(git diff *)")
-
-    # Extra rules for package manager access (opt-in)
-    local extra_rules=()
-
-    case "$preset" in
-        node|next)
-            rules+=("Bash(npm run *)")
-            rules+=("Bash(npx *)")
-            extra_rules+=("Bash(npm install *)")
-            extra_rules+=("Bash(npm *)")
-            ;;
-        python)
-            rules+=("Bash(ruff *)")
-            rules+=("Bash(pytest *)")
-            rules+=("Bash(pytest)")
-            extra_rules+=("Bash(pip install *)")
-            extra_rules+=("Bash(pip *)")
-            ;;
-        astro)
-            rules+=("Bash(npm run *)")
-            rules+=("Bash(npx *)")
-            extra_rules+=("Bash(npm install *)")
-            extra_rules+=("Bash(npm *)")
-            ;;
-        bash)
-            rules+=("Bash(shellcheck *)")
-            rules+=("Bash(bats *)")
-            rules+=("Bash(chmod *)")
-            ;;
-    esac
-
-    echo ""
-    echo "Wiggum needs Claude Code permissions to run verification and git commands."
-    echo "The following rules would be added to $settings_file:"
-    echo ""
-    for rule in "${rules[@]}"; do
-        echo "  allow: $rule"
-    done
-    echo ""
-    echo "Add these permissions? [y/N]"
-    read -r answer
-    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
-        echo "Skipped. You can add permissions manually or approve them when prompted."
-        return 0
-    fi
-
-    # Ask about package manager permissions separately
-    if [[ ${#extra_rules[@]} -gt 0 ]]; then
-        echo ""
-        echo "Also allow package manager commands? (lets Claude install dependencies)"
-        for rule in "${extra_rules[@]}"; do
-            echo "  allow: $rule"
-        done
-        echo ""
-        echo "Allow package manager access? [y/N]"
-        read -r answer
-        if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
-            rules+=("${extra_rules[@]}")
-        fi
-    fi
-
-    # Build JSON
-    mkdir -p .claude
-
-    if [[ -f "$settings_file" ]]; then
-        # Merge new rules into existing file, preserving all other keys
-        echo "Updating $settings_file"
-        local new_rules_json="["
-        local first=true
-        for rule in "${rules[@]}"; do
-            if [[ "$first" == "true" ]]; then
-                first=false
-            else
-                new_rules_json="$new_rules_json,"
-            fi
-            new_rules_json="$new_rules_json\"$rule\""
-        done
-        new_rules_json="$new_rules_json]"
-
-        python3 -c "
-import json, sys
-with open('$settings_file') as f:
-    data = json.load(f)
-new_rules = json.loads(sys.argv[1])
-perms = data.setdefault('permissions', {})
-existing = perms.get('allow', [])
-merged = list(existing)
-for r in new_rules:
-    if r not in merged:
-        merged.append(r)
-perms['allow'] = merged
-with open('$settings_file', 'w') as f:
-    json.dump(data, f, indent=2)
-    f.write('\n')
-" "$new_rules_json"
-    else
-        local json_rules=""
-        for rule in "${rules[@]}"; do
-            if [[ -n "$json_rules" ]]; then
-                json_rules="$json_rules,"
-            fi
-            json_rules="$json_rules
-      \"$rule\""
-        done
-
-        cat > "$settings_file" <<EOF
-{
-  "permissions": {
-    "allow": [$json_rules
-    ]
-  }
-}
-EOF
-    fi
-
-    echo "Created $settings_file"
 }
 
 # Emit the current /wiggum skill markdown to stdout. This is the single source of
@@ -2512,8 +2372,8 @@ between stages.
 - **Refer to runs by their plan file** — that's how status/watch/kill find the
   sidecars.
 - **Always pass `--max-iterations`, sized to the plan's open checkboxes** (step 3).
-  The 3-iteration default is a floor for toy plans, not a budget for a real
-  workplan, and under-sizing it turns a working run into a false `incomplete`.
+  The default of 30 is a round number, not a budget derived from this plan, and
+  under-sizing it turns a working run into a false `incomplete`.
   Check any human-suggested number against the box count before using it.
 - **Size the watch timeout too, and separately** (step 3): `--max-iterations`
   bounds tasks, `watch --timeout` bounds your wall clock. Drop
@@ -2570,48 +2430,164 @@ between stages.
 SKILL_EOF
 }
 
-setup_wiggum_skill() {
-    local skill_dir=".claude/skills/wiggum"
-    local skill_file="$skill_dir/SKILL.md"
+# Install a file wiggum generates into the project's .claude/ tree. Absent means
+# write it. Identical means say so and move on. Different means an older wiggum
+# wrote it and the user may have edited it since, so ask -- that is the only one
+# of the three that takes something away, and the only one worth a question.
+install_generated_file() {
+    local path="$1" label="$2" generator="$3"
 
-    if [[ -f "$skill_file" ]]; then
-        # Already current: nothing to do.
-        if diff -q <(wiggum_skill_content) "$skill_file" >/dev/null 2>&1; then
-            echo ""
-            echo "Claude Code skill at $skill_file is already up to date — skipping."
+    if [[ -f "$path" ]]; then
+        if diff -q <("$generator") "$path" >/dev/null 2>&1; then
+            echo "The $label at $path is already up to date — skipping."
             return 0
         fi
-        # Stale copy from an older wiggum: offer to refresh it rather than
-        # silently leaving the project on an outdated skill.
-        echo ""
-        echo "An older /wiggum skill exists at $skill_file."
+        echo "An older $label exists at $path."
         echo "Update it to the current version? [y/N]"
         read -r answer
         if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
-            echo "Kept your existing skill."
+            echo "Kept your existing $label."
             return 0
         fi
-        wiggum_skill_content > "$skill_file"
-        echo "Updated $skill_file to the current /wiggum skill."
+        "$generator" > "$path"
+        echo "Updated $path to the current $label."
         return 0
     fi
 
-    echo ""
-    echo "Install the /wiggum slash command for Claude Code?"
-    echo "This lets you run the wiggum workflow from inside Claude Code"
-    echo "with: /wiggum <issue-file-or-description>"
-    echo ""
-    echo "Install /wiggum skill? [y/N]"
-    read -r answer
-    if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
-        echo "Skipped."
-        return 0
-    fi
+    mkdir -p "$(dirname "$path")"
+    "$generator" > "$path"
+    echo "Created $path"
+}
 
-    mkdir -p "$skill_dir"
-    wiggum_skill_content > "$skill_file"
-    echo "Created $skill_file"
-    echo "You can now use /wiggum inside Claude Code."
+# The /wiggum skill: the playbook for driving a run, loaded on demand when the
+# work calls for it.
+setup_wiggum_skill() {
+    echo ""
+    install_generated_file ".claude/skills/wiggum/SKILL.md" "/wiggum skill" \
+        wiggum_skill_content
+}
+
+# Emit the always-loaded project rule to stdout. Claude Code reads every .md under
+# .claude/rules/ at session start, at the same priority as .claude/CLAUDE.md, so
+# this is the one wiggum surface that costs context on every session in the
+# project -- it carries only what has to hold before anyone reaches for the skill.
+wiggum_rules_content() {
+    cat <<'RULES_EOF'
+# Working with wiggum
+
+Wiggum is a self-driving agent loop: from one command it plans, implements,
+verifies and commits, unattended. The `/wiggum` skill is the playbook for driving
+a run. This file is the part that has to hold whether or not the skill is loaded.
+
+## Reach for the loop, or edit directly
+
+- **Use wiggum** when the change needs the loop: several interdependent steps where
+  each has to be verified before the next can be written, or where you cannot
+  predict what the verify suite will say until you try.
+- **Edit directly** when you can hold the whole change in your head and one run of
+  the verify suite settles it — even when it spans several files. Wiggum runs a full
+  cycle *per task*: a fresh Claude session, the entire verify waterfall, a commit.
+  On a change that is really one edit, that dwarfs the work and fragments it into
+  noisy commits. "It's a new feature" is not on its own a reason.
+- **Say which of the two you are doing before you start**, in a sentence. "Queue
+  these" is an instruction about sequence, not permission to start hand-editing.
+
+## What makes a plan worth running
+
+The plan is the entire input to an unattended run — nobody reads it back to you
+before the work happens. Four things it has to carry, and the first is the one
+plans skip most:
+
+- **The case for doing it.** Answer *in the plan*: if we ship this, is the product
+  or the codebase actually better? A defect gone, a benefit somebody can observe, a
+  duplication removed, a boundary made testable. A plan that can't answer it is a
+  list of edits looking for a reason — and the loop will build it anyway.
+- **The problem it answers, cited.** The issue number, the failing case, the
+  research finding. Work with no stated problem can't be checked against one.
+- **Real code, by path**, on both sides of anything it integrates, and marked when a
+  path is one the plan proposes to *create*. A path cited as existing that doesn't
+  is a task resting on a dead premise, and the run will invent something to satisfy
+  it.
+- **An observable `Acceptance:` per task** — a log line, a row, a passing test, a
+  response body. "Looks better" is not acceptance.
+
+## Plans are counted, not read
+
+- Wiggum tracks progress by counting `- [ ]` checkboxes. A task written as a
+  heading, as bold text, or as prose is invisible: the run reports `0 tasks` and
+  stops.
+- `[~]` means **dropped** — decided against, terminal, never re-picked.
+- **A task only a person can do must not be an open checkbox.** It makes a finished
+  plan look unfinished forever and hands the loop something it cannot act on. Put
+  those under their own heading, as a table of what each one is waiting for.
+- Before launching, list the recent plans by mtime (`ls -t docs/*_plan.md | head`),
+  not by keyword. A plan that supersedes yours rarely shares its vocabulary.
+
+## Launching: size the budget, then chain
+
+- **Always pass `--max-iterations`, sized to the plan's open checkboxes.** One
+  iteration is about one task, so a budget under the box count stops the run
+  `incomplete` partway through — which reads like a failure and is only a ceiling
+  being hit. Count them and launch:
+
+      open=$(grep -c '^ *[-*+] \[ \]' docs/<name>_plan.md)
+      wiggum execute docs/<name>_plan.md --background --max-iterations $(( open * 2 + 3 ))
+
+  Iterations are a ceiling, not a target: wiggum stops as soon as the boxes are
+  done, and trips its own stall detection long before it burns a big budget. An
+  over-generous ceiling costs nothing; a tight one reliably costs a re-run. A flaky
+  suite is **not** a reason to raise it — failing verify steps spend
+  `max_validation_retries`, a separate budget.
+- **Chain plans, don't run them concurrently.** `wiggum chain a.md b.md` gates each
+  on the previous finishing. Two verify suites on one box is how a two-minute run
+  becomes an hour.
+- **To append to a chain that is already running, chain from a queue file.**
+  `wiggum chain --queue docs/queue.txt` re-reads the file after every plan, so
+  `echo docs/extra_plan.md >> docs/queue.txt` mid-run is picked up when the current
+  plan finishes. With plans as arguments the list is fixed at launch. A queue also
+  survives a kill — rerun the same command.
+
+## Watching one
+
+- **`wiggum top`** — every run on this machine, one line each: state, task tally,
+  and ACTIVITY, the age of the run's newest write. That last column is what
+  separates a long task from a wedged one; both of them say `running`.
+- **`wiggum status <plan>`** — the counts for one run. It counts checkboxes, so
+  `remaining` climbs when you *edit* the plan, not when the run regresses.
+- **`wiggum watch <plan>`** — stream one run and block until it ends. Exits 0 only
+  on `complete`.
+- **`wiggum watch --chain [pid]`** — follow a *chain* across plans. Watching a
+  chained plan by name exits 1 immediately, because a plan whose turn hasn't come
+  has no pidfile; that reads as "finished" and means "not started".
+- **A finished run is not a done run — read the stop reason.** `complete` → done.
+  `incomplete` → out of iterations, re-run it. `stalled` → no progress for two
+  iterations running; diagnose first or it stalls identically. `aborted` → the
+  session died, which is infrastructure, not the plan.
+- **After an abort, check the tree before relaunching.** A killed session can leave
+  half-finished work that contradicts a guard it just wrote. Get back to the last
+  green commit and relaunch from there; wiggum's phase 1 reconciles and redoes the
+  task.
+- **Don't drive interactive work in the same repo while a run is live**, and tear
+  your watch down when the run ends.
+- **Never change the machine's sleep or power settings to protect a run** — no
+  `caffeinate`, no `pmset`, not "just while this finishes". A run that dies to sleep
+  is recoverable: phase 1 reconciles and the finished commits survive. The setting
+  is global, it outlives the run, and it is the machine owner's call.
+
+## The verify suite is the contract
+
+- **Read which verify step actually failed before trimming the waterfall.**
+  `.wiggumrc` is the user's config, not yours to edit; a trimmed verify is a loan.
+- **A run is unattended, and automation gets no exemption.** A task that says "add a
+  migration" applies it for real, against whatever the environment points at.
+  Isolate anything destructive before queueing the plan, not after.
+RULES_EOF
+}
+
+setup_wiggum_rules() {
+    echo ""
+    install_generated_file ".claude/rules/wiggum.md" "wiggum project rule" \
+        wiggum_rules_content
 }
 
 # ── Logging ──────────────────────────────────────────────────────────────────

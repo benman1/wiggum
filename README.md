@@ -96,7 +96,9 @@ wiggum init [preset]
 
 Generates a `.wiggumrc` configuration file for the current project. If no preset is specified, wiggum inspects the directory for known project files (`package.json`, `next.config.ts`, `pyproject.toml`, etc.) and picks the matching preset automatically. If a `.wiggumrc` already exists, it asks before overwriting.
 
-It also asks which Claude permission mode to bake into the config — `auto` (the default: Claude's auto-mode classifier gates each action, so unattended runs keep a guardrail) or `bypassPermissions` (run everything with no checks). The choice is written as a `permission_mode` line in the generated `.wiggumrc`.
+The generated config sets `permission_mode = auto`, so Claude's auto-mode classifier gates each action and an unattended run keeps a guardrail. Change the line, or pass `--permission-mode`, if you want something else.
+
+Init also writes two Claude Code files: the `/wiggum` skill at `.claude/skills/wiggum/SKILL.md` and an always-loaded project rule at `.claude/rules/wiggum.md` (see [Claude Code skill](#claude-code-skill)). It **never edits your `CLAUDE.md`** — it only mentions it if you don't have one.
 
 This is the recommended first step when adopting wiggum in a new project. The generated config provides sensible defaults for verification commands that you can then tune to your specific setup.
 
@@ -532,7 +534,23 @@ Wiggum ships a `/wiggum` slash command for Claude Code that acts as an **orchest
 
 The skill accepts an issue file, a plain-text description (which it turns into a plan), an existing plan file, or several plans to chain. Because it drives the CLI, the `wiggum` binary must be installed and on `PATH` (see [Background runs & supervision](#background-runs--supervision) for the commands it uses).
 
-The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKILL.md`) so it works in every project. Running `wiggum init` in a specific project installs a project-local copy at `.claude/skills/wiggum/SKILL.md` — and if a copy from an older wiggum version is already there, `init` detects it's outdated and offers to update it (declining keeps yours untouched).
+The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKILL.md`) so it works in every project. Running `wiggum init` in a specific project installs a project-local copy at `.claude/skills/wiggum/SKILL.md`, which you can commit so teammates get it too.
+
+### Project rule
+
+`wiggum init` also writes `.claude/rules/wiggum.md`, a [project rule](https://code.claude.com/docs/en/memory) covering what has to hold *before* anyone reaches for the skill:
+
+- when a change is worth the loop and when it's one edit
+- what makes a plan worth running — the case for doing it at all, the problem it cites, real code by path, an observable `Acceptance:` per task
+- that wiggum tracks progress by counting `- [ ]` checkboxes, and `[~]` means dropped
+- sizing `--max-iterations` to the open checkboxes, and why a flaky suite isn't a reason to raise it
+- `chain --queue` for appending work to a chain that's already running
+- `top`, `status`, `watch`, and `watch --chain` — and how to read a stop reason
+- what not to do to a live run, or to the machine it's running on
+
+The split matters. A rule with no `paths:` frontmatter loads at session start at the same priority as `.claude/CLAUDE.md`, so it costs context in *every* session in that project — which is why it's ~110 lines. The skill is an order of magnitude bigger and loads only when the work calls for it.
+
+Both files are written without asking, because writing a file that isn't there takes nothing away. If a copy from an older wiggum is already present and its content differs, `init` says so and asks before overwriting; declining keeps yours. **`wiggum init` never touches your `CLAUDE.md`.**
 
 ## Prerequisites
 
@@ -585,11 +603,9 @@ Available presets:
 
 If no preset is given, wiggum inspects the current directory and picks the best match. The generated `.wiggumrc` is a starting point -- edit it to match your actual scripts.
 
-After creating the `.wiggumrc`, init offers to:
+After creating the `.wiggumrc`, init writes the two Claude Code files described under [Claude Code skill](#claude-code-skill), and reminds you to create a `CLAUDE.md` if one doesn't exist.
 
-1. Set up Claude Code permissions (see [Permissions](#permissions) below)
-2. Install the `/wiggum` Claude Code skill (see [Claude Code skill](#claude-code-skill) below)
-3. Remind you to create a `CLAUDE.md` if one doesn't exist
+**On a fresh project it asks nothing.** The only question init has is whether to overwrite something already there — a `.wiggumrc`, or a skill or rule left by an older wiggum whose content has since changed. Declining keeps your file untouched.
 
 ### Creating a plan
 
@@ -981,46 +997,30 @@ Only the first file found is used. They are not merged.
 
 ## Permissions
 
-Wiggum calls Claude Code with different permission modes depending on the task:
+Every Claude call wiggum makes runs under **one** permission mode, passed as `--permission-mode` on the command line. There is no per-phase variation: planning, implementation, validation fixes and commits all use the same mode.
 
-| Task | Permission mode | Why |
-|------|----------------|-----|
-| Planning | `bypassPermissions` | Only reads input and writes the plan file |
-| Implementation | `acceptEdits` | Auto-approves file edits, prompts for bash commands |
-| Validation fixes | `acceptEdits` | Claude fixes code, same as implementation |
-| Git commits | `bypassPermissions` | Only runs `git add` and `git commit` |
+Where the mode comes from, highest precedence first:
 
-`acceptEdits` auto-approves file edits but still prompts for shell commands. This means Claude can write code freely but will ask before running anything in the terminal. `bypassPermissions` skips all prompts -- used only for commit and plan calls where the scope is tightly constrained.
+| Source | Value |
+|--------|-------|
+| `--permission-mode <mode>` on the wiggum command | that mode, for this run only |
+| `permission_mode = <mode>` in `.wiggumrc` | that mode, for this project |
+| Neither set | `bypassPermissions` (the original default, kept for back-compat) |
 
-### Setting up permissions with init
+`wiggum init` writes `permission_mode = auto`, so a project set up with `init` runs guardrailed rather than falling through to that back-compat default.
 
-When you run `wiggum init`, it offers to create `.claude/settings.local.json` with pre-approved permissions for two categories:
+| Mode | What it does |
+|------|--------------|
+| `auto` | Claude's auto-mode classifier decides each action. Unattended but not unchecked — the right setting for a wiggum run. |
+| `bypassPermissions` | Every action runs with no checks. Fastest, no guardrail. |
+| `acceptEdits` | Auto-approves file edits but still prompts for shell commands, so an unattended run blocks waiting for input. Only useful when you're watching. |
+| `default`, `dontAsk`, `plan` | Passed through to Claude Code unchanged. |
 
-**Verification & git (prompted first):**
+### Allow lists and wiggum
 
-These are the commands wiggum needs to run its core loop -- verification steps from your `.wiggumrc` and git operations for committing results.
+Because wiggum passes the mode explicitly on every call, a `.claude/settings.local.json` allow list is **not** what gates a wiggum run: under `bypassPermissions` it's ignored outright, and under `auto` the classifier decides. Wiggum doesn't write one for you.
 
-| Preset | Permissions |
-|--------|------------|
-| All | `git add *`, `git commit *`, `git status`, `git diff *` |
-| node/next/astro | `npm run *`, `npx *` |
-| python | `ruff *`, `pytest`, `pytest *` |
-| bash | `shellcheck *`, `bats *`, `chmod *` |
-
-**Package manager (prompted separately):**
-
-Allowing Claude to install dependencies is a bigger trust decision, so it's asked as a separate question.
-
-| Preset | Permissions |
-|--------|------------|
-| node/next/astro | `npm install *`, `npm *` |
-| python | `pip install *`, `pip *` |
-
-You can decline either prompt. Without pre-approved permissions, Claude Code will prompt for approval on each command the first time it runs -- wiggum still works, it just pauses for confirmation.
-
-### Manual permission setup
-
-If you prefer to set permissions manually or already have a `.claude/settings.local.json`, add the rules you need:
+An allow list is still worth having for your own interactive Claude Code sessions in the repo. That file is per-machine and not committed, so it's yours to shape:
 
 ```json
 {
@@ -1028,8 +1028,6 @@ If you prefer to set permissions manually or already have a `.claude/settings.lo
     "allow": [
       "Bash(git add *)",
       "Bash(git commit *)",
-      "Bash(git status)",
-      "Bash(git diff *)",
       "Bash(npm run *)",
       "Bash(npx *)"
     ]
@@ -1037,7 +1035,7 @@ If you prefer to set permissions manually or already have a `.claude/settings.lo
 }
 ```
 
-This file is per-machine (not committed to git). See the [Claude Code permissions docs](https://docs.anthropic.com/en/docs/claude-code/permissions) for the full rule syntax.
+See the [Claude Code permissions docs](https://docs.claude.com/en/docs/claude-code/permissions) for the full rule syntax.
 
 ## Scheduling unattended runs
 
@@ -1224,6 +1222,7 @@ wiggum/
   CLAUDE.md              Project standards for Claude Code
   .claude/
     settings.local.json  Per-machine Claude Code permissions (not committed)
+    rules/wiggum.md      Always-loaded project rule, written by `wiggum init`
     skills/wiggum/
       SKILL.md           /wiggum slash command for Claude Code
 ```
@@ -1269,7 +1268,7 @@ MIT — see [LICENSE](LICENSE).
 - **Tune retries to your project.** If your test suite is flaky, increase `max_validation_retries`. If you're paying close attention to token costs, decrease it.
 - **Use `--verbose` to debug.** Claude's output is suppressed by default. Pass `--verbose` to see what Claude is doing at each step.
 - **Resume any step with `claude -r`.** Wiggum logs a Claude session ID for every step. Find the session ID in the `.log` file and resume it interactively: `claude -r <session-id>`. Useful for asking follow-up questions about what Claude did during a specific implementation or validation step.
-- **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` reminds you if one is missing.
+- **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` reminds you if one is missing, and writes its own guidance to `.claude/rules/wiggum.md` rather than editing the file.
 - **Use `/wiggum` inside Claude Code.** If you're already in a Claude Code session and want to kick off the full loop without switching to the terminal, use `/wiggum <issue>`. It runs the same workflow natively.
 
 ## Long runs

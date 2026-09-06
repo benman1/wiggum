@@ -1706,8 +1706,7 @@ EOF
 
 @test "run_init: creates .wiggumrc from explicit preset" {
     INIT_PRESET="python"
-    # stdin order: permission-mode, permissions, skill
-    printf "\nn\nn\n" | run_init
+    run_init </dev/null
     [ -f ".wiggumrc" ]
     grep -q "pytest" .wiggumrc
 }
@@ -1715,47 +1714,49 @@ EOF
 @test "run_init: auto-detects preset" {
     INIT_PRESET=""
     touch package.json
-    printf "\nn\nn\n" | run_init
+    run_init </dev/null
     [ -f ".wiggumrc" ]
     grep -q "npm test" .wiggumrc
 }
 
-@test "run_init: defaults permission_mode to auto" {
+@test "run_init: asks nothing on a fresh project" {
     INIT_PRESET="node"
-    # Empty answer to the permission-mode prompt selects the default (auto).
-    printf "\nn\nn\n" | run_init
+    # Closed stdin: every read init could make would fail, so a passing run is
+    # proof it made none. Only overwriting an existing file earns a question.
+    run run_init </dev/null
+    [ "$status" -eq 0 ]
+    [ -f ".wiggumrc" ]
+    [ -f ".claude/skills/wiggum/SKILL.md" ]
+    [ -f ".claude/rules/wiggum.md" ]
+}
+
+@test "run_init: writes permission_mode = auto" {
+    INIT_PRESET="node"
+    run_init </dev/null
     grep -q "permission_mode = auto" .wiggumrc
 }
 
-@test "run_init: writes bypassPermissions when chosen" {
+@test "run_init: generated permission_mode is loadable config" {
     INIT_PRESET="node"
-    # "2" at the permission-mode prompt selects bypassPermissions.
-    printf "2\nn\nn\n" | run_init
-    grep -q "permission_mode = bypassPermissions" .wiggumrc
-    ! grep -q "permission_mode = auto" .wiggumrc
-}
-
-@test "run_init: chosen permission_mode is loadable config" {
-    INIT_PRESET="node"
-    printf "\nn\nn\n" | run_init
+    run_init </dev/null
     # The generated line must round-trip through the config loader.
     wiggum_reset
     apply_config < <(load_config_from .wiggumrc)
     [ "$PERMISSION_MODE" = "auto" ]
 }
 
-@test "run_init: creates .claude/settings.local.json when approved" {
+@test "run_init: leaves CLAUDE.md alone" {
     INIT_PRESET="node"
-    # stdin order: permission-mode, permissions, pkg-manager, skill
-    printf "\ny\nn\nn\n" | run_init
-    [ -f ".claude/settings.local.json" ]
-    grep -q "git add" .claude/settings.local.json
-    grep -q "npm run" .claude/settings.local.json
+    echo "my own standards" > CLAUDE.md
+    run_init </dev/null
+    [ "$(cat CLAUDE.md)" = "my own standards" ]
 }
 
-@test "run_init: skips permissions when declined" {
+@test "run_init: writes no permission allow list" {
     INIT_PRESET="node"
-    printf "\nn\nn\n" | run_init
+    run_init </dev/null
+    # run_claude passes --permission-mode on every call, so a .claude allow list
+    # is not what gates a wiggum run. Init stopped pretending otherwise.
     [ ! -f ".claude/settings.local.json" ]
 }
 
@@ -1764,119 +1765,6 @@ EOF
     run run_init
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
     [[ "$output" == *"Could not auto-detect"* ]] || return 1
-}
-
-# ── setup_claude_permissions ─────────────────────────────────────────────────
-
-@test "setup_claude_permissions: creates .claude dir and settings file" {
-    printf "y\nn\n" | setup_claude_permissions node
-    [ -d ".claude" ]
-    [ -f ".claude/settings.local.json" ]
-}
-
-@test "setup_claude_permissions: node preset includes git and npm rules" {
-    printf "y\nn\n" | setup_claude_permissions node
-    grep -q '"Bash(git add \*)"' .claude/settings.local.json
-    grep -q '"Bash(git commit \*)"' .claude/settings.local.json
-    grep -q '"Bash(npm run \*)"' .claude/settings.local.json
-    grep -q '"Bash(npx \*)"' .claude/settings.local.json
-}
-
-@test "setup_claude_permissions: python preset includes ruff and pytest" {
-    printf "y\nn\n" | setup_claude_permissions python
-    grep -q '"Bash(ruff \*)"' .claude/settings.local.json
-    grep -q '"Bash(pytest \*)"' .claude/settings.local.json
-    grep -q '"Bash(pytest)"' .claude/settings.local.json
-}
-
-@test "setup_claude_permissions: astro preset includes npm and npx" {
-    printf "y\nn\n" | setup_claude_permissions astro
-    grep -q '"Bash(npm run \*)"' .claude/settings.local.json
-    grep -q '"Bash(npx \*)"' .claude/settings.local.json
-}
-
-@test "setup_claude_permissions: bash preset includes shellcheck and bats" {
-    echo "y" | setup_claude_permissions bash
-    grep -q '"Bash(shellcheck \*)"' .claude/settings.local.json
-    grep -q '"Bash(bats \*)"' .claude/settings.local.json
-    grep -q '"Bash(chmod \*)"' .claude/settings.local.json
-}
-
-@test "setup_claude_permissions: skips when user declines" {
-    echo "n" | setup_claude_permissions node
-    [ ! -f ".claude/settings.local.json" ]
-}
-
-@test "setup_claude_permissions: package manager rules added when both prompts approved" {
-    printf "y\ny\n" | setup_claude_permissions node
-    grep -q '"Bash(npm install \*)"' .claude/settings.local.json
-    grep -q '"Bash(npm \*)"' .claude/settings.local.json
-}
-
-@test "setup_claude_permissions: package manager rules skipped when second prompt declined" {
-    printf "y\nn\n" | setup_claude_permissions node
-    # npm run should be present (base rules)
-    grep -q '"Bash(npm run \*)"' .claude/settings.local.json
-    # npm install should NOT be present (extra rules declined)
-    ! grep -q '"Bash(npm install \*)"' .claude/settings.local.json
-}
-
-@test "setup_claude_permissions: python package manager adds pip" {
-    printf "y\ny\n" | setup_claude_permissions python
-    grep -q '"Bash(pip install \*)"' .claude/settings.local.json
-    grep -q '"Bash(pip \*)"' .claude/settings.local.json
-}
-
-@test "setup_claude_permissions: output is valid JSON" {
-    printf "y\nn\n" | setup_claude_permissions node
-    # python/node json validation - try python first, fall back to node
-    if command -v python3 &>/dev/null; then
-        python3 -m json.tool .claude/settings.local.json > /dev/null
-    elif command -v node &>/dev/null; then
-        node -e "JSON.parse(require('fs').readFileSync('.claude/settings.local.json','utf8'))"
-    else
-        head -1 .claude/settings.local.json | grep -q '{'
-        tail -1 .claude/settings.local.json | grep -q '}'
-    fi
-}
-
-@test "setup_claude_permissions: merges into existing file preserving other keys" {
-    mkdir -p .claude
-    cat > .claude/settings.local.json <<'EOF'
-{
-  "permissions": {
-    "allow": ["Bash(make *)"],
-    "deny": ["Bash(rm -rf *)"]
-  },
-  "other_setting": true
-}
-EOF
-    printf "y\nn\n" | setup_claude_permissions node
-    # New rules are present
-    grep -q '"Bash(git add \*)"' .claude/settings.local.json
-    grep -q '"Bash(npm run \*)"' .claude/settings.local.json
-    # Existing allow rule is preserved
-    grep -q '"Bash(make \*)"' .claude/settings.local.json
-    # Other keys are preserved
-    grep -q '"deny"' .claude/settings.local.json
-    grep -q '"Bash(rm -rf \*)"' .claude/settings.local.json
-    grep -q '"other_setting"' .claude/settings.local.json
-}
-
-@test "setup_claude_permissions: does not duplicate existing allow rules" {
-    mkdir -p .claude
-    cat > .claude/settings.local.json <<'EOF'
-{
-  "permissions": {
-    "allow": ["Bash(git add *)"]
-  }
-}
-EOF
-    printf "y\nn\n" | setup_claude_permissions node
-    # Count occurrences of "git add" -- should be exactly 1
-    local count
-    count=$(grep -c '"Bash(git add \*)"' .claude/settings.local.json)
-    [ "$count" -eq 1 ]
 }
 
 # ── prompt verification helpers ──────────────────────────────────────────────
@@ -2150,23 +2038,18 @@ EOF
 
 # ── setup_wiggum_skill ───────────────────────────────────────────────────────
 
-@test "setup_wiggum_skill: creates skill file when approved" {
-    echo "y" | setup_wiggum_skill
+@test "setup_wiggum_skill: creates the skill file without asking" {
+    setup_wiggum_skill </dev/null
     [ -f ".claude/skills/wiggum/SKILL.md" ]
     grep -q "name: wiggum" .claude/skills/wiggum/SKILL.md
     grep -q '\$ARGUMENTS' .claude/skills/wiggum/SKILL.md
 }
 
 @test "setup_wiggum_skill: skill is model-invocable (no disable flag)" {
-    echo "y" | setup_wiggum_skill
+    setup_wiggum_skill </dev/null
     # The orchestrator is meant to be driven by Claude (execute, watch, ...),
     # so it must NOT carry disable-model-invocation.
     ! grep -q "disable-model-invocation" .claude/skills/wiggum/SKILL.md
-}
-
-@test "setup_wiggum_skill: skips when declined" {
-    echo "n" | setup_wiggum_skill
-    [ ! -f ".claude/skills/wiggum/SKILL.md" ]
 }
 
 @test "wiggum_skill_content: emits the skill markdown" {
@@ -2300,7 +2183,7 @@ EOF
 }
 
 @test "setup_wiggum_skill: skill drives the wiggum CLI commands" {
-    echo "y" | setup_wiggum_skill
+    setup_wiggum_skill </dev/null
     grep -q "wiggum execute" .claude/skills/wiggum/SKILL.md
     grep -q "wiggum status" .claude/skills/wiggum/SKILL.md
     grep -q "wiggum watch" .claude/skills/wiggum/SKILL.md
@@ -2314,7 +2197,7 @@ EOF
 }
 
 @test "setup_wiggum_skill: skill covers supervision and plan format" {
-    echo "y" | setup_wiggum_skill
+    setup_wiggum_skill </dev/null
     # Supervision: monitor, wait, detect-blocked, scoped kill.
     grep -q -- "--background" .claude/skills/wiggum/SKILL.md
     grep -q -- "--kill-on-timeout" .claude/skills/wiggum/SKILL.md
@@ -2329,7 +2212,7 @@ EOF
 }
 
 @test "setup_wiggum_skill: skill is the authoritative interface (no --help spelunking)" {
-    echo "y" | setup_wiggum_skill
+    setup_wiggum_skill </dev/null
     local skill=".claude/skills/wiggum/SKILL.md"
     # One batched preflight, and the skill asserts itself as the source of truth.
     grep -qi "authoritative" "$skill"
@@ -2338,7 +2221,7 @@ EOF
 }
 
 @test "setup_wiggum_skill: skill covers stalled/incomplete remediation" {
-    echo "y" | setup_wiggum_skill
+    setup_wiggum_skill </dev/null
     local skill=".claude/skills/wiggum/SKILL.md"
     # Distinguishes the stop reasons and drives a remediate-and-re-run loop.
     grep -qi "incomplete" "$skill"
@@ -2352,18 +2235,18 @@ EOF
 }
 
 @test "setup_wiggum_skill: skill says to watch a running run and summarize" {
-    echo "y" | setup_wiggum_skill
+    setup_wiggum_skill </dev/null
     local skill=".claude/skills/wiggum/SKILL.md"
     grep -q "wiggum watch" "$skill"
     grep -qi "already in progress" "$skill"
     grep -qi "report a summary" "$skill"
 }
 
-@test "run_init: creates skill when approved" {
+@test "run_init: installs the skill and the project rule" {
     INIT_PRESET="node"
-    # permission-mode(default), y=permissions, n=pkg-manager, y=skill
-    printf "\ny\nn\ny\n" | run_init
+    run_init </dev/null
     [ -f ".claude/skills/wiggum/SKILL.md" ]
+    [ -f ".claude/rules/wiggum.md" ]
 }
 
 @test "run_init: aborts on existing .wiggumrc when user says no" {
@@ -2373,21 +2256,141 @@ EOF
     grep -q "old" .wiggumrc
 }
 
-# ── prompt_permission_mode ───────────────────────────────────────────────────
+# ── wiggum project rule ──────────────────────────────────────────────────────
 
-@test "prompt_permission_mode: empty input defaults to auto" {
-    [ "$(echo "" | prompt_permission_mode 2>/dev/null)" = "auto" ]
-    [ "$(echo "1" | prompt_permission_mode 2>/dev/null)" = "auto" ]
+@test "wiggum_rules_content: loads every session, not on demand" {
+    run wiggum_rules_content
+    [ "$status" -eq 0 ]
+    # A `paths:` frontmatter block would scope the rule to matching files, which
+    # is exactly wrong here: it has to hold before anyone opens a file.
+    [[ "$output" != *"paths:"* ]] || return 1
+    [[ "$output" == *"Working with wiggum"* ]] || return 1
 }
 
-@test "prompt_permission_mode: 2 or bypass selects bypassPermissions" {
-    [ "$(echo "2" | prompt_permission_mode 2>/dev/null)" = "bypassPermissions" ]
-    [ "$(echo "bypass" | prompt_permission_mode 2>/dev/null)" = "bypassPermissions" ]
-    [ "$(echo "bypassPermissions" | prompt_permission_mode 2>/dev/null)" = "bypassPermissions" ]
+@test "wiggum_rules_content: says when to use the loop and when to edit directly" {
+    run wiggum_rules_content
+    [[ "$output" == *"Edit directly"* ]] || return 1
+    [[ "$output" == *"per task"* ]] || return 1
 }
 
-@test "prompt_permission_mode: unrecognized input falls back to auto" {
-    [ "$(echo "garbage" | prompt_permission_mode 2>/dev/null)" = "auto" ]
+@test "wiggum_rules_content: says checkboxes are what wiggum counts" {
+    run wiggum_rules_content
+    [[ "$output" == *"- [ ]"* ]] || return 1
+    [[ "$output" == *"0 tasks"* ]] || return 1
+    [[ "$output" == *"dropped"* ]] || return 1
+}
+
+@test "wiggum_rules_content: covers supervision and every stop reason" {
+    run wiggum_rules_content
+    [[ "$output" == *"complete"* ]] || return 1
+    [[ "$output" == *"incomplete"* ]] || return 1
+    [[ "$output" == *"stalled"* ]] || return 1
+    [[ "$output" == *"aborted"* ]] || return 1
+    [[ "$output" == *"wiggum chain"* ]] || return 1
+}
+
+@test "wiggum_rules_content: forbids changing the machine's power settings" {
+    run wiggum_rules_content
+    [[ "$output" == *"caffeinate"* ]] || return 1
+    [[ "$output" == *"pmset"* ]] || return 1
+}
+
+@test "wiggum_rules_content: protects the verify suite and .wiggumrc" {
+    run wiggum_rules_content
+    [[ "$output" == *"trimmed verify is a loan"* ]] || return 1
+    [[ "$output" == *"no exemption"* ]] || return 1
+}
+
+@test "wiggum_rules_content: says what makes a plan worth running" {
+    run wiggum_rules_content
+    # The question plans skip most often: is anything actually better afterwards?
+    [[ "$output" == *"the codebase actually better"* ]] || return 1
+    [[ "$output" == *"cited"* ]] || return 1
+    [[ "$output" == *"Real code, by path"* ]] || return 1
+    [[ "$output" == *"Acceptance:"* ]] || return 1
+}
+
+@test "wiggum_rules_content: sizes --max-iterations to the open checkboxes" {
+    run wiggum_rules_content
+    [[ "$output" == *"--max-iterations"* ]] || return 1
+    [[ "$output" == *"open * 2 + 3"* ]] || return 1
+    # The two budgets are separate; conflating them is the usual mis-tune.
+    [[ "$output" == *"max_validation_retries"* ]] || return 1
+}
+
+@test "wiggum_rules_content: covers appending to a running chain" {
+    run wiggum_rules_content
+    [[ "$output" == *"--queue"* ]] || return 1
+    [[ "$output" == *">> docs/queue.txt"* ]] || return 1
+    [[ "$output" == *"fixed at launch"* ]] || return 1
+}
+
+@test "wiggum_rules_content: covers the monitoring commands" {
+    run wiggum_rules_content
+    [[ "$output" == *"wiggum top"* ]] || return 1
+    [[ "$output" == *"ACTIVITY"* ]] || return 1
+    [[ "$output" == *"wiggum status"* ]] || return 1
+    [[ "$output" == *"wiggum watch --chain"* ]] || return 1
+}
+
+@test "wiggum_rules_content: every command it names is a real wiggum mode" {
+    # A rule that sends an agent at a command wiggum does not have is worse than
+    # one that stays silent. Check each against the CLI's own mode list.
+    local mode
+    for mode in top status watch chain execute; do
+        run parse_args "$mode" --help
+        [ "$status" -eq 0 ]
+    done
+    run wiggum_rules_content
+    [[ "$output" == *"wiggum chain --queue"* ]] || return 1
+}
+
+@test "wiggum_rules_content: committed rule stays in sync with the heredoc" {
+    local committed
+    committed="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/.claude/rules/wiggum.md"
+    [ -f "$committed" ]
+    # Fails loudly if the two copies drift; the function is the source of truth.
+    diff <(wiggum_rules_content) "$committed"
+}
+
+@test "setup_wiggum_rules: installs the rule without asking" {
+    run setup_wiggum_rules </dev/null
+    [ "$status" -eq 0 ]
+    [ -f ".claude/rules/wiggum.md" ]
+    diff <(wiggum_rules_content) .claude/rules/wiggum.md
+}
+
+@test "setup_wiggum_rules: leaves an up-to-date rule untouched" {
+    mkdir -p .claude/rules
+    wiggum_rules_content > .claude/rules/wiggum.md
+    run setup_wiggum_rules
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"up to date"* ]] || return 1
+}
+
+@test "setup_wiggum_rules: offers to update an outdated rule and keeps it on no" {
+    mkdir -p .claude/rules
+    echo "old rule v0" > .claude/rules/wiggum.md
+    run bash -c "source '$WIGGUM_LIB'; echo n | setup_wiggum_rules"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"older wiggum project rule"* ]] || return 1
+    grep -q "old rule v0" .claude/rules/wiggum.md
+}
+
+@test "setup_wiggum_rules: updates an outdated rule on yes" {
+    mkdir -p .claude/rules
+    echo "old rule v0" > .claude/rules/wiggum.md
+    echo "y" | setup_wiggum_rules
+    ! grep -q "old rule v0" .claude/rules/wiggum.md
+    diff <(wiggum_rules_content) .claude/rules/wiggum.md
+}
+
+@test "install_generated_file: creates a missing parent directory" {
+    printf 'body\n' > /dev/null
+    gen() { echo "generated"; }
+    run install_generated_file "deep/nested/file.md" "test file" gen
+    [ "$status" -eq 0 ]
+    [ "$(cat deep/nested/file.md)" = "generated" ]
 }
 
 # ── run_validation ───────────────────────────────────────────────────────────
