@@ -4,6 +4,8 @@ A self-driving agent loop that turns issue descriptions into working, verified c
 
 Wiggum wraps [Claude Code](https://claude.com/claude-code) in a structured orchestration loop. You give it issue files or spec documents; it produces a workplan, implements it step by step, verifies each step against your project's own toolchain, self-heals failures, and commits the results. The human decides *what* to build. Wiggum figures out *how* and keeps going until it's done.
 
+**[benman1.github.io/wiggum](https://benman1.github.io/wiggum/)** is the one-page overview — what a run does, how it verifies, how to install. This README is the full reference.
+
 Kick off as many runs as you like and see all of them at once with `wiggum top` — every run on the machine, whichever project it was started from:
 
 ```console
