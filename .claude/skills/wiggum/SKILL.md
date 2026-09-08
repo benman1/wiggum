@@ -56,7 +56,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum status <plan>` | Task counts + run state (not started / running / running but appears blocked / finished: \<reason\>). Read-only. |
 | `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
 | `wiggum watch --chain [<pid>]` | Follow a run **across plans**: prints each plan as the chain reaches it and keeps streaming through the transitions. No pid means the only live run. Use this instead of hand-rolling a loop over `pgrep`/`ps`. |
-| `wiggum kill <plan>` | Stop the run (only that run's process tree). |
+| `wiggum kill <plan...>` | Stop those runs (only their own process trees). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
 | `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, RSS and CPU for the run's whole process tree, task tally. Blocked and running sort first. A footer gives load, swap and the live run count — read it before launching another run instead of shelling out to `uptime` and `sysctl`. Read-only. |

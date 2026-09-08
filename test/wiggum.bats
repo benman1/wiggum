@@ -7698,3 +7698,138 @@ register_fake_run() {
     [[ "$output" == *"happening now"* ]] || return 1
     [[ "$output" != *"ancient history"* ]] || return 1
 }
+
+# ── kill: several plans, whole trees, honest reporting ───────────────────────
+
+@test "run_kill: stops every plan named, not just the first" {
+    mkdir -p docs
+    printf -- '- [ ] a\n' > docs/one_plan.md
+    printf -- '- [ ] b\n' > docs/two_plan.md
+    sleep 30 &
+    local a=$!
+    sleep 30 &
+    local b=$!
+    write_pidfile docs/one_plan.pid "$a"
+    write_pidfile docs/two_plan.pid "$b"
+
+    FILES=(docs/one_plan.md docs/two_plan.md)
+    run_kill
+
+    ! process_alive "$a"
+    ! process_alive "$b"
+    [ ! -f docs/one_plan.pid ]
+    [ ! -f docs/two_plan.pid ]
+}
+
+@test "run_kill: a plan it cannot stop does not spare the ones after it" {
+    mkdir -p docs
+    printf -- '- [ ] b\n' > docs/two_plan.md
+    : > docs/one_plan.pid
+    sleep 30 &
+    local b=$!
+    write_pidfile docs/two_plan.pid "$b"
+
+    FILES=(docs/one_plan.md docs/two_plan.md)
+    run run_kill
+
+    [ "$status" -ne 0 ]
+    ! process_alive "$b"
+    [ ! -f docs/two_plan.pid ]
+}
+
+@test "kill_run: reaches a grandchild, not just the direct children" {
+    # `pkill -P` stops at one level, so claude's own subprocesses used to
+    # outlive the run that started them.
+    cat > tree.sh <<'EOF'
+#!/usr/bin/env bash
+bash -c 'sleep 300 & echo $! > gc.pid; wait' &
+wait
+EOF
+    chmod +x tree.sh
+    ./tree.sh &
+    local root=$!
+    local waited=0
+    while [ ! -s gc.pid ] && [ "$waited" -lt 50 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    local gc
+    gc="$(cat gc.pid)"
+    [ -n "$gc" ]
+    process_alive "$gc"
+
+    write_pidfile run.pid "$root"
+    kill_run run.pid
+
+    await_exit "$gc" 5
+    [ ! -f run.pid ]
+}
+
+@test "kill_run: kills a run that ignores SIGTERM, and says so" {
+    # The readiness file is the point: signalling the script before it has
+    # installed the trap kills it with a plain TERM, and the test then proves
+    # nothing about escalation. On a loaded box that race is the common case.
+    cat > stubborn.sh <<'EOF'
+#!/usr/bin/env bash
+trap '' TERM
+: > ready
+while :; do sleep 0.2; done
+EOF
+    chmod +x stubborn.sh
+    ./stubborn.sh &
+    local pid=$!
+    local waited=0
+    while [ ! -f ready ] && [ "$waited" -lt 100 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    [ -f ready ]
+    write_pidfile run.pid "$pid"
+
+    WIGGUM_KILL_GRACE=1
+    run kill_run run.pid
+    kill -9 "$pid" 2>/dev/null || true
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ignored SIGTERM"* ]] || return 1
+    [ ! -f run.pid ]
+}
+
+@test "kill_run: a run that survives both signals keeps its sidecar" {
+    # Reporting a kill that did not happen is how a live run ends up with no
+    # sidecar: invisible to `kill`, still listed by `top` from the registry.
+    sleep 30 &
+    local pid=$!
+    write_pidfile run.pid "$pid"
+    stop_run_tree() { return 1; }
+
+    run kill_run run.pid
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+
+    [ "$status" -ne 0 ]
+    [ -f run.pid ]
+    [[ "$output" == *"still alive"* ]] || return 1
+}
+
+@test "kill_run: drops the registry entry so top stops listing the run" {
+    mkdir -p docs
+    sleep 30 &
+    local pid=$!
+    write_pidfile docs/plan.pid "$pid"
+    register_run "$pid" docs/plan.md
+    [ -f "$WIGGUM_REGISTRY_DIR/$pid" ]
+
+    kill_run docs/plan.pid
+
+    [ ! -f "$WIGGUM_REGISTRY_DIR/$pid" ]
+}
+
+@test "stop_run_tree: refuses a pid a signal cannot mean" {
+    run stop_run_tree 1
+    [ "$status" -eq 1 ]
+    run stop_run_tree 0
+    [ "$status" -eq 1 ]
+    run stop_run_tree "not-a-pid"
+    [ "$status" -eq 1 ]
+}

@@ -617,17 +617,24 @@ EOF
             ;;
         kill)
             cat <<EOF
-wiggum kill - Stop a background run
+wiggum kill - Stop one or more background runs
 
 Usage:
-  wiggum kill <plan-file>
+  wiggum kill <plan-file...>
 
-Kills the wiggum process recorded for this plan (and the claude subprocess it
-spawned), then removes the pidfile. Targets only this run's process tree --
-never a blanket kill of every wiggum/claude on the system.
+Kills the wiggum process recorded for each plan, and every process descended
+from it (the claude subprocess it spawned, and claude's own children), then
+removes the pidfile and the registry entry so the run leaves 'wiggum top'.
+Targets only these runs' process trees -- never a blanket kill of every
+wiggum/claude on the system.
+
+SIGTERM first; anything still alive after WIGGUM_KILL_GRACE seconds (default
+10) is killed. A run that survives both keeps its sidecar, so 'top' goes on
+reporting it rather than losing track of a live process.
 
 Examples:
   wiggum kill docs/plan.md
+  wiggum kill docs/one_plan.md docs/two_plan.md
 EOF
             ;;
         chain)
@@ -1594,7 +1601,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum status <plan>` | Task counts + run state (not started / running / running but appears blocked / finished: \<reason\>). Read-only. |
 | `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
 | `wiggum watch --chain [<pid>]` | Follow a run **across plans**: prints each plan as the chain reaches it and keeps streaming through the transitions. No pid means the only live run. Use this instead of hand-rolling a loop over `pgrep`/`ps`. |
-| `wiggum kill <plan>` | Stop the run (only that run's process tree). |
+| `wiggum kill <plan...>` | Stop those runs (only their own process trees). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
 | `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, RSS and CPU for the run's whole process tree, task tally. Blocked and running sort first. A footer gives load, swap and the live run count — read it before launching another run instead of shelling out to `uptime` and `sysctl`. Read-only. |
@@ -4621,10 +4628,101 @@ run_watch() {
     [[ "$final" == "complete" ]]
 }
 
-# Kill the wiggum process for a run, identified by its pidfile, plus its direct
-# children (e.g. the claude subprocess it spawned). This deliberately targets
-# only the recorded pid tree -- it never does a blanket pkill of every
-# wiggum/claude on the system, so unrelated runs are untouched.
+# Seconds a TERM'd run gets to unwind before it is signalled again. Ten,
+# because the recorded pid is a shell blocked on a claude pipeline and cannot
+# act on the signal until that pipeline returns. Overridable so a test does not
+# pay the wait.
+WIGGUM_KILL_GRACE="${WIGGUM_KILL_GRACE:-10}"
+
+# Every pid in a run's process tree: the recorded pid and all of its
+# descendants, however deep.
+#
+# `pkill -P` reaches one level, which is why killing a run used to leave
+# claude's own subprocesses behind -- they are grandchildren of the recorded
+# pid, not children. One `ps` sweep feeds an awk tree walk, the same shape
+# run_group_usage uses and for the same reason: a `ps` per level is a fork per
+# level on a box already carrying the run.
+#
+# By pid and never by name. `claude` on this machine is usually somebody
+# else's, and a pattern written for one is how an unrelated run dies.
+run_tree_pids() {
+    local pid="$1"
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+    ps -axo pid=,ppid= 2>/dev/null | awk -v root="$pid" '
+        { p[NR] = $1; pp[NR] = $2; n = NR }
+        END {
+            want[root] = 1
+            # The table is not ordered parent-before-child, so sweep until a
+            # pass adds nothing rather than trusting one pass to catch a tree.
+            do {
+                added = 0
+                for (i = 1; i <= n; i++) {
+                    if (!(p[i] in want) && (pp[i] in want)) {
+                        want[p[i]] = 1
+                        added = 1
+                    }
+                }
+            } while (added)
+            for (q in want) print q
+        }'
+    return 0
+}
+
+# Poll until PID is gone, or SECS have passed. 0 if it went, 1 if it is still
+# there. Polling rather than sleeping the whole grace period out: a run
+# normally goes in well under a second, and a `kill` that blocks for ten is how
+# people learn to reach for `kill -9` instead.
+await_exit() {
+    local pid="$1" secs="$2" waited=0 limit
+    [[ "$secs" =~ ^[0-9]+$ ]] || secs=10
+    limit=$(( secs * 10 ))
+    while :; do
+        process_alive "$pid" || return 0
+        [[ "$waited" -ge "$limit" ]] && return 1
+        sleep 0.1
+        waited=$(( waited + 1 ))
+    done
+}
+
+# Stop a whole run tree and confirm it actually stopped.
+#
+# TERM first and KILL only for what survives the grace period: a run that is on
+# its way out needs a moment, not a bigger signal, and SIGKILL costs it the
+# chance to release its sidecar. Returns 0 if TERM was enough, 2 if it took
+# KILL, 1 if something is still alive after both -- which the caller must not
+# report as a kill.
+stop_run_tree() {
+    local root="$1" sig pid rc=0
+    [[ "$root" =~ ^[0-9]+$ ]] || return 1
+    # Never a pid the signal cannot mean: 0 is "every process in my group" and
+    # 1 is launchd.
+    [[ "$root" -gt 1 ]] || return 1
+
+    for sig in TERM KILL; do
+        while IFS= read -r pid; do
+            # Skip our own pid: `wiggum kill` run from inside the session it is
+            # stopping is a descendant of the tree, and killing ourselves here
+            # leaves the sidecar and the registry entry behind -- the exact
+            # mess this function exists to clean up.
+            [[ "$pid" == "$$" ]] && continue
+            kill -"$sig" "$pid" 2>/dev/null || true
+        done < <(run_tree_pids "$root")
+
+        # Re-read the tree for the second pass rather than reusing the first:
+        # what is left after TERM is what needs KILL.
+        if await_exit "$root" "$WIGGUM_KILL_GRACE"; then
+            return "$rc"
+        fi
+        rc=2
+    done
+    return 1
+}
+
+# Kill the wiggum process for a run, identified by its pidfile, plus every
+# process descended from it (the claude subprocess it spawned, and claude's
+# own children). This deliberately targets only the recorded pid tree -- it
+# never does a blanket pkill of every wiggum/claude on the system, so unrelated
+# runs are untouched.
 kill_run() {
     local pidfile="$1"
     if [[ ! -f "$pidfile" ]]; then
@@ -4662,9 +4760,27 @@ kill_run() {
              "verified as the run it names (it predates the check)." >&2
     fi
     echo "Killing wiggum run (pid $pid) and its children..." >&2
-    pkill -TERM -P "$pid" 2>/dev/null || true
-    kill -TERM "$pid" 2>/dev/null || true
+    local rc=0
+    stop_run_tree "$pid" || rc=$?
+    if [[ "$rc" -eq 1 ]]; then
+        # Do not clean up after a kill that did not happen. Dropping the
+        # sidecar here would hide a live run from `wiggum kill` while `top`
+        # went on listing it from the registry -- two commands disagreeing
+        # about the same process, which is how a run ends up needing `kill -9`
+        # by hand.
+        echo "Warning: pid $pid is still alive after SIGTERM and SIGKILL." >&2
+        echo "Leaving its sidecar in place, because the run is still there." \
+             "Inspect it with: ps -p $pid" >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+    if [[ "$rc" -eq 2 ]]; then
+        echo "It ignored SIGTERM for ${WIGGUM_KILL_GRACE}s, so it was killed." >&2
+    fi
     release_pidfile "$pidfile" "$pid"
+    # The registry keys a run by pid, and find_registered_runs only prunes an
+    # entry once the pid is gone. Without this the killed plan keeps its row in
+    # `wiggum top` -- sourced from the registry, since the pidfile is now gone.
+    unregister_run "$pid"
     return 0
 }
 
@@ -4717,8 +4833,26 @@ cancel_schedule() {
 # With neither present there is nothing to stop, which is a state to report
 # rather than an error. `kill` is what you reach for when you are unsure what
 # is running, and it should not fail for answering "nothing".
+# Stop every plan named on the command line, not just the first.
+#
+# `wiggum kill a.md b.md` used to kill a and silently drop b, which reads as
+# success: the one message it prints names a pid, and the plan you thought you
+# had stopped is still running. Each plan is independent, so one that fails
+# does not stop the rest -- the exit status carries the first failure.
 run_kill() {
-    local base="${FILES[0]}"
+    local base rc=0 one
+    for base in ${FILES[@]+"${FILES[@]}"}; do
+        one=0
+        kill_one_run "$base" || one=$?
+        if [[ "$rc" -eq 0 ]]; then
+            rc="$one"
+        fi
+    done
+    return "$rc"
+}
+
+kill_one_run() {
+    local base="$1"
     local pidfile schedfile pid=""
     pidfile="$(run_sidecar_file "$base" pid)"
     schedfile="$(run_sidecar_file "$base" scheduled)"
