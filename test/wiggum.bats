@@ -7833,3 +7833,46 @@ EOF
     run stop_run_tree "not-a-pid"
     [ "$status" -eq 1 ]
 }
+
+# ── the run separator marks every run, not only backgrounded ones ────────────
+
+@test "mark_run_start: a rerun does not inherit the last run's status" {
+    mkdir -p docs
+    printf 'Status: complete\n' > docs/plan.out
+    [ -n "$(read_run_status docs/plan.out)" ]
+
+    mark_run_start docs/plan.md
+
+    [ -z "$(read_run_status docs/plan.out)" ]
+}
+
+@test "mark_run_start: a run its launcher already marked is not marked twice" {
+    mkdir -p docs
+    WIGGUM_RUN_SEPARATOR_DONE=1
+    mark_run_start docs/plan.md
+    [ ! -f docs/plan.out ]
+
+    # One-shot: the next run through gets its own mark.
+    mark_run_start docs/plan.md
+    [ -f docs/plan.out ]
+}
+
+@test "kill_run: a chained rerun over a finished plan's .out is still killable" {
+    # The bug this pins: a plan run in the background once, then re-run inside
+    # a chain, kept reporting the old run's terminal status. `kill` read that
+    # as "this pid is somebody else's now", signalled nothing, and deleted the
+    # sidecar of a run that was still going.
+    mkdir -p docs
+    printf 'Status: aborted (exit 1)\n' > docs/plan.out
+    sleep 30 &
+    local pid=$!
+    write_pidfile docs/plan.pid "$pid"
+    mark_run_start docs/plan.md
+
+    run kill_run docs/plan.pid
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Killing wiggum run"* ]] || return 1
+    ! process_alive "$pid"
+    [ ! -f docs/plan.pid ]
+}

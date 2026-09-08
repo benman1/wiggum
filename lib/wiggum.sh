@@ -3322,6 +3322,12 @@ run_execute() {
     WIGGUM_RUN_FINISHED=false
     trap 'report_unfinished_run' EXIT
 
+    # Mark the start of this run's output before anything can read a status
+    # out of it. A backgrounded run arrives here already marked and this is a
+    # no-op; a chained one does not, and without the mark it reads as whatever
+    # the previous run of the same plan finished as.
+    mark_run_start "${FILES[0]:-}"
+
     # Register the run before the first phase, not after it: the plan being
     # worked on right now is exactly what `top` is asked about.
     claim_run_pidfile "${FILES[0]:-}"
@@ -3727,6 +3733,36 @@ machine_swap_summary() {
 # the `Status: aborted` line printed just above.
 WIGGUM_RUN_SEPARATOR_PREFIX='--- wiggum run'
 
+# Set by a launcher that has already written the separator for the run it is
+# about to start, and consumed by the first mark_run_start that sees it, so a
+# run's output carries one separator however it was launched. Exported because
+# the --at waiter starts the run as a separate process.
+WIGGUM_RUN_SEPARATOR_DONE="${WIGGUM_RUN_SEPARATOR_DONE:-}"
+
+# Write the separator that marks where this run's output begins.
+#
+# read_run_status only reads the slice after the last separator, so this is
+# what stops a run from inheriting the status of the last one. A background run
+# has always had it, written by the launcher before it forks. A foreground run
+# -- which is what every plan in a chain is -- had nothing, so a plan that had
+# ever been run in the background kept reporting that run's terminal status
+# forever: pidfile_alive read it as finished, `kill` refused to signal a live
+# process and deleted its sidecar, and `top` went on listing the run from the
+# registry.
+mark_run_start() {
+    local base="$1" outfile
+    [[ -n "$base" ]] || return 0
+    if [[ -n "$WIGGUM_RUN_SEPARATOR_DONE" ]]; then
+        WIGGUM_RUN_SEPARATOR_DONE=""
+        return 0
+    fi
+    outfile="$(run_sidecar_file "$base" out)"
+    mkdir -p "$(dirname "$outfile")" 2>/dev/null || true
+    printf '%s %s ---\n' "$WIGGUM_RUN_SEPARATOR_PREFIX" \
+        "$(date '+%Y-%m-%d %H:%M:%S')" >> "$outfile"
+    return 0
+}
+
 # Echo only the current run's portion of a `.out` -- everything from the last run
 # separator onward. Falls back to the whole file when no separator is present, so
 # `.out` files written before separators existed, and foreground runs, still read
@@ -4038,7 +4074,10 @@ launch_execute_background() {
     # now matches. The separator is written HERE, synchronously, not inside the
     # subshell -- `watch` can attach before a backgrounded write lands, and it
     # needs the marker to know where this run's output starts.
-    printf '%s %s ---\n' "$WIGGUM_RUN_SEPARATOR_PREFIX" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$outfile"
+    mark_run_start "$base"
+    # The child re-enters run_execute and would mark its own start; tell it
+    # this run is already marked so the log gets one separator, not two.
+    export WIGGUM_RUN_SEPARATOR_DONE=1
     ( run_execute ) >>"$outfile" 2>&1 &
     local pid=$!
     write_pidfile "$pidfile" "$pid"
@@ -4170,6 +4209,8 @@ wait_until_epoch "$WIGGUM_AT_TARGET"
 # no reader is ever left holding both and having to guess which one is true.
 rm -f "$WIGGUM_AT_SCHEDULED"
 printf '%s %s ---\n' "$WIGGUM_RUN_SEPARATOR_PREFIX" "$(date '+%Y-%m-%d %H:%M:%S')" >> "$WIGGUM_AT_OUT"
+# Already marked -- the run this launches must not write a second separator.
+export WIGGUM_RUN_SEPARATOR_DONE=1
 "$WIGGUM_AT_CLI" "$@" >> "$WIGGUM_AT_OUT" 2>&1 &
 wiggum_run_pid=$!
 echo "$wiggum_run_pid" > "$WIGGUM_AT_PIDFILE"
