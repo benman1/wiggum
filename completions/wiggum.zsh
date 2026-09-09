@@ -37,6 +37,9 @@ _wiggum() {
             fi
             ;;
         init)
+            _arguments \
+                '(-y --yes)'{-y,--yes}'[Answer every question yes, overwriting what is there]' \
+                '(-h --help)'{-h,--help}'[Show help]'
             if (( CURRENT == 3 )); then
                 _describe 'preset' presets
             fi

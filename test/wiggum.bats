@@ -8003,6 +8003,104 @@ EOF
     [[ "$output" == *"1/2 tasks done, on: Reconcile the ledger"* ]] || return 1
 }
 
+# ── init: answering, declining, and having nobody to ask ─────────────────────
+
+@test "parse_args: init takes --yes" {
+    parse_args init --yes
+    [ "$MODE" = "init" ]
+    [ "$INIT_ASSUME_YES" = true ]
+}
+
+@test "parse_args: init takes a preset alongside --yes, in either order" {
+    parse_args init --yes python
+    [ "$INIT_PRESET" = "python" ]
+    [ "$INIT_ASSUME_YES" = true ]
+    wiggum_reset
+    parse_args init python --yes
+    [ "$INIT_PRESET" = "python" ]
+    [ "$INIT_ASSUME_YES" = true ]
+}
+
+@test "parse_args: init rejects an option it does not have" {
+    run parse_args init --frobnicate
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"unknown option '--frobnicate' for init"* ]] || return 1
+}
+
+@test "parse_args: init refuses two presets rather than silently taking one" {
+    run parse_args init python node
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"one preset at most"* ]] || return 1
+}
+
+@test "confirm: --yes answers without asking" {
+    INIT_ASSUME_YES=true
+    run confirm "Overwrite? [y/N]"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Overwrite? [y/N] y"* ]] || return 1
+}
+
+@test "confirm: a piped answer is an answer, terminal or not" {
+    # `-t 0` would call this unanswerable; a pipe is not a terminal but does
+    # carry a reply, and every existing caller drives it this way.
+    run bash -c "source '$WIGGUM_LIB'; echo y | confirm 'Overwrite? [y/N]'"
+    [ "$status" -eq 0 ]
+    run bash -c "source '$WIGGUM_LIB'; echo n | confirm 'Overwrite? [y/N]'"
+    [ "$status" -eq 1 ]
+}
+
+@test "confirm: nobody to ask is distinct from being told no" {
+    run bash -c "source '$WIGGUM_LIB'; confirm 'Overwrite? [y/N]' < /dev/null"
+    [ "$status" -eq 2 ] || return 1
+    [[ "$output" == *"Re-run with --yes"* ]] || return 1
+}
+
+@test "run_init: --yes overwrites an existing .wiggumrc unattended" {
+    echo '{}' > package.json
+    echo "old contents" > .wiggumrc
+    INIT_ASSUME_YES=true
+    run run_init < /dev/null
+    [ "$status" -eq 0 ] || return 1
+    ! grep -q "old contents" .wiggumrc
+    grep -q "permission_mode = auto" .wiggumrc
+}
+
+@test "run_init: with nobody to ask, it stops rather than reporting success" {
+    echo '{}' > package.json
+    echo "old contents" > .wiggumrc
+    run run_init < /dev/null
+    # Exit 0 here is `init` claiming to have set the project up when it did not.
+    [ "$status" -eq "$EXIT_BAD_ARGS" ] || return 1
+    [[ "$output" == *"Re-run with --yes"* ]] || return 1
+    grep -q "old contents" .wiggumrc
+}
+
+@test "run_init: a declined overwrite is a decision, not a failure" {
+    echo '{}' > package.json
+    echo "old contents" > .wiggumrc
+    run bash -c "source '$WIGGUM_LIB'; echo n | run_init"
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"Aborted."* ]] || return 1
+    grep -q "old contents" .wiggumrc
+}
+
+@test "install_generated_file: an unanswerable prompt fails instead of keeping quiet" {
+    mkdir -p .claude/skills/wiggum
+    echo "old skill v0" > .claude/skills/wiggum/SKILL.md
+    run bash -c "source '$WIGGUM_LIB'; setup_wiggum_skill < /dev/null"
+    [ "$status" -eq "$EXIT_BAD_ARGS" ] || return 1
+    grep -q "old skill v0" .claude/skills/wiggum/SKILL.md
+}
+
+@test "install_generated_file: --yes updates a stale generated file" {
+    mkdir -p .claude/rules
+    echo "old rule v0" > .claude/rules/wiggum.md
+    INIT_ASSUME_YES=true
+    run setup_wiggum_rules < /dev/null
+    [ "$status" -eq 0 ] || return 1
+    ! grep -q "old rule v0" .claude/rules/wiggum.md
+}
+
 @test "parse_args: watch takes --tail" {
     make_file plan.md
     parse_args watch plan.md --tail 5

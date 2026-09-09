@@ -93,10 +93,12 @@ Wiggum's commands map to the natural workflow of software development — `init`
 ### Init mode
 
 ```
-wiggum init [preset]
+wiggum init [preset] [--yes]
 ```
 
 Generates a `.wiggumrc` configuration file for the current project. If no preset is specified, wiggum inspects the directory for known project files (`package.json`, `next.config.ts`, `pyproject.toml`, etc.) and picks the matching preset automatically. If a `.wiggumrc` already exists, it asks before overwriting.
+
+`--yes` (`-y`) answers every one of those questions with yes, which is what makes `init` runnable unattended — from a setup script, a Dockerfile, or cron. Without it and with nothing on stdin to answer, `init` says so and exits non-zero rather than reporting a setup it did not do. A piped answer counts as an answer, so `echo n | wiggum init` still declines.
 
 The generated config sets `permission_mode = auto`, so Claude's auto-mode classifier gates each action and an unattended run keeps a guardrail. Change the line, or pass `--permission-mode`, if you want something else.
 
@@ -602,7 +604,7 @@ The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKI
 
 The split matters. A rule with no `paths:` frontmatter loads at session start at the same priority as `.claude/CLAUDE.md`, so it costs context in *every* session in that project — which is why it's ~110 lines. The skill is an order of magnitude bigger and loads only when the work calls for it.
 
-Both files are written without asking, because writing a file that isn't there takes nothing away. If a copy from an older wiggum is already present and its content differs, `init` says so and asks before overwriting; declining keeps yours. **`wiggum init` never touches your `CLAUDE.md`.**
+Both files are written without asking, because writing a file that isn't there takes nothing away. If a copy from an older wiggum is already present and its content differs, `init` says so and asks before overwriting; declining keeps yours, and `--yes` takes the update. **`wiggum init` never touches your `CLAUDE.md`.**
 
 ## Prerequisites
 
@@ -776,7 +778,7 @@ wiggum <mode> [files...] [options]
 command | wiggum <mode> [options]
 
 Modes:
-  init        Generate a .wiggumrc for the current project
+  init        Generate a .wiggumrc for the current project (--yes to not be asked)
   plan        Create a workplan from issue/spec files
   explain     Explain a plan's worth and its open decisions (read-only)
   execute     Implement a workplan with iterative validation
@@ -1099,7 +1101,7 @@ See the [Claude Code permissions docs](https://docs.claude.com/en/docs/claude-co
 
 `wiggum run` is built for unattended use: feed it prompts, point `--session-file` at a stable path, and a scheduled job can pick up the same Claude session each time. The catch is the environment — cron runs your job with a **minimal, non-login shell**, so the three things below trip up almost every first attempt.
 
-**Initialize each project first.** Run `wiggum init` in every repository you intend to schedule, before you schedule it. `init` is the only interactive command, so it cannot run from cron, and a project without verification steps is the worst thing to run unattended: wiggum reads `./.wiggumrc` if it exists and `~/.wiggumrc` otherwise — never both — so if neither defines `verify` or `autofix` commands, a scheduled run will plan, implement and **commit without ever running your tests, type checker or linter**. `init` also sets up the Claude Code permissions an unattended run needs, and installs the `/wiggum` skill.
+**Initialize each project first.** Run `wiggum init` in every repository you intend to schedule, before you schedule it — interactively, or with `--yes` from a setup script. A project without verification steps is the worst thing to run unattended: wiggum reads `./.wiggumrc` if it exists and `~/.wiggumrc` otherwise — never both — so if neither defines `verify` or `autofix` commands, a scheduled run will plan, implement and **commit without ever running your tests, type checker or linter**. `init` also sets up the Claude Code permissions an unattended run needs, and installs the `/wiggum` skill.
 
 ### The three gotchas
 
@@ -1184,8 +1186,8 @@ This setup script does not do that; write the crontab line yourself.
 
 **First run, in order:**
 
-1. **`wiggum init`** in each project you intend to schedule. It is interactive,
-   so it cannot run from a scheduled job.
+1. **`wiggum init`** in each project you intend to schedule — or `wiggum init
+   --yes` from a setup script, which takes every overwrite without asking.
 2. **`./examples/wiggum-nightly-setup.sh`**, once per project.
 3. **Run it once by hand** before trusting the schedule, with a low iteration
    count to keep the trial short: `~/bin/wiggum-nightly.sh /path/to/project 3`.

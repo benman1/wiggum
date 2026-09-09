@@ -54,6 +54,9 @@ wiggum_reset() {
     MAX_STALL_COUNT=2
     CLAUDE_RETRIES=2
     INIT_PRESET=""
+    # Answer every question `init` would ask with "yes". The questions all guard
+    # an overwrite, so this is opt-in rather than the default.
+    INIT_ASSUME_YES=false
     VERIFY_STEPS=()
     BENCHMARK_SCRIPTS=()
     VERBOSE=false
@@ -453,7 +456,12 @@ usage() {
 wiggum init - Generate a .wiggumrc for a standard project setup
 
 Usage:
-  wiggum init [preset]
+  wiggum init [preset] [--yes]
+
+Options:
+  -y, --yes   Answer every question yes, overwriting what is already there.
+              Needed to run init unattended: the questions guard an overwrite,
+              so with nothing on stdin to answer them init stops instead.
 
 Presets:
   node      Node.js project (type-check, test, build, lint)
@@ -467,6 +475,11 @@ Also installs two Claude Code files: the /wiggum skill at
 .claude/skills/wiggum/SKILL.md and the always-loaded project rule at
 .claude/rules/wiggum.md. It asks only before overwriting something that is
 already there, and reminds you to create a CLAUDE.md if one is missing.
+
+Examples:
+  wiggum init                 # auto-detect, ask before overwriting anything
+  wiggum init python          # force a preset
+  wiggum init --yes           # unattended: take the overwrite without asking
 EOF
             ;;
         plan)
@@ -914,11 +927,34 @@ parse_args() {
             ;;
     esac
 
+    # init takes its own arguments and never reaches the loop below, so its
+    # flags are parsed here or not at all.
     if [[ "$MODE" == "init" ]]; then
-        if [[ $# -gt 0 && ! "$1" == -* ]]; then
-            INIT_PRESET="$1"
-            shift
-        fi
+        while [[ $# -gt 0 ]]; do
+            case "$1" in
+                -y|--yes)
+                    INIT_ASSUME_YES=true
+                    shift
+                    ;;
+                -h|--help)
+                    usage init
+                    MODE="help"
+                    return 0
+                    ;;
+                -*)
+                    echo "Error: unknown option '$1' for init." >&2
+                    return "$EXIT_BAD_ARGS"
+                    ;;
+                *)
+                    if [[ -n "$INIT_PRESET" ]]; then
+                        echo "Error: init takes one preset at most (got '$INIT_PRESET' and '$1')." >&2
+                        return "$EXIT_BAD_ARGS"
+                    fi
+                    INIT_PRESET="$1"
+                    shift
+                    ;;
+            esac
+        done
         return 0
     fi
 
@@ -1569,9 +1605,12 @@ run_init() {
     # is destructive. Everything else it writes is either absent (so writing it
     # takes nothing away) or identical to what is already there.
     if [[ -f ".wiggumrc" ]]; then
-        echo "A .wiggumrc already exists in this directory. Overwrite? [y/N]"
-        read -r answer
-        if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+        local rc=0
+        confirm "A .wiggumrc already exists in this directory. Overwrite? [y/N]" || rc=$?
+        if [[ "$rc" -eq 2 ]]; then
+            return "$EXIT_BAD_ARGS"
+        fi
+        if [[ "$rc" -ne 0 ]]; then
             echo "Aborted."
             return 0
         fi
@@ -1590,8 +1629,8 @@ RCEOF
 
     # Two Claude Code surfaces: the skill is the on-demand playbook for driving a
     # run, the rule is the handful of facts that must hold in every session.
-    setup_wiggum_skill
-    setup_wiggum_rules
+    setup_wiggum_skill || return $?
+    setup_wiggum_rules || return $?
 
     if [[ ! -f "CLAUDE.md" ]]; then
         echo ""
@@ -2519,6 +2558,36 @@ SKILL_EOF
 # write it. Identical means say so and move on. Different means an older wiggum
 # wrote it and the user may have edited it since, so ask -- that is the only one
 # of the three that takes something away, and the only one worth a question.
+# Ask a yes/no question, or answer it without asking.
+#
+# Three callers, all guarding an overwrite, and all of them used to `read` blind.
+# That is fine at a terminal and wrong everywhere else: with no one on stdin,
+# `read` hits EOF and returns non-zero, `set -e` takes the whole CLI down, and
+# what the user sees is the question followed by exit 1 -- a prompt that looks
+# unanswered rather than unanswerable. So the no-tty case is named, and pointed
+# at the flag that resolves it.
+#
+# Three outcomes, not two: 0 yes, 1 no, 2 nobody could be asked. A caller that
+# collapses the last two reports success for work it did not do -- declining at a
+# terminal is a decision, and failing to ask is a failure.
+confirm() {
+    local question="$1"
+    if [[ "$INIT_ASSUME_YES" == true ]]; then
+        echo "$question y"
+        return 0
+    fi
+    echo "$question"
+    local answer
+    # The read is the test, not `-t 0`. A pipe is not a terminal but does carry
+    # an answer (`echo n | wiggum init`), and only EOF means nobody is there.
+    if ! read -r answer; then
+        echo "Nothing is attached to answer that. Re-run with --yes to accept," \
+             "or run it at a terminal." >&2
+        return 2
+    fi
+    [[ "$answer" == "y" || "$answer" == "Y" ]]
+}
+
 install_generated_file() {
     local path="$1" label="$2" generator="$3"
 
@@ -2528,9 +2597,12 @@ install_generated_file() {
             return 0
         fi
         echo "An older $label exists at $path."
-        echo "Update it to the current version? [y/N]"
-        read -r answer
-        if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
+        local rc=0
+        confirm "Update it to the current version? [y/N]" || rc=$?
+        if [[ "$rc" -eq 2 ]]; then
+            return "$EXIT_BAD_ARGS"
+        fi
+        if [[ "$rc" -ne 0 ]]; then
             echo "Kept your existing $label."
             return 0
         fi
@@ -2551,6 +2623,8 @@ setup_wiggum_skill() {
     install_generated_file ".claude/skills/wiggum/SKILL.md" "/wiggum skill" \
         wiggum_skill_content
 }
+
+
 # Emit the always-loaded project rule to stdout. Claude Code reads every .md under
 # .claude/rules/ at session start, at the same priority as .claude/CLAUDE.md, so
 # this is the one wiggum surface that costs context on every session in the

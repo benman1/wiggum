@@ -38,7 +38,9 @@ _wiggum() {
             return
             ;;
         init)
-            if [[ $cword -eq 2 ]]; then
+            if [[ "$cur" == -* ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "--yes --help" -- "$cur")
+            elif [[ $cword -eq 2 ]]; then
                 mapfile -t COMPREPLY < <(compgen -W "$presets" -- "$cur")
             fi
             return
