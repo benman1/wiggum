@@ -118,6 +118,7 @@ wiggum plan <issue-files...> | wiggum execute
 Reads issue descriptions, specs, or requirements documents and produces a structured workplan. The plan is a markdown document with:
 
 - An `## Expected benefits` opening: what the work is *for*, ranked, each with the observable signal that would show it landed after shipping. Every phase then names the benefits it serves, so a phase that serves none stands out as scope creep
+- A `## Critical path` derived **backwards** from those signals: for each one, what must be true for it to fire, asked repeatedly until the answer is something the repo already has. Where several chains come out of that, the critical path is the *longest* — [CPM's](https://en.wikipedia.org/wiki/Critical_path_method) definition, and the point of it: only the longest sets the finish. Its complement is the `### Float`, the work that can slip or run alongside without moving the finish, and the section closes by naming the one task to start first. Order only — no durations or deadlines, because a planner asked for a day estimate invents one
 - Phases grouping related work
 - Discrete tasks, each with a `[ ]` checkbox (GitHub-flavored `-`, `*`, or `+` bullets all count)
 - An observable acceptance criterion per task

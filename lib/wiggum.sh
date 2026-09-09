@@ -1751,6 +1751,15 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 2. <the next benefit, ranked below the first> — **speculative**
    Signal: <what you would measure once it can be measured>
 
+## Critical path
+1. <the link that must land first> — unblocks <what>
+2. <the next link> — unblocks <what>
+
+### Float
+- <work off the path, which can slip or run alongside without moving the finish>
+
+Start first: <the one task to begin with>
+
 ## Constraints
 - In scope: <what this work will do>
 - Out of scope: <what it deliberately will not do>
@@ -1802,6 +1811,15 @@ a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
+- **Work backwards, and name the critical path.** After the benefits, ask of each
+  `Signal:` what would have to be true for it to fire, and keep asking until the
+  answer is something the repo already has. Where several chains come out of that,
+  the critical path is the **longest** — that is CPM's definition, and it matters
+  because only the longest sets the finish. Its complement is the **float**: work
+  that can slip or run alongside without moving the finish, which is the half a
+  reader acts on. Borrow the order, not the calendar — no durations or deadlines,
+  because a planner asked for a day estimate invents one, and an invented number
+  is exactly what `Acceptance:` exists to keep out of a plan.
 - **Start from the benefits, not from the tasks.** The plan opens with
   `## Expected benefits`: a numbered list, most valuable first, of what the work is
   *for* — each one an outcome someone gets, never the change being made ("a failed
@@ -3077,7 +3095,7 @@ run_plan() {
         WIGGUM_SHOW_OUTPUT=true
     fi
     run_claude -p \
-        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_expected_benefits) $(prompt_constraints_summary) $(prompt_plan_diagram) ${defect_rules}Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) $(prompt_risk_gates) $(prompt_research_and_delegation) $(prompt_phase_sequencing) $(prompt_plan_issue_refs) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
+        "You are a project planner. $(prompt_workplan "$file_list") $(prompt_expected_benefits) $(prompt_critical_path) $(prompt_constraints_summary) $(prompt_plan_diagram) ${defect_rules}Produce a detailed, actionable workplan as a markdown checklist with phases and discrete tasks. Write each task as a Markdown bullet checkbox line -- '- [ ] <task>' -- not as a heading and not as bare prose; this is the form wiggum counts and GitHub renders as a checkbox. Include dependencies between tasks. Every task MUST have an 'Acceptance:' line stating an observable outcome -- a passing test, a specific log line, a file that exists, a command that exits 0, a SQL row. Not a feeling ('looks better', 'works correctly'). A task without observable acceptance is a wish, not a step. $(prompt_plan_verification) $(prompt_acceptance_criteria) $(prompt_risk_gates) $(prompt_research_and_delegation) $(prompt_phase_sequencing) $(prompt_plan_issue_refs) Use the Write tool to save the plan to: $PLAN_FILE. Do not print the plan to stdout -- only write it to the file. $PROMPT_SUFFIX" \
         "${FILES[@]}"
     WIGGUM_SHOW_OUTPUT=false
 
@@ -3140,9 +3158,31 @@ prompt_expected_benefits() {
     echo "START the plan with an '## Expected benefits' section, before anything else: a numbered list, most valuable first, of what this work is FOR -- each one an outcome someone gets, not the change being made ('a failed verify names the offending file in one line' is a benefit; 'refactor the error handler' is not). Give every benefit a 'Signal:' line -- the observable thing that shows it landed after shipping (a number that moves, an error that stops appearing, a manual step nobody performs any more) -- and mark one you cannot measure yet as 'speculative' rather than dressing it up. Then derive everything else from that list: every phase MUST carry a 'Serves:' line naming the benefit numbers it delivers, and a phase that serves none is scope creep -- cut it, or name the benefit that justifies it. If the benefits do not justify the work as scoped, say so in one line at the top of the section and propose the smaller version that does."
 }
 
-# Constraints self-check that must follow the benefits.  Usage: $(prompt_constraints_summary)
+# The backwards derivation, between the benefits and the constraints.
+# Usage: $(prompt_critical_path)
+#
+# The benefits section already says to derive the phases from the signals; what
+# it never asked for is the ORDER that derivation implies. Without it a plan is a
+# set of phases with dependencies buried in prose, and the run discovers which
+# one was blocking only by hitting it.
+#
+# The vocabulary is the Critical Path Method's, and two of its words carry weight
+# here. "Longest" is the definition, not a flourish: several chains reach the
+# goal and only the longest sets the finish, so a plan that names any chain has
+# not answered the question. "Float" is its complement -- the work that can slip
+# without moving the finish, which is the half a reader actually acts on.
+#
+# What is deliberately NOT borrowed from CPM is its calendar: no durations, no
+# deadline, no resource pool. A planner asked for day estimates invents them, and
+# an invented number in a plan is exactly the unfalsifiable content the
+# 'Acceptance:' rule exists to keep out. Order is checkable; a date is not.
+prompt_critical_path() {
+    echo "After '## Expected benefits', add a '## Critical path' section, derived BACKWARDS: for each Signal, name what must be true for it to fire, and keep asking that of each answer until you reach something the repo already has. Where that yields several chains, the critical path is the LONGEST -- it alone sets the finish -- one line per link naming what it unblocks. Then a '## Float' subsection: the work off that path, which can slip or run alongside without moving the finish. Close with the single task to start first. If nothing gates anything, one line saying so."
+}
+
+# Constraints self-check that must follow the critical path.  Usage: $(prompt_constraints_summary)
 prompt_constraints_summary() {
-    echo "Immediately after '## Expected benefits', and before writing any phases or tasks, add a '## Constraints' section as a self-check: 'In scope' (what this work will do), 'Out of scope' (what it deliberately will not do), and 'Never do' (actions that would be wrong here -- e.g. editing the user's config, breaking the public interface, or weakening verification to make it pass). Then derive the phases and tasks so they stay within these bounds."
+    echo "Immediately after '## Critical path', and before writing any phases or tasks, add a '## Constraints' section as a self-check: 'In scope' (what this work will do), 'Out of scope' (what it deliberately will not do), and 'Never do' (actions that would be wrong here -- e.g. editing the user's config, breaking the public interface, or weakening verification to make it pass). Then derive the phases and tasks so they stay within these bounds."
 }
 
 # Diagram that must follow the constraints.  Usage: $(prompt_plan_diagram)
@@ -3157,7 +3197,7 @@ prompt_plan_verification() {
 
 # Phase-level acceptance-criteria discipline appended to the planner prompt.  Usage: $(prompt_acceptance_criteria)
 prompt_acceptance_criteria() {
-    echo "In addition to the per-task 'Acceptance:'/'Files:' lines (which stay), give EACH phase its own '### Acceptance Criteria' section organized by four categories: 'Happy Path' (the primary flow works end to end), 'Edge Cases' (empty, boundary, or large inputs), 'Error States' (invalid input or a failed/unavailable dependency fails safely with a clear error), and 'Non-Functional' (performance, formatting, accessibility). Every 'Non-Functional' criterion MUST name an 'observable check' -- a benchmark command, a lint rule, a measurable threshold -- never a feeling. Recommend writing each criterion in the 'Given <context>, When <action>, Then <observable outcome>' form, but a plain observable pass/fail line is allowed where Given/When/Then is overkill. This phase-level section is additive: it does NOT replace the per-task 'Acceptance:' and 'Files:' lines."
+    echo "In addition to the per-task 'Acceptance:'/'Files:' lines (which stay), give EACH phase its own '### Acceptance Criteria' section organized by four categories: 'Happy Path' (the primary flow works end to end), 'Edge Cases' (empty, boundary, or large inputs), 'Error States' (invalid input or a failed/unavailable dependency fails safely with a clear error), and 'Non-Functional' (performance, formatting, accessibility). Every 'Non-Functional' criterion MUST name an 'observable check' -- a benchmark command, a lint rule, a measurable threshold -- never a feeling. Recommend writing each criterion in the 'Given <context>, When <action>, Then <observable outcome>' form, but a plain observable pass/fail line is allowed where Given/When/Then is overkill."
 }
 
 # Risk gates appended to the planner prompt.  Usage: $(prompt_risk_gates)

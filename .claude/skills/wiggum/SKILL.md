@@ -104,6 +104,15 @@ write the plan yourself in the format below. A wiggum plan is a markdown checkli
 2. <the next benefit, ranked below the first> — **speculative**
    Signal: <what you would measure once it can be measured>
 
+## Critical path
+1. <the link that must land first> — unblocks <what>
+2. <the next link> — unblocks <what>
+
+### Float
+- <work off the path, which can slip or run alongside without moving the finish>
+
+Start first: <the one task to begin with>
+
 ## Constraints
 - In scope: <what this work will do>
 - Out of scope: <what it deliberately will not do>
@@ -155,6 +164,15 @@ a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
+- **Work backwards, and name the critical path.** After the benefits, ask of each
+  `Signal:` what would have to be true for it to fire, and keep asking until the
+  answer is something the repo already has. Where several chains come out of that,
+  the critical path is the **longest** — that is CPM's definition, and it matters
+  because only the longest sets the finish. Its complement is the **float**: work
+  that can slip or run alongside without moving the finish, which is the half a
+  reader acts on. Borrow the order, not the calendar — no durations or deadlines,
+  because a planner asked for a day estimate invents one, and an invented number
+  is exactly what `Acceptance:` exists to keep out of a plan.
 - **Start from the benefits, not from the tasks.** The plan opens with
   `## Expected benefits`: a numbered list, most valuable first, of what the work is
   *for* — each one an outcome someone gets, never the change being made ("a failed

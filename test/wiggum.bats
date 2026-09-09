@@ -1852,10 +1852,14 @@ EOF
     [[ "$output" == *"observable check"* ]] || return 1
 }
 
-@test "prompt_acceptance_criteria: keeps the section additive to per-task lines" {
+@test "prompt_acceptance_criteria: keeps the section additive to per-task lines, said once" {
     run prompt_acceptance_criteria
-    [[ "$output" == *"additive"* ]] || return 1
-    [[ "$output" == *"per-task 'Acceptance:' and 'Files:' lines"* ]] || return 1
+    # Stated in the opening clause, where it scopes everything that follows.
+    [[ "$output" == *"In addition to the per-task 'Acceptance:'/'Files:' lines (which stay)"* ]] || return 1
+    # And not restated at the end. Prompt helpers are on a byte budget the plan
+    # pays on every run, so that closing sentence was what paid for
+    # '## Critical path' rather than raising the ceiling.
+    [[ "$output" != *"does NOT replace the per-task"* ]] || return 1
 }
 
 @test "prompt_expected_benefits: opens the plan with the benefits section" {
@@ -1882,12 +1886,87 @@ EOF
     [[ "$output" == *"smaller version"* ]] || return 1
 }
 
-@test "prompt_constraints_summary: follows the benefits section" {
+@test "prompt_constraints_summary: follows the critical path section" {
     run prompt_constraints_summary
-    [[ "$output" == *"Immediately after '## Expected benefits'"* ]] || return 1
+    [[ "$output" == *"Immediately after '## Critical path'"* ]] || return 1
     # The pre-existing ordering rule survives: still ahead of phases and tasks.
     [[ "$output" == *"before writing any phases or tasks"* ]] || return 1
 }
+
+@test "prompt_critical_path: derives the chain backwards from the signals" {
+    run prompt_critical_path
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"## Critical path"* ]] || return 1
+    [[ "$output" == *"BACKWARDS"* ]] || return 1
+    # Backwards from the acceptance signal, not forwards from the code, and it
+    # terminates on something that already exists rather than recursing forever.
+    [[ "$output" == *"for each Signal"* ]] || return 1
+    [[ "$output" == *"the repo already has"* ]] || return 1
+}
+
+@test "prompt_critical_path: is the longest chain, not just any chain" {
+    run prompt_critical_path
+    # CPM's actual definition. Several chains reach the goal; only the longest
+    # sets the finish, so naming any chain does not answer the question.
+    [[ "$output" == *"the critical path is the LONGEST"* ]] || return 1
+    [[ "$output" == *"sets the finish"* ]] || return 1
+}
+
+@test "prompt_critical_path: names the float and the first task" {
+    run prompt_critical_path
+    # The complement is the half a reader acts on.
+    [[ "$output" == *"## Float"* ]] || return 1
+    [[ "$output" == *"slip or run alongside"* ]] || return 1
+    [[ "$output" == *"the single task to start first"* ]] || return 1
+    # And it must not manufacture a chain where nothing gates anything.
+    [[ "$output" == *"nothing gates anything"* ]] || return 1
+}
+
+@test "prompt_critical_path: borrows CPM's order but not its calendar" {
+    # Durations, deadlines and resource pools are the parts of CPM that do not
+    # survive the move: a planner asked for them invents them, and an invented
+    # number is the unfalsifiable content 'Acceptance:' exists to keep out.
+    run prompt_critical_path
+    [[ "$output" != *"estimate"* ]] || return 1
+    [[ "$output" != *"deadline"* ]] || return 1
+    [[ "$output" != *"how long"* ]] || return 1
+    [[ "$output" != *"days"* ]] || return 1
+}
+
+@test "prompt_critical_path: sits between the benefits and the constraints" {
+    # Ordering is asserted from both sides so a reshuffle cannot pass silently.
+    run prompt_critical_path
+    [[ "$output" == *"After '## Expected benefits'"* ]] || return 1
+    run prompt_constraints_summary
+    [[ "$output" == *"Immediately after '## Critical path'"* ]] || return 1
+}
+
+@test "run_plan: the plan prompt asks for the critical path" {
+    mkdir -p docs
+    echo "Add a CSV export button to the reports page" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE="/tmp/fake_stdin"
+    CLI_PLAN_FILE=""
+    PLAN_FILE="docs/issue_plan.md"
+
+    captured="$TEST_DIR/captured_prompt.txt"
+    claude() { printf '%s\n' "$@" > "$captured"; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>/dev/null
+
+    grep -q "## Critical path" "$captured"
+    grep -q "BACKWARDS" "$captured"
+    # And in the right place: benefits, then critical path, then constraints.
+    local benefits path constraints
+    benefits="$(grep -bo "START the plan with an '## Expected benefits'" "$captured" | cut -d: -f1)"
+    path="$(grep -bo "After '## Expected benefits', add a '## Critical path'" "$captured" | cut -d: -f1)"
+    constraints="$(grep -bo "Immediately after '## Critical path'" "$captured" | cut -d: -f1)"
+    [ "$benefits" -lt "$path" ]
+    [ "$path" -lt "$constraints" ]
+}
+
+
 
 @test "prompt_issue_ledger: names where a repo keeps its issue ledger" {
     run prompt_issue_ledger
@@ -2087,6 +2166,16 @@ EOF
     [[ "$output" == *"--max-iterations N"* ]] || return 1
     # A background child would outlive the iteration that launched it.
     [[ "$output" == *"foreground"* ]] || return 1
+}
+
+@test "wiggum_skill_content: documents the backwards critical path and its float" {
+    run wiggum_skill_content
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"## Critical path"* ]] || return 1
+    [[ "$output" == *"### Float"* ]] || return 1
+    [[ "$output" == *"the critical path is the **longest**"* ]] || return 1
+    # The calendar half of CPM stays out of the plan format.
+    [[ "$output" == *"Borrow the order, not the calendar"* ]] || return 1
 }
 
 @test "wiggum_skill_content: documents opening the plan with a Constraints section" {
