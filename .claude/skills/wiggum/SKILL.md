@@ -54,8 +54,8 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum execute <plan> --background` | Run detached; writes `docs/<name>.pid` + `docs/<name>.out`. Returns immediately. |
 | `wiggum execute <plan> --at <WHEN>` | Wait until WHEN, then run once, detached. WHEN is `+90m` (relative), `01:07` (the next such clock time) or `@1756180020` (epoch). Creates nothing recurring; `status` reports it as scheduled and `kill` cancels it. |
 | `wiggum status <plan>` | Task counts + run state (not started / running / running but appears blocked / finished: \<reason\>). Read-only. |
-| `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--poll-interval N]` | Stream output and block until the run finishes — this is "wait". |
-| `wiggum watch --chain [<pid>]` | Follow a run **across plans**: prints each plan as the chain reaches it and keeps streaming through the transitions. No pid means the only live run. Use this instead of hand-rolling a loop over `pgrep`/`ps`. |
+| `wiggum watch <plan> [--timeout S] [--kill-on-timeout] [--tail N]` | Stream output and block until the run finishes — this is "wait". Attaches near the end of the backlog (`--tail`, default 20) and names the task the plan is on. A plan whose turn in a chain has not come yet is **waited for**, not reported missing. |
+| `wiggum watch --chain [<plan>\|<pid>]` | Follow a run **across plans**: prints each plan as the chain reaches it and keeps streaming through the transitions. Name it by plan file or pid; with neither it takes the only live run, or the only one in this directory (`--here` to insist). Use this instead of hand-rolling a loop over `pgrep`/`ps`. |
 | `wiggum kill <plan...>` | Stop those runs (only their own process trees). |
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
@@ -557,13 +557,14 @@ of `run_watch`) and deleted whatever pidfile was at that path. Kill a run and
 relaunch in the same breath, and the lingering watch deletes the **new** run's
 pidfile. Worth recognising, because the symptom reads as success:
 
-- `wiggum watch` returns **exit 0** with `No background run found for <plan> (no
-  pidfile)`.
+- `wiggum watch` returns **exit 0** saying it found no background run.
 - `wiggum status` drops its `State:` line.
 - The run is meanwhile working perfectly.
 
 Read that as "the run finished" and you will report a completed job that is
-still going. **Confirm with the kernel, not the sidecar** — the run is detached
+still going. Current wiggum cannot produce that pairing: `watch` asks the run
+registry before the sidecar, and no `watch` outcome is exit 0 unless the run
+finished `complete`. **Confirm with the kernel, not the sidecar** — the run is detached
 and reparented to init, so `ps` finds it:
 
 ```
@@ -779,22 +780,36 @@ stops the chain rather than being skipped. The queue also *is* the chain's plan 
 so a killed chain relaunches from the same command without you reconstructing it from
 your shell history.
 
-**To follow a chain, use `wiggum watch --chain`, not `watch <plan>`.** Watching by plan
-attaches to one run's pidfile, and a plan later in the chain has no pidfile until its
-turn comes, so watching it **exits 1 immediately** rather than waiting — it reads as
-"that run is finished" when it means "that run has not started". `--chain` follows the
-process: it announces each plan as the chain reaches it, keeps streaming across the
-transitions, and returns when the process does.
+**To follow a chain, use `wiggum watch --chain`.** Watching by plan attaches to one
+plan and stops when that plan does; `--chain` follows the process, announcing each plan
+as the chain reaches it and streaming across the transitions.
 
 ```
-wiggum watch --chain          # the only live run
-wiggum watch --chain 70613    # a named one; `wiggum top` lists the pids
+wiggum watch --chain                        # the only live run
+wiggum watch --chain --here                 # the only one in this directory
+wiggum watch --chain docs/third_plan.md     # by plan, whether or not its turn has come
+wiggum watch --chain 70613                  # by pid; `wiggum top` lists them
 ```
+
+Either form waits for a plan whose turn has not come rather than reporting it missing:
+it prints what is running now and attaches when the plan starts. Waiting is bounded by
+`--timeout` and by the machine — with no wiggum run live anywhere, nothing can reach
+the plan, so watch says so and exits 1.
 
 It streams `.out` when there is one and the `.log` otherwise, so a foreground chain is
-followed by its heartbeat. It exits non-zero only if the last plan recorded a status
-other than `complete`. **Do not hand-roll this** with `pgrep`/`ps`/`kill -0` loops --
-that is what the anti-patterns below are about.
+followed by its heartbeat, and prints a `[watch]` line after 60s of silence (`--heartbeat`)
+so a quiet run is distinguishable from a wedged watcher. It attaches near the end of what
+the run has already written rather than replaying it (`--tail`, default 20 lines), and
+names the task each plan is on -- read from the plan's first open checkbox, so it is what
+the loop is on or about to pick up rather than an observation of the run. **Do not hand-roll this** with
+`pgrep`/`ps`/`kill -0` loops -- that is what the anti-patterns below are about.
+
+**Read the exit code; it is never 0 for a watch that waited for nothing.** `0` the run
+finished `complete`; `1` there was nothing to watch and nothing live that could start it;
+`4` the run ended stalled, incomplete, killed or with no status; `6` the watch timed out
+and the run is still going. (A foreground chain records no status, so `--chain` ends 0
+when the process finishes cleanly.) So `wiggum watch <plan> && <next step>` gates on the run
+actually finishing.
 
 **A stale pidfile can make `watch` announce a run that is gone.** It prints the pid it
 read before testing liveness, so a killed chain whose sidecar was left behind produces a

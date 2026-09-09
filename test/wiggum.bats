@@ -4794,14 +4794,15 @@ EOF
 
 # ── run_watch ─────────────────────────────────────────────────────────────────
 
-@test "run_watch: errors when no background run exists" {
+@test "run_watch: errors when nothing is running that could reach the plan" {
     cat > plan.md <<'EOF'
 - [ ] one
 EOF
     FILES=(plan.md)
     run run_watch
     [ "$status" -eq "$EXIT_BAD_ARGS" ]
-    [[ "$output" == *"No background run found"* ]] || return 1
+    [[ "$output" == *"no wiggum run is live on this machine"* ]] || return 1
+    [[ "$output" == *"wiggum execute plan.md --background"* ]] || return 1
 }
 
 @test "run_watch: streams output and returns 0 when run completes" {
@@ -7538,7 +7539,7 @@ register_fake_run() {
     run run_watch_chain
     kill "$live" 2>/dev/null || true
     wait "$live" 2>/dev/null || true
-    [ "$status" -eq 0 ] || return 1
+    [ "$status" -eq "$EXIT_WATCH_TIMEOUT" ] || return 1
     [[ "$output" == *"Following wiggum run $live"* ]] || return 1
     [[ "$output" == *"now on: $TEST_DIR/a_plan.md"* ]] || return 1
     # A foreground chain writes no .out, so the log is the heartbeat to stream.
@@ -7574,7 +7575,7 @@ register_fake_run() {
     run run_watch_chain
     kill "$live" 2>/dev/null || true
     wait "$live" 2>/dev/null || true
-    [ "$status" -eq 0 ] || return 1
+    [ "$status" -eq "$EXIT_WATCH_TIMEOUT" ] || return 1
     [[ "$output" == *"still going"* ]] || return 1
     [[ "$output" != *"has ended"* ]] || return 1
 }
@@ -7631,11 +7632,410 @@ register_fake_run() {
     [[ "$output" == *"No runs are registered"* ]] || return 1
 }
 
-@test "run_watch_chain: a plan path where a pid belongs is refused" {
-    FILES=(docs/plan.md)
+@test "run_watch_chain: a plan path names the run that is on it" {
+    sleep 30 &
+    local live=$!
+    register_fake_run "$live" "$TEST_DIR/a_plan"
+    make_file a_plan.md
+    printf 'streaming\n' > a_plan.log
+    FILES=(a_plan.md)
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
     run run_watch_chain
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [[ "$output" == *"Following wiggum run $live"* ]] || return 1
+    [[ "$output" == *"streaming"* ]] || return 1
+}
+
+@test "run_watch_chain: --here takes the run in this directory when several are live" {
+    sleep 30 &
+    local mine=$!
+    sleep 30 &
+    local theirs=$!
+    register_fake_run "$mine" "$TEST_DIR/a_plan"
+    register_fake_run "$theirs" "/somewhere/else/docs/b_plan"
+    printf 'mine\n' > a_plan.log
+    FILES=()
+    WATCH_HERE=true
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    run run_watch_chain
+    kill "$mine" "$theirs" 2>/dev/null || true
+    wait "$mine" 2>/dev/null || true
+    wait "$theirs" 2>/dev/null || true
+    [[ "$output" == *"Following wiggum run $mine"* ]] || return 1
+    [[ "$output" == *"mine"* ]] || return 1
+}
+
+@test "sole_live_registered_pid: the current directory breaks a tie before asking" {
+    sleep 30 &
+    local mine=$!
+    sleep 30 &
+    local theirs=$!
+    register_fake_run "$mine" "$TEST_DIR/a_plan"
+    register_fake_run "$theirs" "/somewhere/else/docs/b_plan"
+    run sole_live_registered_pid
+    kill "$mine" "$theirs" 2>/dev/null || true
+    wait "$mine" 2>/dev/null || true
+    wait "$theirs" 2>/dev/null || true
+    [ "$status" -eq 0 ] || return 1
+    [[ "$output" == *"$mine"* ]] || return 1
+    [[ "$output" == *"taking the one in $TEST_DIR"* ]] || return 1
+}
+
+@test "sole_live_registered_pid: a tie the directory cannot break still asks" {
+    sleep 30 &
+    local one=$!
+    sleep 30 &
+    local two=$!
+    register_fake_run "$one" "$TEST_DIR/a_plan"
+    register_fake_run "$two" "$TEST_DIR/b_plan"
+    run sole_live_registered_pid
+    kill "$one" "$two" 2>/dev/null || true
+    wait "$one" 2>/dev/null || true
+    wait "$two" 2>/dev/null || true
     [ "$status" -ne 0 ] || return 1
-    [[ "$output" == *"takes a pid, not a plan path"* ]] || return 1
+    [[ "$output" == *"name the pid or plan you mean"* ]] || return 1
+}
+
+@test "sole_live_registered_pid: --here refuses to reach outside this directory" {
+    sleep 30 &
+    local theirs=$!
+    register_fake_run "$theirs" "/somewhere/else/docs/b_plan"
+    WATCH_HERE=true
+    run sole_live_registered_pid
+    kill "$theirs" 2>/dev/null || true
+    wait "$theirs" 2>/dev/null || true
+    [ "$status" -ne 0 ] || return 1
+    [[ "$output" == *"No wiggum run is live in $TEST_DIR"* ]] || return 1
+    [[ "$output" == *"/somewhere/else/docs/b_plan.md"* ]] || return 1
+}
+
+# ── watch: waiting for a plan whose turn has not come ────────────────────────
+
+@test "run_watch: waits for a queued plan instead of calling it missing" {
+    # Plan three of a chain: no pidfile, no output, but a live run that will
+    # reach it. Exiting here is what made "not started" read as "failed".
+    sleep 30 &
+    local chain=$!
+    register_fake_run "$chain" "$TEST_DIR/first_plan"
+    make_file third_plan.md
+    FILES=(third_plan.md)
+    WATCH_POLL=1
+    WATCH_TIMEOUT=2
+    WATCH_HEARTBEAT=0
+    run run_watch
+    kill "$chain" 2>/dev/null || true
+    wait "$chain" 2>/dev/null || true
+    [ "$status" -eq "$EXIT_WATCH_TIMEOUT" ] || return 1
+    [[ "$output" == *"Waiting for third_plan.md to start"* ]] || return 1
+    [[ "$output" == *"$TEST_DIR/first_plan.md"* ]] || return 1
+    [[ "$output" == *"has still not started"* ]] || return 1
+}
+
+@test "run_watch: attaches once the queued plan's turn comes" {
+    make_file third_plan.md
+    # The chain reaches the plan a moment after the watch starts waiting.
+    sleep 30 &
+    local chain=$!
+    register_fake_run "$chain" "$TEST_DIR/first_plan"
+    ( sleep 1
+      register_fake_run "$chain" "$TEST_DIR/third_plan"
+      printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nQUEUED_MARKER\n' > third_plan.out ) &
+    FILES=(third_plan.md)
+    WATCH_POLL=1
+    WATCH_TIMEOUT=6
+    WATCH_HEARTBEAT=0
+    run run_watch
+    kill "$chain" 2>/dev/null || true
+    wait "$chain" 2>/dev/null || true
+    [[ "$output" == *"Watching wiggum run for third_plan.md"* ]] || return 1
+    [[ "$output" == *"QUEUED_MARKER"* ]] || return 1
+}
+
+@test "run_watch: a plan that already ran reports its outcome rather than waiting" {
+    sleep 30 &
+    local elsewhere=$!
+    register_fake_run "$elsewhere" "$TEST_DIR/other_plan"
+    make_file plan.md
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: stalled\n' > plan.out
+    FILES=(plan.md)
+    WATCH_POLL=1
+    run run_watch
+    kill "$elsewhere" 2>/dev/null || true
+    wait "$elsewhere" 2>/dev/null || true
+    [ "$status" -eq "$EXIT_CLAUDE_FAILED" ] || return 1
+    [[ "$output" == *"not active. Status: stalled"* ]] || return 1
+}
+
+@test "run_watch: a scheduled plan is waited for, not reported as last week's run" {
+    make_file plan.md
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nStatus: complete\n' > plan.out
+    sleep 30 &
+    local waiter=$!
+    printf 'target=%s\ntarget_human=soon\nspec=+1m\npid=%s\n' \
+        "$(( $(wiggum_now_epoch) + 60 ))" "$waiter" > plan.scheduled
+    FILES=(plan.md)
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    WATCH_HEARTBEAT=0
+    run run_watch
+    kill "$waiter" 2>/dev/null || true
+    wait "$waiter" 2>/dev/null || true
+    [ "$status" -eq "$EXIT_WATCH_TIMEOUT" ] || return 1
+    [[ "$output" == *"Waiting for plan.md to start"* ]] || return 1
+    [[ "$output" != *"Status: complete"* ]] || return 1
+}
+
+@test "run_watch: the registry finds a run whose pidfile went missing under it" {
+    sleep 30 &
+    local live=$!
+    register_fake_run "$live" "$TEST_DIR/plan"
+    make_file plan.md
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\nSTILL_WORKING\n' > plan.out
+    FILES=(plan.md)
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    WATCH_HEARTBEAT=0
+    run run_watch
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [ "$status" -eq "$EXIT_WATCH_TIMEOUT" ] || return 1
+    [[ "$output" == *"STILL_WORKING"* ]] || return 1
+}
+
+# ── watch: exit codes and the heartbeat ──────────────────────────────────────
+
+@test "run_watch: a timeout with the run still going is not success" {
+    make_file plan.md
+    sleep 30 &
+    local live=$!
+    echo "$live" > plan.pid
+    FILES=(plan.md)
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    WATCH_HEARTBEAT=0
+    run run_watch
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    # Exit 0 here is what makes `wiggum watch ... && deploy` deploy unfinished work.
+    [ "$status" -eq "$EXIT_WATCH_TIMEOUT" ] || return 1
+    [[ "$output" == *"leaving it running"* ]] || return 1
+}
+
+@test "run_watch: a run that ends with no recorded status is not success" {
+    make_file plan.md
+    ( sleep 1 ) &
+    local pid=$!
+    echo "$pid" > plan.pid
+    FILES=(plan.md)
+    WATCH_POLL=1
+    run run_watch
+    [ "$status" -eq "$EXIT_CLAUDE_FAILED" ] || return 1
+    [[ "$output" == *"Status: unknown"* ]] || return 1
+}
+
+@test "run_watch: a silent run says it is still attached" {
+    cat > plan.md <<'EOF'
+- [x] one
+- [ ] two
+EOF
+    sleep 30 &
+    local live=$!
+    echo "$live" > plan.pid
+    FILES=(plan.md)
+    WATCH_POLL=1
+    WATCH_TIMEOUT=3
+    WATCH_HEARTBEAT=1
+    run run_watch
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [[ "$output" == *"[watch]"* ]] || return 1
+    [[ "$output" == *"attached to pid $live"* ]] || return 1
+    [[ "$output" == *"1/2 tasks done, on: two, no new output"* ]] || return 1
+}
+
+@test "run_watch: --heartbeat 0 keeps a silent watch silent" {
+    make_file plan.md
+    sleep 30 &
+    local live=$!
+    echo "$live" > plan.pid
+    FILES=(plan.md)
+    WATCH_POLL=1
+    WATCH_TIMEOUT=3
+    WATCH_HEARTBEAT=0
+    run run_watch
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [[ "$output" != *"[watch]"* ]] || return 1
+}
+
+@test "watch_heartbeat: names the plan's place in its chain when there is one" {
+    cat > plan.md <<'EOF'
+- [x] one
+- [ ] two
+EOF
+    mkdir -p "$WIGGUM_REGISTRY_DIR"
+    printf '%s\n%s\n%s\n' "$TEST_DIR/plan" "" "3 of 6" > "$WIGGUM_REGISTRY_DIR/4242"
+    run watch_heartbeat 90 4242 plan.md
+    [[ "$output" == *"plan 3 of 6"* ]] || return 1
+    [[ "$output" == *"1m 30s"* ]] || return 1
+}
+
+@test "register_run: records where in its chain a run is" {
+    WIGGUM_CHAIN_POSITION="2 of 5"
+    register_run 4243 "$TEST_DIR/a_plan"
+    [ "$(registry_entry_position 4243)" = "2 of 5" ]
+    # The first two fields keep their meaning, so an older reader still works.
+    [ "$(registry_entry_base 4243)" = "$TEST_DIR/a_plan" ]
+}
+
+@test "registry_entry_position: an entry from an older wiggum has none" {
+    mkdir -p "$WIGGUM_REGISTRY_DIR"
+    printf '%s\n%s\n' "$TEST_DIR/a_plan" "some-identity" > "$WIGGUM_REGISTRY_DIR/4244"
+    [ -z "$(registry_entry_position 4244)" ]
+    [ "$(registry_entry_identity 4244)" = "some-identity" ]
+}
+
+@test "run_stream_start_line: attaches near the end, not at the run's first line" {
+    # A run going for hours has one separator, at the top: the slice alone is
+    # no bound at all, and every line it has written is replayed before the
+    # first new one.
+    { printf -- '--- wiggum run 2026-01-01 00:00:00 ---\n'
+      for i in $(seq 1 100); do echo "line $i"; done; } > big.out
+    WATCH_TAIL=20
+    [ "$(run_stream_start_line big.out)" -eq 81 ]
+}
+
+@test "run_stream_start_line: never reaches back past the current run" {
+    printf -- 'OLD RUN\n--- wiggum run 2026-01-02 00:00:00 ---\nnew one\n' > small.out
+    # A tail bigger than the file must not drag in the previous run's output.
+    WATCH_TAIL=500
+    [ "$(run_stream_start_line small.out)" -eq 1 ]
+}
+
+@test "run_stream_start_line: --tail 0 shows only what arrives from now on" {
+    printf -- '--- wiggum run 2026-01-01 00:00:00 ---\na\nb\nc\n' > f.out
+    WATCH_TAIL=0
+    [ "$(run_stream_start_line f.out)" -eq 4 ]
+}
+
+@test "run_watch: --tail bounds the backlog a long run replays" {
+    make_file plan.md
+    { printf -- '--- wiggum run 2026-01-01 00:00:00 ---\n'
+      echo "SCROLLBACK"
+      for i in $(seq 1 40); do echo "noise $i"; done; } > plan.out
+    ( sleep 1 ) &
+    local pid=$!
+    echo "$pid" > plan.pid
+    FILES=(plan.md)
+    WATCH_POLL=1
+    WATCH_TAIL=5
+    run run_watch
+    [[ "$output" != *"SCROLLBACK"* ]] || return 1
+    [[ "$output" == *"noise 40"* ]] || return 1
+}
+
+@test "first_open_task: names the task the plan is on, without its checkbox" {
+    cat > plan.md <<'EOF'
+- [x] Done already
+- [ ] Wire the reporting endpoint to the new schema
+- [ ] Later one
+EOF
+    [ "$(first_open_task plan.md)" = "Wire the reporting endpoint to the new schema" ]
+}
+
+@test "first_open_task: a plan with nothing open names nothing" {
+    cat > plan.md <<'EOF'
+- [x] Done
+- [~] Dropped
+EOF
+    [ -z "$(first_open_task plan.md)" ]
+}
+
+@test "first_open_task: a paragraph-long task is cut to fit its line" {
+    local long trimmed
+    long="$(printf 'x%.0s' $(seq 1 200))"
+    printf -- '- [ ] %s\n' "$long" > plan.md
+    trimmed="$(first_open_task plan.md)"
+    [ "${#trimmed}" -le 72 ]
+}
+
+@test "run_watch: the opening line says which task the plan is on" {
+    cat > plan.md <<'EOF'
+- [x] one
+- [ ] Backfill the attribution table
+EOF
+    ( sleep 1 ) &
+    local pid=$!
+    echo "$pid" > plan.pid
+    FILES=(plan.md)
+    WATCH_POLL=1
+    run run_watch
+    [[ "$output" == *"task: Backfill the attribution table"* ]] || return 1
+}
+
+@test "run_watch_chain: each plan banner names the task it is on" {
+    sleep 30 &
+    local live=$!
+    register_fake_run "$live" "$TEST_DIR/a_plan"
+    cat > a_plan.md <<'EOF'
+- [ ] Split the ingest job
+EOF
+    printf 'working\n' > a_plan.log
+    FILES=("$live")
+    WATCH_POLL=1
+    WATCH_TIMEOUT=1
+    run run_watch_chain
+    kill "$live" 2>/dev/null || true
+    wait "$live" 2>/dev/null || true
+    [[ "$output" == *"now on: $TEST_DIR/a_plan.md"* ]] || return 1
+    [[ "$output" == *"task: Split the ingest job"* ]] || return 1
+}
+
+@test "watch_heartbeat: says which task the silence is on" {
+    cat > plan.md <<'EOF'
+- [x] one
+- [ ] Reconcile the ledger
+EOF
+    run watch_heartbeat 90 4242 plan.md
+    [[ "$output" == *"1/2 tasks done, on: Reconcile the ledger"* ]] || return 1
+}
+
+@test "parse_args: watch takes --tail" {
+    make_file plan.md
+    parse_args watch plan.md --tail 5
+    [ "$WATCH_TAIL" -eq 5 ]
+}
+
+@test "parse_args: watch takes --here and --heartbeat" {
+    parse_args watch --chain --heartbeat 15 --here
+    [ "$WATCH_HEARTBEAT" -eq 15 ]
+    [ "$WATCH_HERE" = true ]
+}
+
+@test "parse_args: --here is refused where nothing is being searched for" {
+    make_file plan.md
+    run parse_args status plan.md --here
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"only valid for 'wiggum watch --chain'"* ]] || return 1
+    # And on a watch that already names its plan.
+    run parse_args watch plan.md --here
+    [ "$status" -eq "$EXIT_BAD_ARGS" ] || return 1
+}
+
+@test "parse_args: watch --chain accepts a plan file as well as a pid" {
+    make_file docs/x_plan.md
+    parse_args watch --chain docs/x_plan.md
+    [ "$CHAIN_WATCH" = true ]
+    [ "${FILES[0]}" = "docs/x_plan.md" ]
+}
+
+@test "parse_args: watch --chain still refuses a plan outside the project" {
+    run parse_args watch --chain /etc/hosts
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"outside the project directory"* ]] || return 1
 }
 
 @test "run_watch_chain: a pid that is not a live run says so" {

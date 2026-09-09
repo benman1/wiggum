@@ -79,11 +79,14 @@ plans skip most:
   separates a long task from a wedged one; both of them say `running`.
 - **`wiggum status <plan>`** — the counts for one run. It counts checkboxes, so
   `remaining` climbs when you *edit* the plan, not when the run regresses.
-- **`wiggum watch <plan>`** — stream one run and block until it ends. Exits 0 only
-  on `complete`.
-- **`wiggum watch --chain [pid]`** — follow a *chain* across plans. Watching a
-  chained plan by name exits 1 immediately, because a plan whose turn hasn't come
-  has no pidfile; that reads as "finished" and means "not started".
+- **`wiggum watch <plan>`** — stream one run and block until it ends. It attaches
+  near the end of the backlog (`--tail`, default 20) and names the task the plan is
+  on. A plan whose turn in a chain hasn't come is waited for, not reported missing.
+  Exits 0 only on `complete`; `6` means the watch timed out, not that the run
+  failed, and it is never 0 for a watch that waited for nothing.
+- **`wiggum watch --chain [<plan>|<pid>]`** — follow a *chain* across plans. With
+  neither, it takes the only live run, or the only one in this directory; `--here`
+  insists on that narrowing.
 - **A finished run is not a done run — read the stop reason.** `complete` → done.
   `incomplete` → out of iterations, re-run it. `stalled` → no progress for two
   iterations running; diagnose first or it stalls identically. `aborted` → the

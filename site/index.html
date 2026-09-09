@@ -447,6 +447,7 @@
     <div class="wrap">
       <h2>Start it, walk away, keep watch</h2>
       <p class="sub">Runs last hours. <code>wiggum top</code> lists every run on the machine, whichever project it was started from, blocked and running first. The activity column tells a long task from a wedged one; <code>RSS</code> and <code>CPU</code> cover the run's whole process tree, because the cost is the <code>claude</code> it spawned rather than the pid in the row. The footer is the launch decision: load against cores, and swap.</p>
+      <p class="sub"><code>wiggum watch</code> is the other half: it blocks until a run finishes, attaches near the end of the backlog rather than replaying hours of it, names the task the plan is on, prints a <code>[watch]</code> line after a minute of silence so a quiet run never reads as a wedged one, and never exits 0 having waited for nothing — <code>0</code> means the run finished, <code>6</code> means your timeout ran out and the run is still going.</p>
 
       <div class="term">
         <div class="pane-name">$ wiggum top</div>
@@ -461,7 +462,8 @@ docs/auth-hardening_plan.md              -        <span class="ok">finished: com
 
       <div class="cmds">
         <div><code>wiggum execute &lt;plan&gt; -b</code><span>Run detached and get the shell back.</span></div>
-        <div><code>wiggum watch &lt;plan&gt;</code><span>Stream a run's output and block until it finishes.</span></div>
+        <div><code>wiggum watch &lt;plan&gt;</code><span>Stream a run's output and block until it finishes. A plan whose turn in a chain hasn't come is waited for, not reported missing.</span></div>
+        <div><code>wiggum watch --chain</code><span>Follow a run across plans. Name it by plan file or pid; with neither, the only live run — or the only one in this directory.</span></div>
         <div><code>wiggum kill &lt;plan&gt;</code><span>Stop that run's process tree, and nothing else.</span></div>
         <div><code>wiggum chain &lt;a&gt; &lt;b&gt; &lt;c&gt;</code><span>Run plans back to back, stopping at the first failure.</span></div>
         <div><code>wiggum chain --queue &lt;file&gt;</code><span>Take the plan list from a file, re-read after each one, so you can append while it runs.</span></div>

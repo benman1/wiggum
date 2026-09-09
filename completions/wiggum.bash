@@ -112,12 +112,12 @@ _wiggum() {
             ;;
         watch)
             case "$prev" in
-                --timeout|--poll-interval)
+                --timeout|--poll-interval|--heartbeat|--tail)
                     return
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--timeout --kill-on-timeout --poll-interval --chain --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--timeout --kill-on-timeout --poll-interval --heartbeat --tail --chain --here --help" -- "$cur")
             else
                 _filedir md
             fi
