@@ -83,6 +83,15 @@ wiggum_reset() {
     CLI_EFFORT=""
     PERMISSION_MODE="bypassPermissions"
     CLI_PERMISSION_MODE=""
+    # Model is set per-phase (model_plan/model_execute), not as one runtime
+    # value the way EFFORT/PERMISSION_MODE are -- so MODEL_PLAN/MODEL_EXECUTE
+    # just hold whatever .wiggumrc loaded, and run_plan/run_execute resolve
+    # the effective MODEL for run_claude at the top of each. CLI_MODEL tracks
+    # an explicit --model override so it wins over either.
+    MODEL=""
+    MODEL_PLAN=""
+    MODEL_EXECUTE=""
+    CLI_MODEL=""
     RUN_PROMPTS=()
     RUN_PROMPTS_FILE=""
     RUN_SESSION_FILE=""
@@ -343,7 +352,7 @@ load_config_from() {
         value="$(trim_whitespace "$value")"
 
         case "$key" in
-            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|claude_retries|skip_verify|skip_commit|effort|permission_mode)
+            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|claude_retries|skip_verify|skip_commit|effort|permission_mode|model_plan|model_execute)
                 echo "$key=$value"
                 ;;
             *)
@@ -424,6 +433,12 @@ apply_config() {
                         echo "Warning: invalid value for permission_mode: '$value' (expected acceptEdits/auto/bypassPermissions/default/dontAsk/plan). Keeping '$PERMISSION_MODE'." >&2
                     fi
                 fi
+                ;;
+            model_plan)
+                MODEL_PLAN="$value"
+                ;;
+            model_execute)
+                MODEL_EXECUTE="$value"
                 ;;
         esac
     done
@@ -830,6 +845,7 @@ Options:
   --delimiter <str>           Prompt separator line for -f/stdin (default: ---)
   --effort <level>            Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
   --permission-mode <mode>    acceptEdits|auto|bypassPermissions|default|dontAsk|plan
+  --model <name>              Model for this session: alias (sonnet/opus/...) or full name
   --verbose                   Pass --verbose to Claude Code
 
 Runs each prompt in order. The first prompt starts a fresh session (or resumes
@@ -883,6 +899,9 @@ Run 'wiggum help <command>' for details on a specific command.
 Options:
   --effort <level>          Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
   --permission-mode <mode>  Claude permission mode (default: bypassPermissions)
+  --model <name>            Model for this call: alias (sonnet/opus/...) or full
+                            name (default: model_plan/model_execute, or Claude
+                            Code's own default when neither is set)
   --verbose                 Show Claude output (suppressed by default)
   -h, --help                Show this help
 
@@ -1008,6 +1027,11 @@ parse_args() {
                     echo "Error: invalid --permission-mode '${2:-}' (expected acceptEdits/auto/bypassPermissions/default/dontAsk/plan)." >&2
                     return "$EXIT_BAD_ARGS"
                 fi
+                ;;
+            --model)
+                MODEL="$2"
+                CLI_MODEL="$2"
+                shift 2
                 ;;
             -f|--prompts-file)
                 RUN_PROMPTS_FILE="$2"
@@ -2888,23 +2912,28 @@ run_claude() {
     # configured one (an explicit per-call override wins).
     local filtered_args=()
     local has_perm_mode=false
+    local has_model=false
     local wants_continue=false
     for arg in "$@"; do
         if [[ "$arg" == "-c" || "$arg" == "--continue" ]]; then
             wants_continue=true
         else
             [[ "$arg" == "--permission-mode" ]] && has_perm_mode=true
+            [[ "$arg" == "--model" ]] && has_model=true
             filtered_args+=("$arg")
         fi
     done
 
-    # Inject the configured effort and permission mode (unless overridden).
+    # Inject the configured effort, permission mode and model (unless overridden).
     local injected_args=()
     if [[ -n "$EFFORT" ]]; then
         injected_args+=("--effort" "$EFFORT")
     fi
     if [[ "$has_perm_mode" != true ]]; then
         injected_args+=("--permission-mode" "$PERMISSION_MODE")
+    fi
+    if [[ "$has_model" != true && -n "$MODEL" ]]; then
+        injected_args+=("--model" "$MODEL")
     fi
 
     local attempt=1 rc=0
@@ -3063,8 +3092,13 @@ run_plan() {
         piped=true
     fi
 
+    # A CLI --model already set MODEL during parse_args; only fall back to
+    # the configured model_plan when no per-call override was given.
+    [[ -z "$CLI_MODEL" ]] && MODEL="$MODEL_PLAN"
+
     echo "=== WIGGUM PLAN MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
+    echo "Model: ${MODEL:-claude default}" >&2
     # The diagnosis sections are paid for only when the input reads like a
     # defect report -- a feature request must never be pushed into inventing
     # symptoms. The detector is a heuristic, so the emitted text also carries
@@ -3526,8 +3560,15 @@ run_execute() {
     # worked on right now is exactly what `top` is asked about.
     claim_run_pidfile "${FILES[0]:-}"
 
+    # Resolved here rather than at config-load time: `chain` calls run_execute
+    # directly per plan while MODE stays "chain", so the model_execute lookup
+    # has to happen at the point that actually runs execute, not once keyed
+    # off $MODE. A CLI --model already set MODEL during parse_args and wins.
+    [[ -z "$CLI_MODEL" ]] && MODEL="$MODEL_EXECUTE"
+
     echo "=== WIGGUM EXECUTE MODE ===" >&2
     echo "Input files: ${FILES[*]}" >&2
+    echo "Model: ${MODEL:-claude default}" >&2
     echo "Max iterations: $MAX_ITERATIONS" >&2
     echo "Summary output: $SUMMARY_FILE" >&2
     print_verify_steps 2

@@ -47,6 +47,7 @@ load 6.1 / 4 cores · swap 2.6G of 4.0G (65%) · 3 runs active
   - [Config keys](#config-keys)
   - [Skipping verification or commits](#skipping-verification-or-commits)
   - [Effort and permission mode](#effort-and-permission-mode)
+  - [Model selection](#model-selection)
   - [Verify vs autofix](#verify-vs-autofix)
   - [Verification waterfall](#verification-waterfall)
   - [Smoke tests](#smoke-tests)
@@ -334,6 +335,7 @@ wiggum run "Summarize today's git log" "Draft release notes from it"
 wiggum run -f steps.txt
 echo "What changed in the last commit?" | wiggum run
 wiggum run --effort max "Audit this module for race conditions"
+wiggum run --model sonnet "Summarize the last 20 commits"
 ```
 
 #### Cron jobs and follow-ups
@@ -820,6 +822,8 @@ Options:
   --delimiter <str>        Prompt separator for -f/stdin (run mode, default: ---)
   --effort <level>         Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
   --permission-mode <m>    Claude permission mode (default: bypassPermissions)
+  --model <name>           Model for this call: alias (sonnet/opus/...) or full name
+                           (default: model_plan/model_execute, or Claude Code's own default)
   --verbose                Show Claude output (suppressed by default)
   -i <files...>            Input files (docs mode)
   -o <files...>            Output doc files to update (docs mode)
@@ -859,6 +863,8 @@ Wiggum looks for a `.wiggumrc` file, first in the current directory, then in `$H
 | `skip_commit` | If `true`, skip every wiggum-issued git commit (same as `--no-commit`). | `false` |
 | `effort` | Reasoning effort passed to Claude Code on every call: `low`, `medium`, `high`, `xhigh`, or `max` (same as `--effort`). | `xhigh` |
 | `permission_mode` | Claude Code permission mode for every wiggum-issued call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, or `plan` (same as `--permission-mode`). | `bypassPermissions` |
+| `model_plan` | Model Claude Code uses for `wiggum plan` (alias like `sonnet`/`opus`, or a full model name). | *(Claude Code's own default)* |
+| `model_execute` | Model Claude Code uses for `wiggum execute` (and `chain`, which calls it per plan). | *(Claude Code's own default)* |
 
 ### Skipping verification or commits
 
@@ -893,6 +899,25 @@ wiggum run --permission-mode auto "tidy up the imports" # let auto-mode decide
 effort = xhigh
 permission_mode = bypassPermissions
 ```
+
+### Model selection
+
+Unlike effort and permission mode, the model is set **per phase**: `model_plan` for `wiggum plan`, `model_execute` for `wiggum execute` (and `chain`, which calls execute once per plan). Each defaults to Claude Code's own default model when unset, so an existing `.wiggumrc` behaves exactly as before. `--model` overrides whichever phase the current command runs, the same way `--effort`/`--permission-mode` override for a single invocation.
+
+Sonnet is enough for most planning and implementation work; reach for Opus only on plans or codebases that need deeper reasoning. Since plan and execute are separate commands, you can run cheaper on one and not the other:
+
+```bash
+wiggum plan issues/login-bug.md --model sonnet         # a quick plan
+wiggum execute docs/login-bug_plan.md --model opus     # deeper reasoning for the implementation
+```
+
+```ini
+# .wiggumrc
+model_plan = sonnet
+model_execute = sonnet
+```
+
+Accepts a model alias (`sonnet`, `opus`, `fable`) or a full model name, exactly as `claude --model` does.
 
 ### Verify vs autofix
 

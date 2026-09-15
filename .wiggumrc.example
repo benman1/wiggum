@@ -41,3 +41,11 @@ claude_retries = 2
 # "bypassPermissions" to run every action with no checks. When this line is
 # absent, the built-in default is bypassPermissions (back-compat).
 permission_mode = auto
+
+# Model Claude Code uses for planning and for execution -- set independently,
+# since a plan is one short call and execution is many. Sonnet is enough for
+# most projects; save Opus for plans/execution that need deeper reasoning.
+# Accepts an alias (sonnet, opus, fable) or a full model name. Override for a
+# single run with `--model`. Leave unset to use Claude Code's own default.
+# model_plan = sonnet
+# model_execute = sonnet

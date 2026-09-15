@@ -420,7 +420,11 @@
 <span class="k">autofix</span> = shfmt -w .<br>
 <br>
 <span class="k">max_iterations</span> = 30<br>
-<span class="k">max_validation_retries</span> = 5
+<span class="k">max_validation_retries</span> = 5<br>
+<br>
+<span class="c"># sonnet plans and implements; save opus for harder work</span><br>
+<span class="k">model_plan</span> = sonnet<br>
+<span class="k">model_execute</span> = sonnet
           </div>
         </div>
 
@@ -436,6 +440,10 @@
           <div>
             <h3>Retries are capped</h3>
             <p>A step that can't be fixed stops the run instead of burning tokens against it. <code>wiggum check</code> runs the same waterfall on demand.</p>
+          </div>
+          <div>
+            <h3>Model per phase</h3>
+            <p><code>model_plan</code> and <code>model_execute</code> pick the model separately — Sonnet is enough for most plans and implementation, so Opus is opt-in, not default.</p>
           </div>
         </div>
       </div>

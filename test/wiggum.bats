@@ -3991,6 +3991,160 @@ EOF
     [[ "$captured" != *"bypassPermissions"* ]] || return 1
 }
 
+# ── Model selection ────────────────────────────────────────────────────────────
+
+@test "wiggum_reset: MODEL, MODEL_PLAN, MODEL_EXECUTE and CLI_MODEL default to empty" {
+    wiggum_reset
+    [ -z "$MODEL" ]
+    [ -z "$MODEL_PLAN" ]
+    [ -z "$MODEL_EXECUTE" ]
+    [ -z "$CLI_MODEL" ]
+}
+
+@test "parse_args: --model sets MODEL and CLI_MODEL" {
+    make_file plan.md
+    parse_args plan plan.md --model sonnet
+    [ "$MODEL" = "sonnet" ]
+    [ "$CLI_MODEL" = "sonnet" ]
+}
+
+@test "load_config_from: model_plan is recognized and forwarded" {
+    cat > test.rc <<'EOF'
+model_plan = sonnet
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = "model_plan=sonnet" ]
+}
+
+@test "load_config_from: model_execute is recognized and forwarded" {
+    cat > test.rc <<'EOF'
+model_execute = opus
+EOF
+    local output
+    output="$(load_config_from test.rc)"
+    [ "$output" = "model_execute=opus" ]
+}
+
+@test "apply_config: model_plan sets MODEL_PLAN" {
+    apply_config <<< "model_plan=sonnet"
+    [ "$MODEL_PLAN" = "sonnet" ]
+}
+
+@test "apply_config: model_execute sets MODEL_EXECUTE" {
+    apply_config <<< "model_execute=opus"
+    [ "$MODEL_EXECUTE" = "opus" ]
+}
+
+@test "run_claude: injects --model when MODEL is set" {
+    local captured=""
+    claude() { captured="$*"; }
+    log_init "plan.md"
+    MODEL="sonnet"
+    WIGGUM_CURRENT_LABEL="t"
+    run_claude -p "hi"
+    [[ "$captured" == *"--model sonnet"* ]] || return 1
+}
+
+@test "run_claude: omits --model when MODEL is empty" {
+    local captured=""
+    claude() { captured="$*"; }
+    log_init "plan.md"
+    MODEL=""
+    WIGGUM_CURRENT_LABEL="t"
+    run_claude -p "hi"
+    [[ "$captured" != *"--model"* ]] || return 1
+}
+
+@test "run_claude: does not duplicate a caller-provided --model" {
+    local captured=""
+    claude() { captured="$*"; }
+    log_init "plan.md"
+    MODEL="opus"
+    WIGGUM_CURRENT_LABEL="t"
+    run_claude -p --model sonnet "hi"
+    [[ "$captured" == *"--model sonnet"* ]] || return 1
+    [[ "$captured" != *"opus"* ]] || return 1
+}
+
+@test "run_plan: injects MODEL_PLAN as --model when no CLI override" {
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE=""
+    CLI_PLAN_FILE="docs/issue_plan.md"
+    PLAN_FILE="docs/issue_plan.md"
+    MODEL_PLAN="sonnet"
+
+    local captured=""
+    claude() { captured="$*"; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>/dev/null
+    [[ "$captured" == *"--model sonnet"* ]] || return 1
+}
+
+@test "run_plan: --model override wins over MODEL_PLAN" {
+    mkdir -p docs
+    echo "Fix the bug" > issue.md
+    FILES=("issue.md")
+    STDIN_FILE=""
+    CLI_PLAN_FILE="docs/issue_plan.md"
+    PLAN_FILE="docs/issue_plan.md"
+    MODEL_PLAN="opus"
+    MODEL="sonnet"
+    CLI_MODEL="sonnet"
+
+    local captured=""
+    claude() { captured="$*"; echo "# Plan" > "$PLAN_FILE"; return 0; }
+    export -f claude
+
+    run_plan 2>/dev/null
+    [[ "$captured" == *"--model sonnet"* ]] || return 1
+    [[ "$captured" != *"--model opus"* ]] || return 1
+}
+
+@test "run_execute: injects MODEL_EXECUTE as --model when no CLI override" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+# Plan
+- [x] already done
+EOF
+    claude() { printf '%s\n' "$*" >> claude_calls; return 0; }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    MODEL_EXECUTE="opus"
+    run run_execute
+    [ "$status" -eq 0 ]
+    grep -q -- "--model opus" claude_calls
+}
+
+@test "run_execute: --model override wins over MODEL_EXECUTE" {
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+# Plan
+- [x] already done
+EOF
+    claude() { printf '%s\n' "$*" >> claude_calls; return 0; }
+    export -f claude
+    MODE=execute
+    FILES=(docs/plan.md)
+    SUMMARY_FILE=docs/plan_summary.md
+    NO_VERIFY=true
+    NO_COMMIT=true
+    MODEL_EXECUTE="opus"
+    MODEL="sonnet"
+    CLI_MODEL="sonnet"
+    run run_execute
+    [ "$status" -eq 0 ]
+    grep -q -- "--model sonnet" claude_calls
+    ! grep -q -- "--model opus" claude_calls
+}
+
 # ── split_prompts ─────────────────────────────────────────────────────────────
 
 @test "split_prompts: splits on delimiter lines" {
