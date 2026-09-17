@@ -104,6 +104,8 @@ _wiggum() {
             _arguments \
                 '--queue[Read the plan list from a file, re-read after every plan]:file:_files' \
                 '--max-iterations[Maximum implementation iterations]:count:(1 2 3 5 10)' \
+                '(-b --background)'{-b,--background}'[Detach the whole chain as one process; follow it with watch --chain]' \
+                '--at[Start the chain at WHEN, detached: +90m, 01:07 or @epoch]:when:' \
                 '--no-verify[Skip the verification waterfall]' \
                 '--no-commit[Skip wiggum-issued git commits]' \
                 "$effort_opt" \

@@ -126,8 +126,18 @@ _wiggum() {
             return
             ;;
         chain)
+            case "$prev" in
+                --queue)
+                    _filedir
+                    return
+                    ;;
+                --at)
+                    # A time is free text; there is nothing to complete.
+                    return
+                    ;;
+            esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--queue --max-iterations --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--queue --max-iterations --background --at --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi

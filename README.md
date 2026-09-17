@@ -806,7 +806,7 @@ Options:
   --max-iterations <n>    Maximum implementation iterations (execute/chain, default: 30)
   --benchmark <script>    Run script after each iteration, feed output to Claude (repeatable)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
-  -b, --background         Run execute detached; supervise with status/watch/kill
+  -b, --background         Run execute or chain detached; supervise with status/watch/kill
   --timeout <seconds>      Stop watching after N seconds, 0 = forever (watch mode)
   --kill-on-timeout        On watch timeout, kill the run (watch mode)
   --poll-interval <secs>   How often watch polls for new output (default: 5)

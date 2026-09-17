@@ -475,6 +475,7 @@ docs/auth-hardening_plan.md              -        <span class="ok">finished: com
         <div><code>wiggum kill &lt;plan&gt;</code><span>Stop that run's process tree, and nothing else.</span></div>
         <div><code>wiggum chain &lt;a&gt; &lt;b&gt; &lt;c&gt;</code><span>Run plans back to back, stopping at the first failure.</span></div>
         <div><code>wiggum chain --queue &lt;file&gt;</code><span>Take the plan list from a file, re-read after each one, so you can append while it runs.</span></div>
+        <div><code>wiggum chain &lt;a&gt; &lt;b&gt; -b</code><span>Detach the chain as one process; the plans still run in order.</span></div>
         <div><code>wiggum top --json</code><span>The same rows as JSON, for a script that has to decide rather than read.</span></div>
         <div><code>wiggum execute &lt;plan&gt; --at 01:07</code><span>Start it tonight. No cron, no wake lock.</span></div>
       </div>
