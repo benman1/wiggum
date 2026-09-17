@@ -783,6 +783,13 @@ the rest. Each plan registers its own `.pid` while it is the active one and drop
 when it ends, so `wiggum top` shows a running chain as a row for the plan it is on
 right now, and nothing for the plans on either side of it.
 
+**To run a chain unattended, background the chain, not its plans.** `--background`
+on `wiggum chain` detaches the whole chain as one process; the plans still run
+one at a time, each writing its own `.out`, and `wiggum watch --chain` follows
+it. `--at` schedules the chain the same way. Like any `--background` run it dies
+with the session that started it — for a chain expected to outlive yours, use the
+multiplexer route in §3a.
+
 **To add work to a chain that is already running, give it a queue instead of
 arguments.** With plans in argv the list is fixed at launch and there is nowhere to
 append; with `--queue` the file is re-read after every plan:

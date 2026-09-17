@@ -558,6 +558,8 @@ One path per line, `#` starts a comment, blank lines ignored. A plan appended wh
 
 Each plan in a chain registers itself while it is the active one, so `wiggum top` shows a running chain as a single row for the plan it is on right now — and drops that row when the chain moves to the next plan. To supervise a chain, use `wiggum watch --chain`; `wiggum watch <plan>` attaches to one plan, not to the chain as a whole.
 
+To run a chain unattended, background the chain rather than its plans: `wiggum chain a.md b.md --background` (or `--at <when>`) detaches the whole chain as one process, and the plans still run one at a time. The first plan's `.pid` and `.out` name the chain until it moves on; every plan writes its own `.out` as it runs, so `wiggum status <plan>` reads each plan's verdict afterwards and `wiggum watch --chain <pid>` follows the process. A backgrounded chain dies with the session that launched it, exactly as `execute --background` does (see [Background runs & supervision](#background-runs--supervision)).
+
 A plan later in the chain has no pidfile until its turn comes. `watch` **waits** for it rather than reporting it missing — it prints what is running now and attaches when the plan starts, so watching plan three of six is one command and not a poll loop. `--chain` goes further and follows the *process*: it re-reads the registry entry, so it announces each plan as the chain reaches it and keeps streaming through the gaps between them.
 
 Name the run by plan file or by pid; with neither, `--chain` takes the only live run, or — when several are live — the only one under the current directory, since standing in a project is already an answer. `--here` asks for that narrowing explicitly and refuses to reach outside it.
@@ -1260,6 +1262,7 @@ On macOS, `launchd` is more reliable than cron for user agents — it survives r
 | `execute`/`plan`/`docs` | `<dir>/<basename>.log` | *(always created)* |
 | `execute` | `<dir>/<basename>.pid` | *(always created; removed when the run ends)* |
 | `execute --background` | `<dir>/<basename>.pid`, `<dir>/<basename>.out` | *(always created)* |
+| `chain --background` | the first plan's `.pid` and `.out`, then each plan's own `.out` as its turn comes | *(always created)* |
 | `execute` (any mode) | `~/.wiggum/runs/<pid>` | `WIGGUM_REGISTRY_DIR` |
 
 The last one is the machine-wide run registry — one small file per run in flight, named by pid and holding the absolute path of the plan it is working on. It is what lets `wiggum top` answer "what is running" rather than "what is running *here*", and it is the only file wiggum writes outside the project directory. Entries are pruned whenever `top` reads them and finds a dead pid — or a pid that has been reused — so a killed run or a reboot leaves nothing stale behind. Point `WIGGUM_REGISTRY_DIR` somewhere else to keep runs out of the shared view (a test harness should).

@@ -714,6 +714,9 @@ the same execution options as 'wiggum execute' (e.g. --max-iterations).
 
 Options:
   --queue <file>       Read the plan list from a file instead of arguments
+  -b, --background     Detach the whole chain as one process; the plans still
+                       run one at a time. Follow it with 'wiggum watch --chain'
+  --at <WHEN>          Start the chain later; implies --background
 
 With plans as arguments the list is fixed when the chain starts. With --queue it
 is re-read after every plan, so a line appended while the chain is working is
@@ -729,6 +732,7 @@ or leave them and let their tasks reconcile as already done.
 Examples:
   wiggum chain docs/schema_plan.md docs/api_plan.md docs/ui_plan.md
   wiggum chain docs/*.plan.md --max-iterations 5
+  wiggum chain docs/a_plan.md docs/b_plan.md --background --max-iterations 8
   wiggum chain --queue docs/queue.txt --max-iterations 12
   echo docs/extra_plan.md >> docs/queue.txt   # while the chain runs
 EOF
@@ -2454,6 +2458,13 @@ the rest. Each plan registers its own `.pid` while it is the active one and drop
 when it ends, so `wiggum top` shows a running chain as a row for the plan it is on
 right now, and nothing for the plans on either side of it.
 
+**To run a chain unattended, background the chain, not its plans.** `--background`
+on `wiggum chain` detaches the whole chain as one process; the plans still run
+one at a time, each writing its own `.out`, and `wiggum watch --chain` follows
+it. `--at` schedules the chain the same way. Like any `--background` run it dies
+with the session that started it — for a chain expected to outlive yours, use the
+multiplexer route in §3a.
+
 **To add work to a chain that is already running, give it a queue instead of
 arguments.** With plans in argv the list is fixed at launch and there is nowhere to
 append; with `--queue` the file is re-read after every plan:
@@ -2740,7 +2751,8 @@ plans skip most:
   `max_validation_retries`, a separate budget.
 - **Chain plans, don't run them concurrently.** `wiggum chain a.md b.md` gates each
   on the previous finishing. Two verify suites on one box is how a two-minute run
-  becomes an hour.
+  becomes an hour. `--background` on a chain detaches the chain as one process and
+  keeps that order; `wiggum watch --chain` follows it.
 - **To append to a chain that is already running, chain from a queue file.**
   `wiggum chain --queue docs/queue.txt` re-reads the file after every plan, so
   `echo docs/extra_plan.md >> docs/queue.txt` mid-run is picked up when the current
@@ -3974,6 +3986,11 @@ WIGGUM_RUN_SEPARATOR_PREFIX='--- wiggum run'
 # the --at waiter starts the run as a separate process.
 WIGGUM_RUN_SEPARATOR_DONE="${WIGGUM_RUN_SEPARATOR_DONE:-}"
 
+# Set in the environment of a process a launcher detached (`--background`, the
+# --at waiter), where nobody is reading the terminal. A chain running detached
+# sends each plan's output to that plan's own `.out` -- see run_chain_plan.
+WIGGUM_DETACHED="${WIGGUM_DETACHED:-}"
+
 # Write the separator that marks where this run's output begins.
 #
 # read_run_status only reads the slice after the last separator, so this is
@@ -4258,10 +4275,10 @@ unregister_run() {
 # $BASHPID), so a child re-claim would aim every supervision command at the
 # wrong process.
 #
-# A sidecar naming a live process is left alone rather than clobbered. Two runs
-# on one plan is already a mistake; overwriting would orphan the first from
-# `watch` and `kill`, which is the exact failure release_pidfile exists to
-# prevent.
+# A sidecar naming another live process is left alone rather than clobbered.
+# Two runs on one plan is already a mistake; overwriting would orphan the first
+# from `watch` and `kill`, which is the exact failure release_pidfile exists to
+# prevent. One naming this process is a launcher's claim on our behalf: adopted.
 claim_run_pidfile() {
     local base="${1:-}"
     [[ -n "$base" ]] || return 0
@@ -4271,12 +4288,17 @@ claim_run_pidfile() {
     pidfile="$(run_sidecar_file "$base" pid)"
     if pidfile_alive "$pidfile"; then
         existing="$(read_pidfile_pid "$pidfile")"
-        echo "Warning: another wiggum run is already active for $base (pid $existing);" \
-             "leaving its sidecar in place -- this run will not appear in 'wiggum top'." >&2
-        return 0
+        if [[ "$existing" != "$$" ]]; then
+            echo "Warning: another wiggum run is already active for $base (pid $existing);" \
+                 "leaving its sidecar in place -- this run will not appear in 'wiggum top'." >&2
+            return 0
+        fi
+        # The sidecar names this very process: a launcher wrote it on our
+        # behalf before we started (a detached chain, the --at waiter). Adopt
+        # it, so it is released when this plan ends and the next can claim.
+    else
+        write_pidfile "$pidfile" "$$"
     fi
-
-    write_pidfile "$pidfile" "$$"
     WIGGUM_RUN_PIDFILE="$pidfile"
     register_run "$$" "$base"
     return 0
@@ -4332,28 +4354,74 @@ format_progress() {
     echo "Tasks: ${done}/${total} done, ${remaining} remaining, ${dropped} dropped"
 }
 
-# Launch `run_execute` detached, recording its pid and capturing all output to
-# a sidecar .out file so `watch`/`status`/`kill` can find and supervise it.
-# The pid written is wiggum's own (a backgrounded subshell running the loop) --
-# never a blanket process name -- so `kill` only ever stops this run.
-launch_execute_background() {
-    local base="${FILES[0]}"
+# Refuse to start a run over a live one for BASE: its pidfile would be
+# clobbered and `watch`/`kill` would lose track of the original process.
+#
+# Judged by pidfile_alive, which reads the sidecar the way everything else
+# does. The check this replaces read the whole file as one pid, and a sidecar
+# wiggum itself writes has two lines -- so it never matched a live process, and
+# a second `--background` on the same plan went ahead.
+refuse_live_run() {
+    local pidfile="$1" base="$2"
+    pidfile_alive "$pidfile" || return 0
+    local existing
+    existing="$(read_pidfile_pid "$pidfile")"
+    echo "A wiggum run is already active for $base (pid $existing)." >&2
+    echo "Use 'wiggum watch $base' or 'wiggum kill $base' first." >&2
+    return "$EXIT_BAD_ARGS"
+}
+
+# Start CMD detached, with everything `watch`/`status`/`kill` need in order to
+# find it: the run separator in `.out`, the pidfile, the registry entry. The
+# pid written is the detached process's own -- never a blanket process name --
+# so `kill` only ever stops this run. Callers refuse over a live run first.
+#
+# LABEL names what was started ("execute", "chain") and picks the hints.
+detach_run() {
+    local base="$1" label="$2"
+    shift 2
     local pidfile outfile
     pidfile="$(run_sidecar_file "$base" pid)"
     outfile="$(run_sidecar_file "$base" out)"
     mkdir -p "$(dirname "$pidfile")"
 
-    # Refuse to start a second run over a live one; its pidfile would be
-    # clobbered and `watch`/`kill` would lose track of the original process.
-    if [[ -f "$pidfile" ]]; then
-        local existing
-        existing="$(tr -d '[:space:]' < "$pidfile")"
-        if process_alive "$existing"; then
-            echo "A wiggum run is already active for $base (pid $existing)." >&2
-            echo "Use 'wiggum watch $base' or 'wiggum kill $base' first." >&2
-            return "$EXIT_BAD_ARGS"
-        fi
+    # Append rather than truncate: relaunching a plan used to destroy the log of
+    # the very run you are relaunching because of, which is the output you need
+    # to diagnose it. `.log` has always appended with a per-run separator; `.out`
+    # now matches. The separator is written HERE, synchronously, not inside the
+    # child -- `watch` can attach before a backgrounded write lands, and it
+    # needs the marker to know where this run's output starts.
+    mark_run_start "$base"
+    # The child reaches run_execute and would mark its own start; tell it this
+    # run is already marked so the log gets one separator, not two.
+    export WIGGUM_RUN_SEPARATOR_DONE=1
+    "$@" >>"$outfile" 2>&1 &
+    local pid=$!
+    write_pidfile "$pidfile" "$pid"
+    # File the child under its own pid, not this shell's: the CLI exits as soon
+    # as this function returns, and an entry keyed to a dead launcher would be
+    # pruned out from under a run that is still going. Nothing unregisters it
+    # when the run ends -- find_registered_runs prunes it when the pid goes.
+    register_run "$pid" "$base"
+
+    echo "Started wiggum $label in the background." >&2
+    echo "  pid:     $pid" >&2
+    echo "  output:  $outfile" >&2
+    if [[ "$label" == chain ]]; then
+        echo "  watch:   wiggum watch --chain $pid" >&2
+        echo "  kill:    wiggum kill <plan>   # the plan it is on; 'wiggum top' names it" >&2
+    else
+        echo "  watch:   wiggum watch $base" >&2
+        echo "  status:  wiggum status $base" >&2
+        echo "  kill:    wiggum kill $base" >&2
     fi
+}
+
+# Launch `run_execute` detached: a backgrounded subshell running the loop.
+launch_execute_background() {
+    local base="${FILES[0]}" pidfile
+    pidfile="$(run_sidecar_file "$base" pid)"
+    refuse_live_run "$pidfile" "$base" || return $?
 
     # Clear BACKGROUND so the detached subshell runs the real loop instead of
     # recursing back into this launcher.
@@ -4363,31 +4431,7 @@ launch_execute_background() {
     # which only the parent can see (`$!`), and the child would otherwise write
     # `$$` -- this shell's pid -- over it and misdirect `watch` and `kill`.
     WIGGUM_RUN_PIDFILE="$pidfile"
-    # Append rather than truncate: relaunching a plan used to destroy the log of
-    # the very run you are relaunching because of, which is the output you need
-    # to diagnose it. `.log` has always appended with a per-run separator; `.out`
-    # now matches. The separator is written HERE, synchronously, not inside the
-    # subshell -- `watch` can attach before a backgrounded write lands, and it
-    # needs the marker to know where this run's output starts.
-    mark_run_start "$base"
-    # The child re-enters run_execute and would mark its own start; tell it
-    # this run is already marked so the log gets one separator, not two.
-    export WIGGUM_RUN_SEPARATOR_DONE=1
-    ( run_execute ) >>"$outfile" 2>&1 &
-    local pid=$!
-    write_pidfile "$pidfile" "$pid"
-    # File the child under its own pid, not this shell's: the CLI exits as soon
-    # as this function returns, and an entry keyed to a dead launcher would be
-    # pruned out from under a run that is still going. Nothing unregisters it
-    # when the run ends -- find_registered_runs prunes it when the pid goes.
-    register_run "$pid" "$base"
-
-    echo "Started wiggum execute in the background." >&2
-    echo "  pid:     $pid" >&2
-    echo "  output:  $outfile" >&2
-    echo "  watch:   wiggum watch $base" >&2
-    echo "  status:  wiggum status $base" >&2
-    echo "  kill:    wiggum kill $base" >&2
+    detach_run "$base" execute run_execute
 }
 
 # How often the waiter re-reads the wall clock, in seconds. Overridable from
@@ -4424,7 +4468,7 @@ wait_until_epoch() {
 # an allowance for a slow one.
 WIGGUM_AT_CLAIM_TIMEOUT="${WIGGUM_AT_CLAIM_TIMEOUT:-10}"
 
-# Rebuild the command line a delayed run should replay: exactly what the user
+# Rebuild the command line a detached run should replay: exactly what the user
 # typed, minus the two flags that describe the hand-off rather than the run.
 #
 # Replaying argv is what keeps `--at` faithful. The alternative -- snapshotting
@@ -4436,11 +4480,12 @@ WIGGUM_AT_CLAIM_TIMEOUT="${WIGGUM_AT_CLAIM_TIMEOUT:-10}"
 # `--at` goes because the waiter would otherwise schedule another waiter.
 # `--background` goes because the waiter runs the CLI in the foreground of its
 # own session: a daemonizing child would let that session exit immediately and
-# take the run down with it.
+# take the run down with it. A detached chain replays the same way, for the
+# same reasons.
 #
 # Emitted NUL-separated so an argument containing whitespace survives the trip.
-# Falls back to `execute <files>` when nothing was captured, which is the case
-# when the library is driven directly rather than through the CLI.
+# Falls back to the mode and its inputs when nothing was captured, which is the
+# case when the library is driven directly rather than through the CLI.
 at_replay_argv() {
     local arg skip=false emitted=false
     for arg in ${WIGGUM_ARGV[@]+"${WIGGUM_ARGV[@]}"}; do
@@ -4462,7 +4507,11 @@ at_replay_argv() {
     done
 
     if [[ "$emitted" != true ]]; then
-        printf '%s\0' execute ${FILES[@]+"${FILES[@]}"}
+        if [[ -n "$QUEUE_FILE" ]]; then
+            printf '%s\0' "${MODE:-chain}" --queue "$QUEUE_FILE"
+        else
+            printf '%s\0' "${MODE:-execute}" ${FILES[@]+"${FILES[@]}"}
+        fi
     fi
 }
 
@@ -4565,7 +4614,7 @@ read_schedule_field() {
 # Exactly one run results. Nothing recurring is written anywhere -- no crontab
 # line, no LaunchAgent -- because one invocation should mean one run.
 launch_execute_delayed() {
-    local base="${FILES[0]}"
+    local base="${1:-${FILES[0]}}"
     local spec="$AT_TIME"
     local pidfile schedfile outfile target now waiting
     pidfile="$(run_sidecar_file "$base" pid)"
@@ -4575,13 +4624,7 @@ launch_execute_delayed() {
 
     # Same refusal as --background, for the same reason: a second run would
     # clobber the pidfile and orphan the first from watch/kill.
-    if pidfile_alive "$pidfile"; then
-        local existing
-        existing="$(read_pidfile_pid "$pidfile")"
-        echo "A wiggum run is already active for $base (pid $existing)." >&2
-        echo "Use 'wiggum watch $base' or 'wiggum kill $base' first." >&2
-        return "$EXIT_BAD_ARGS"
-    fi
+    refuse_live_run "$pidfile" "$base" || return $?
 
     # And refuse a second schedule over a live waiter, which would queue two
     # runs of the same plan against each other. A sidecar whose waiter has died
@@ -4645,6 +4688,8 @@ launch_execute_delayed() {
         "WIGGUM_AT_OUT=$outfile"
         "WIGGUM_AT_PIDFILE=$pidfile"
         "WIGGUM_AT_POLL_INTERVAL=$WIGGUM_AT_POLL_INTERVAL"
+        # Nobody reads the waiter's terminal: a chain it starts writes per-plan .out.
+        "WIGGUM_DETACHED=1"
     )
 
     # Drop any stale sidecar first. Every refusal is behind us, so whatever is
@@ -5780,7 +5825,7 @@ run_chain_queue() {
         FILES=("$plan")
         SUMMARY_FILE="$(derive_output_file execute "$plan" "")"
         rc=0
-        run_execute || rc=$?
+        run_chain_plan || rc=$?
         release_run_pidfile
         if [[ "$rc" -ne 0 ]]; then
             echo "=== Chain plan $idx FAILED: $plan -- stopping chain ===" >&2
@@ -5799,10 +5844,93 @@ run_chain_queue() {
     return 0
 }
 
+# The plan a detached chain's sidecars are keyed to: its first. A queue that
+# lists none is refused rather than detached -- a process that exits at once
+# with nothing to show is a flag that silently did nothing.
+chain_first_plan() {
+    if [[ -z "$QUEUE_FILE" ]]; then
+        printf '%s\n' "${FILES[0]}"
+        return 0
+    fi
+    local first
+    first="$(next_queued_plan "$QUEUE_FILE" "")"
+    if [[ -z "$first" ]]; then
+        echo "Error: $QUEUE_FILE lists no plans; nothing to detach." >&2
+        return "$EXIT_BAD_ARGS"
+    fi
+    printf '%s\n' "$first"
+}
+
+# `wiggum chain --background` and `chain --at`: detach the chain as ONE process.
+#
+# Each plan used to take the hand-off for itself. run_execute saw the flag,
+# detached that plan, and returned at once, so run_chain went straight on to
+# the next: `chain a b --background` started a and b together, with nothing
+# gating b on a. Only the chain as a whole can keep the order, and it has to
+# be a fresh CLI rather than a forked subshell -- every plan claims its sidecar
+# with `$$`, which inside `( ... ) &` is still the launcher's pid under bash
+# 3.2. So the command line is replayed, the way --at has always done it.
+#
+# The sidecars are keyed to the first plan. The chain adopts that claim when it
+# gets there (claim_run_pidfile) and hands it on as it moves, and each plan
+# writes its own `.out` on the way (WIGGUM_DETACHED), so `status`, `watch` and
+# `top` see a detached chain as one `execute --background` after another.
+launch_chain_detached() {
+    env_reminder
+    local base
+    base="$(chain_first_plan)" || return $?
+
+    # --at already detaches, so it takes precedence: the same hand-off, and the
+    # same note, as run_execute makes for a single plan.
+    if [[ -n "$AT_TIME" ]]; then
+        if [[ "$BACKGROUND" == true ]]; then
+            echo "Note: --at already detaches; --background is redundant and was ignored." >&2
+        fi
+        launch_execute_delayed "$base"
+        return $?
+    fi
+
+    local pidfile
+    pidfile="$(run_sidecar_file "$base" pid)"
+    refuse_live_run "$pidfile" "$base" || return $?
+    BACKGROUND=false
+
+    local arg
+    local -a replay=()
+    while IFS= read -r -d '' arg; do
+        replay+=("$arg")
+    done < <(at_replay_argv)
+    detach_run "$base" chain env WIGGUM_DETACHED=1 "$WIGGUM_CLI" ${replay[@]+"${replay[@]}"}
+}
+
+# Run the plan in FILES[0] as one link of the chain.
+#
+# A detached chain has no terminal anyone is reading, so each plan's output
+# goes to that plan's own `.out` -- the file `status` and `watch` read for an
+# `execute --background`, and where read_run_status finds its verdict. The
+# separator run_execute writes marks where this run of the plan begins. An
+# attended chain prints to its terminal, as it always has.
+run_chain_plan() {
+    if [[ -z "$WIGGUM_DETACHED" ]]; then
+        run_execute
+        return $?
+    fi
+    local outfile
+    outfile="$(run_sidecar_file "${FILES[0]}" out)"
+    mkdir -p "$(dirname "$outfile")"
+    run_execute >>"$outfile" 2>&1
+}
+
 # Execute several workplans back to back, each in its own fresh session, in the
 # order given. Stops at the first plan that fails so a broken step doesn't drag
 # the rest of the chain down. This is wiggum's "chain up different workplans".
 run_chain() {
+    # Both flags hand the WHOLE chain off, once, before any plan runs. Each
+    # plan taking the hand-off for itself is what ran them side by side.
+    if [[ -n "$AT_TIME" || "$BACKGROUND" == true ]]; then
+        launch_chain_detached
+        return $?
+    fi
     if [[ -n "$QUEUE_FILE" ]]; then
         run_chain_queue
         return $?
@@ -5827,7 +5955,7 @@ run_chain() {
         # where both outcomes pass through. Harmless after a clean finish:
         # run_execute has already dropped the claim.
         local rc=0
-        run_execute || rc=$?
+        run_chain_plan || rc=$?
         release_run_pidfile
         if [[ "$rc" -eq 0 ]]; then
             echo "=== Chain plan $idx of $total complete: $f ===" >&2

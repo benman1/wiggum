@@ -5035,6 +5035,25 @@ EOF
     [[ "$output" == *"already active"* ]] || return 1
 }
 
+@test "launch_execute_background: refuses over a live run whose sidecar records its identity" {
+    # write_pidfile records two lines, pid then start time. The old check read
+    # the whole file as one pid, so a sidecar wiggum itself wrote never matched
+    # a live process and a second --background on the same plan went ahead.
+    mkdir -p docs
+    cat > docs/plan.md <<'EOF'
+- [ ] one
+EOF
+    sleep 30 &
+    local pid=$!
+    write_pidfile docs/plan.pid "$pid"
+    FILES=(docs/plan.md)
+    BACKGROUND=true
+    run launch_execute_background
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"already active"* ]] || return 1
+}
+
 # ── run_watch ─────────────────────────────────────────────────────────────────
 
 @test "run_watch: errors when nothing is running that could reach the plan" {
@@ -5370,6 +5389,174 @@ EOF
     run run_chain
     [ "$status" -eq "$EXIT_PLAN_FAILED" ]
     [ ! -f a.pid ]
+}
+
+# ── chain --background / --at ─────────────────────────────────────────────────
+
+# The stand-in for the CLI a detached chain re-invokes: records what it was
+# handed and its own pid, which is what every plan's sidecar will be keyed to.
+stub_chain_cli() {
+    cat > stub_cli <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$$" > child.pid
+printf '%s\n' "$@" > child.argv
+printf '%s\n' "${WIGGUM_DETACHED:-}" > child.detached
+EOF
+    chmod +x stub_cli
+    WIGGUM_CLI="$TEST_DIR/stub_cli"
+}
+
+@test "run_chain: --background detaches the chain as one process and runs no plan here" {
+    # `chain a b --background` used to detach a, return at once, and start b
+    # beside it: run_execute took the flag per plan. The hand-off now happens
+    # once, for the whole chain, and nothing runs in this process.
+    make_file a.md
+    make_file b.md
+    stub_chain_cli
+    run_execute() { echo "${FILES[0]}" >> ran; return 0; }
+    parse_args chain a.md b.md --background --max-iterations 3
+    run_chain >/dev/null 2>&1
+    local pid
+    pid="$(read_pidfile_pid a.pid)"
+    wait "$pid" 2>/dev/null || true
+    [ ! -f ran ]
+    # One fresh CLI, replaying the command line without the flag and told it
+    # is detached. Its own `$$` is the pid the sidecar names -- a forked
+    # subshell would have written the launcher's.
+    [ "$(cat child.argv)" = "$(printf 'chain\na.md\nb.md\n--max-iterations\n3')" ]
+    [ "$(cat child.pid)" = "$pid" ]
+    [ "$(cat child.detached)" = "1" ]
+    [ "$(head -n1 "$WIGGUM_REGISTRY_DIR/$pid")" = "$TEST_DIR/a" ]
+    [ ! -f b.pid ]
+    grep -q "^--- wiggum run" a.out
+}
+
+@test "run_chain: --background keys a queued chain to the first queued plan" {
+    make_file docs/a_plan.md
+    make_file docs/b_plan.md
+    printf 'docs/a_plan.md\ndocs/b_plan.md\n' > q.txt
+    stub_chain_cli
+    parse_args chain --queue q.txt --background
+    run_chain >/dev/null 2>&1
+    local pid
+    pid="$(read_pidfile_pid docs/a_plan.pid)"
+    wait "$pid" 2>/dev/null || true
+    [ "$(cat child.argv)" = "$(printf 'chain\n--queue\nq.txt')" ]
+    [ "$(cat child.pid)" = "$pid" ]
+}
+
+@test "run_chain: refuses to detach a chain whose queue lists no plans" {
+    printf '# nothing yet\n' > q.txt
+    QUEUE_FILE=q.txt
+    BACKGROUND=true
+    run run_chain
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"lists no plans"* ]] || return 1
+}
+
+@test "run_chain: --background refuses to start over a live run of its first plan" {
+    make_file a.md
+    make_file b.md
+    sleep 30 &
+    local pid=$!
+    write_pidfile a.pid "$pid"
+    FILES=(a.md b.md)
+    BACKGROUND=true
+    run run_chain
+    kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"already active"* ]] || return 1
+}
+
+@test "run_chain: --at schedules the chain once, keyed to its first plan" {
+    # The same failure in its other form: --at per plan would schedule every
+    # plan for the same moment.
+    make_file a.md
+    make_file b.md
+    run_execute() { echo "${FILES[0]}" >> ran; return 0; }
+    launch_execute_delayed() { echo "delayed base=${1:-} files=${FILES[*]}" >> launched; return 0; }
+    FILES=(a.md b.md)
+    AT_TIME=+90m
+    BACKGROUND=true
+    run_chain >/dev/null 2>err
+    [ ! -f ran ]
+    [ "$(cat launched)" = "delayed base=a.md files=a.md b.md" ]
+    grep -q "already detaches" err
+}
+
+@test "run_chain: a detached chain writes each plan's output to its own .out" {
+    make_file a.md
+    make_file b.md
+    run_execute() { echo "output of ${FILES[0]}"; echo "Status: complete"; return 0; }
+    WIGGUM_DETACHED=1
+    FILES=(a.md b.md)
+    run_chain >chain.log 2>&1
+    grep -q "output of a.md" a.out
+    grep -q "output of b.md" b.out
+    [[ "$(cat a.out)" != *"b.md"* ]] || return 1
+    # Each plan's verdict is where `status` and `watch` look for it.
+    [ "$(read_run_status a.out)" = "complete" ]
+    [ "$(read_run_status b.out)" = "complete" ]
+    # The chain's own banners stay on the chain's output, not in any plan's.
+    grep -q "Chain plan 2 of 2 complete" chain.log
+    [[ "$(cat chain.log)" != *"output of"* ]] || return 1
+}
+
+@test "run_chain: an attended chain still prints to its terminal" {
+    make_file a.md
+    run_execute() { echo "output of ${FILES[0]}"; return 0; }
+    FILES=(a.md)
+    run run_chain
+    [[ "$output" == *"output of a.md"* ]] || return 1
+    [ ! -f a.out ]
+}
+
+@test "claim_run_pidfile: adopts a sidecar a launcher wrote naming this process" {
+    # A detached chain's launcher writes the first plan's sidecar with the
+    # chain's pid before the chain gets there. Warning about "another run" and
+    # leaving it would keep plan one listed as running for the whole chain.
+    make_file a.md
+    write_pidfile a.pid "$$"
+    claim_run_pidfile a.md 2>warn
+    [ ! -s warn ]
+    [ "$WIGGUM_RUN_PIDFILE" = "./a.pid" ]
+    [ "$(head -n1 "$WIGGUM_REGISTRY_DIR/$$")" = "$TEST_DIR/a" ]
+    release_run_pidfile
+    [ ! -f a.pid ]
+    [ ! -f "$WIGGUM_REGISTRY_DIR/$$" ]
+}
+
+@test "at_replay_argv: the fallback keeps the mode and the queue" {
+    WIGGUM_ARGV=()
+    MODE=chain
+    FILES=(a.md b.md)
+    [ "$(at_replay_argv | tr '\0' '\n')" = "$(printf 'chain\na.md\nb.md')" ]
+    FILES=()
+    QUEUE_FILE=q.txt
+    [ "$(at_replay_argv | tr '\0' '\n')" = "$(printf 'chain\n--queue\nq.txt')" ]
+}
+
+@test "CLI: chain --background detaches one chain rather than one run per plan" {
+    local cli
+    cli="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/wiggum.sh"
+    make_file a.md
+    make_file b.md
+    stub_chain_cli
+    export WIGGUM_CLI
+    HOME="$TEST_DIR"
+    run bash "$cli" chain a.md b.md --background --max-iterations 2
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Started wiggum chain in the background"* ]] || return 1
+    [[ "$output" == *"wiggum watch --chain"* ]] || return 1
+    # The child outlives the CLI that started it; give it a moment to report.
+    local i
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        if [ -f child.argv ]; then break; fi
+        sleep 0.5
+    done
+    [ "$(cat child.argv)" = "$(printf 'chain\na.md\nb.md\n--max-iterations\n2')" ]
+    [ "$(cat child.pid)" = "$(read_pidfile_pid a.pid)" ]
+    [ ! -f b.pid ]
 }
 
 # ── chain --queue ────────────────────────────────────────────────────────────

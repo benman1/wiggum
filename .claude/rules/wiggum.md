@@ -65,7 +65,8 @@ plans skip most:
   `max_validation_retries`, a separate budget.
 - **Chain plans, don't run them concurrently.** `wiggum chain a.md b.md` gates each
   on the previous finishing. Two verify suites on one box is how a two-minute run
-  becomes an hour.
+  becomes an hour. `--background` on a chain detaches the chain as one process and
+  keeps that order; `wiggum watch --chain` follows it.
 - **To append to a chain that is already running, chain from a queue file.**
   `wiggum chain --queue docs/queue.txt` re-reads the file after every plan, so
   `echo docs/extra_plan.md >> docs/queue.txt` mid-run is picked up when the current
