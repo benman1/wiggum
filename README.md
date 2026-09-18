@@ -6,6 +6,8 @@ Wiggum wraps [Claude Code](https://claude.com/claude-code) in a structured orche
 
 **[benman1.github.io/wiggum](https://benman1.github.io/wiggum/)** is the one-page overview — what a run does, how it verifies, how to install. This README is the full reference.
 
+Built driving real work on [Graph-of-Skills](https://akilima.tech/graph-of-skills), an MCP server that helps coding agents find the right skill in a growing library instead of guessing from a name.
+
 Kick off as many runs as you like and see all of them at once with `wiggum top` — every run on the machine, whichever project it was started from:
 
 ```console
