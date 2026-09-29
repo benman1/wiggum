@@ -30,6 +30,44 @@ is on, and since `a146922` a chain re-registers on every plan transition (assert
 that entry: given the chain's pid, stream the active plan's `.out`, notice when the
 registry entry changes to the next plan, and exit when the pid does.
 
+### 2. `wiggum top` cannot read a sidecar's mtime on Linux: ACTIVITY is blank and it prints an unbound-variable error
+
+**What breaks.** On Linux (GNU coreutils, seen on 9.4) `wiggum top` prints
+`lib/wiggum.sh: line N: File: unbound variable` (N was 5405 on the older install and 5531
+on `ee5880a`) and shows `-` in the ACTIVITY column of a live run; `top --json` gives
+`"idle_seconds": null`. ACTIVITY is the column `run_last_activity` documents as the one
+"that separates a long task from a wedged one", so on Linux that signal is lost. The run
+itself is unaffected: `run_last_activity` has two callers, the `top` table (`:5606`) and
+`top --json` (`:5740`), and neither `status` nor the stall detector uses it.
+
+**How it was seen.** 2026-09-29, supervising a `wiggum chain` on a Hetzner Ubuntu server
+(GNU stat 9.4). The same command on macOS prints ACTIVITY correctly.
+
+**Cause.** `file_mtime_epoch` (`lib/wiggum.sh:5506`) is
+`stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || true`. It assumes BSD
+`stat -f` fails cleanly on GNU. It does not. GNU `stat -f` means "filesystem status", so
+it takes `%m` and the path as two file operands: it prints five lines of filesystem
+information for the real path (the first is `  File: "/path"`) and then exits 1 for
+`%m`. The `||` fallback then appends the real mtime, and the function returns six lines.
+`run_last_activity` (`:5529`) compares that with `[[ "$m" -gt "$newest" ]]`; bash evaluates
+the text as an arithmetic expression, meets the bare word `File`, and under `set -u`
+reports `File: unbound variable`. Reproduced with
+`out=$(stat -f %m file 2>/dev/null); echo $?`, which gives exit 1 and five lines beginning
+`  File:`.
+
+**What a fix has to do.**
+
+- Try the GNU form first. `stat -c %Y` exits non-zero with nothing on stdout on BSD
+  (`illegal option`), so putting it first is safe on both; then fall back to `stat -f %m`.
+- Whatever the order, accept only a value that matches `^[0-9]+$` and return nothing
+  otherwise, so a `stat` flavour nobody foresaw gives a blank ACTIVITY and not an
+  arithmetic error.
+- Add bats tests with a stub `stat` first on `PATH`: one that behaves like GNU `stat -f`
+  (multi-line output, exit 1) and one that behaves like BSD, both asserting
+  `file_mtime_epoch` returns the bare epoch. The existing test
+  (`file_mtime_epoch: a missing file yields nothing, not a failure`) covers only the
+  missing-file case, which is why this passed on a Mac.
+
 ## Closed
 
 - **A sidecar written before the identity check could not be verified at all.**
