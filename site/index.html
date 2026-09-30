@@ -486,11 +486,11 @@ docs/auth-hardening_plan.md              -        <span class="ok">finished: com
   <section id="install">
     <div class="wrap">
       <h2>Install</h2>
-      <p class="sub">One script. It copies the library, symlinks the CLI, and installs the <code>/wiggum</code> skill for Claude Code.</p>
+      <p class="sub">One command. It copies the library, symlinks the CLI, and installs the <code>/wiggum</code> skill for Claude Code.</p>
 
       <div class="cmd">
         <span class="prompt">$</span>
-        <code id="install-cmd">git clone https://github.com/benman1/wiggum.git &amp;&amp; cd wiggum &amp;&amp; ./install.sh</code>
+        <code id="install-cmd">curl -fsSL https://raw.githubusercontent.com/benman1/wiggum/main/get.sh | bash</code>
         <button class="copy" type="button" data-copy="install-cmd">copy</button>
       </div>
       <p class="note">Then <code>wiggum init</code> in any project to generate a <code>.wiggumrc</code> from what it finds there — or <code>wiggum init --yes</code> from a setup script, which takes every overwrite without asking.</p>
