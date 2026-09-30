@@ -30,7 +30,28 @@ is on, and since `a146922` a chain re-registers on every plan transition (assert
 that entry: given the chain's pid, stream the active plan's `.out`, notice when the
 registry entry changes to the next plan, and exit when the pid does.
 
-### 2. `wiggum top` cannot read a sidecar's mtime on Linux: ACTIVITY is blank and it prints an unbound-variable error
+### 2. An implement session mistakes its own orchestrator's pid for a competing run
+
+Full write-up: `docs/implement-session-self-collision_issue.md`.
+
+An implement session wiggum spawns is a plain `claude` process running inside
+the target repo, so it loads that repo's `CLAUDE.md`/`.claude/rules/*.md`
+unconditionally, the same as any human's interactive session. Wiggum gives it
+no signal marking it as one of its own children. When a session runs `wiggum
+status <the plan it is itself implementing>` as a self-check and sees its own
+orchestrator reported as `running`, it has, at least sometimes, concluded a
+competing run holds the plan and stopped without writing any code, wasting a
+full verify waterfall per occurrence.
+
+Seen 6 times across three dates (2026-09-22, 2026-09-23, 2026-09-30), two
+plans, and two machines in `~/whismi` (`bug-201` in that project's own
+buglog). A project-level rule-file carve-out naming the bug by number, loaded
+unconditionally, was added 2026-09-23 and did not stop it recurring on
+2026-09-30. Needs a structural fix (an env var the session can check
+mechanically, or removing the reason for an implement session to check
+wiggum's own status at all) rather than another prose carve-out.
+
+### 3. `wiggum top` cannot read a sidecar's mtime on Linux: ACTIVITY is blank and it prints an unbound-variable error
 
 **What breaks.** On Linux (GNU coreutils, seen on 9.4) `wiggum top` prints
 `lib/wiggum.sh: line N: File: unbound variable` (N was 5405 on the older install and 5531
