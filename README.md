@@ -624,7 +624,7 @@ Both files are written without asking, because writing a file that isn't there t
 Clone this repo and run the install script:
 
 ```bash
-git clone <repo-url> && cd wiggum
+git clone https://github.com/benman1/wiggum.git && cd wiggum
 ./install.sh
 ```
 
