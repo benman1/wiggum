@@ -7366,6 +7366,52 @@ spawn_dead_pid() {
     printf '%s\n' "$pid"
 }
 
+@test "get.sh: downloads a tarball and installs from it under the given prefix" {
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME"
+    local root src="$TEST_DIR/pkg/wiggum-main" prefix="$TEST_DIR/prefix"
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    make_install_source "$src" "echo from-tarball"
+    cp "$root/get.sh" "$src/get.sh"
+    tar -czf "$TEST_DIR/wiggum.tar.gz" -C "$TEST_DIR/pkg" wiggum-main
+
+    run env WIGGUM_TARBALL_URL="file://$TEST_DIR/wiggum.tar.gz" WIGGUM_PREFIX="$prefix" \
+        bash "$root/get.sh"
+
+    [ "$status" -eq 0 ]
+    [ -f "$prefix/lib/wiggum/wiggum.sh" ]
+    grep -q "from-tarball" "$prefix/lib/wiggum/wiggum.sh"
+    [[ "$output" == *"Installed successfully: $prefix/bin/wiggum"* ]]
+}
+
+@test "get.sh: a download that fails stops with a non-zero exit and installs nothing" {
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME"
+    local root prefix="$TEST_DIR/prefix"
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+
+    run env WIGGUM_TARBALL_URL="file://$TEST_DIR/missing.tar.gz" WIGGUM_PREFIX="$prefix" \
+        bash "$root/get.sh"
+
+    [ "$status" -ne 0 ]
+    [ ! -e "$prefix/lib/wiggum" ]
+}
+
+@test "get.sh: a tarball with no install.sh is refused with a clear message" {
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME" "$TEST_DIR/pkg/empty"
+    local root prefix="$TEST_DIR/prefix"
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    echo hi > "$TEST_DIR/pkg/empty/README"
+    tar -czf "$TEST_DIR/empty.tar.gz" -C "$TEST_DIR/pkg" empty
+
+    run env WIGGUM_TARBALL_URL="file://$TEST_DIR/empty.tar.gz" WIGGUM_PREFIX="$prefix" \
+        bash "$root/get.sh"
+
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no install.sh"* ]]
+}
+
 @test "install: an upgrade swaps the file, leaving a run that holds it open alone" {
     # bash reads a script by byte offset as it goes, and a wiggum run holds its
     # script open for hours. Rewriting that inode in place moves every offset
