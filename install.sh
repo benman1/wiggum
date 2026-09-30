@@ -132,7 +132,7 @@ fi
 # Verify
 if command -v wiggum &>/dev/null; then
     echo ""
-    echo "Installed successfully: $(which wiggum)"
+    echo "Installed successfully: $BIN_DIR/$SCRIPT_NAME"
     echo "Run 'wiggum --help' to get started."
 else
     echo ""
