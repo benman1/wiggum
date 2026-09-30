@@ -621,7 +621,15 @@ Both files are written without asking, because writing a file that isn't there t
 
 ## Installation
 
-Clone this repo and run the install script:
+One command (macOS and Linux; on Windows use WSL):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/benman1/wiggum/main/get.sh | bash
+```
+
+It downloads the repo to a temporary folder, runs `install.sh` from it and cleans up. It asks for `sudo` only if `/usr/local` is not writable for you. Set `WIGGUM_REF=<tag>` to install a specific release, or `WIGGUM_PREFIX=$HOME/.local` to install without `sudo`.
+
+Or clone the repo and run the install script yourself:
 
 ```bash
 git clone https://github.com/benman1/wiggum.git && cd wiggum
