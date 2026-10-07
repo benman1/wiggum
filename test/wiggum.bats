@@ -7956,6 +7956,7 @@ STALE_IDENTITY="Thu  1 Jan 00:00:00 2000"
     # Written now, naming a process that is alive and is not a wiggum run.
     printf '%s\n' 1 > docs/old_plan.pid
     FILES=()
+    TOP_ALL=true   # a run this old is hidden by default; this test is about its age
     run run_top
     [[ "$output" == *"finished: complete"* ]] || return 1
     [[ "$output" != *" 0s "* ]] || return 1
@@ -8849,4 +8850,66 @@ EOF
     [[ "$output" == *"Killing wiggum run"* ]] || return 1
     ! process_alive "$pid"
     [ ! -f docs/plan.pid ]
+}
+
+# ── gitignore for run sidecars, and top's recency window ─────────────────────
+
+@test "setup_wiggum_gitignore: adds the three sidecar rules to a project without them" {
+    printf 'node_modules\n' > .gitignore
+    run setup_wiggum_gitignore
+    [ "$status" -eq 0 ]
+    grep -qxF 'docs/*.log' .gitignore
+    grep -qxF 'docs/*.out' .gitignore
+    grep -qxF 'docs/*.pid' .gitignore
+    grep -qxF 'node_modules' .gitignore
+}
+
+@test "setup_wiggum_gitignore: is idempotent and handles a missing trailing newline" {
+    printf 'dist' > .gitignore
+    setup_wiggum_gitignore
+    cp .gitignore first
+    run setup_wiggum_gitignore
+    [ "$status" -eq 0 ]
+    cmp .gitignore first
+    grep -qxF 'dist' .gitignore
+    [ "$(grep -cxF 'docs/*.pid' .gitignore)" -eq 1 ]
+}
+
+@test "setup_wiggum_gitignore: creates .gitignore when there is none" {
+    rm -f .gitignore
+    setup_wiggum_gitignore
+    [ "$(grep -cxF 'docs/*.out' .gitignore)" -eq 1 ]
+}
+
+@test "run_top: hides a finished run older than 24h unless --all, and says so" {
+    mkdir -p docs
+    printf -- '- [x] a\n' > docs/old_plan.md
+    local pid="$(spawn_dead_pid)"
+    echo "$pid" > docs/old_plan.pid
+    printf 'Status: complete\n' > docs/old_plan.out
+    touch -t 202001010000 docs/old_plan.out docs/old_plan.pid docs/old_plan.md
+    FILES=()
+    run run_top
+    [[ "$output" != *"docs/old_plan.md"* ]] || return 1
+    [[ "$output" == *"1 finished run(s) older than 24h hidden"* ]] || return 1
+    TOP_ALL=true
+    run run_top
+    [[ "$output" == *"docs/old_plan.md"* ]] || return 1
+}
+
+@test "run_top: still shows an old finished run when asked for it by path" {
+    mkdir -p docs
+    printf -- '- [x] a\n' > docs/old_plan.md
+    local pid="$(spawn_dead_pid)"
+    echo "$pid" > docs/old_plan.pid
+    printf 'Status: complete\n' > docs/old_plan.out
+    touch -t 202001010000 docs/old_plan.out docs/old_plan.pid docs/old_plan.md
+    FILES=(docs)
+    run run_top
+    [[ "$output" == *"docs/old_plan.md"* ]] || return 1
+}
+
+@test "parse_args: top accepts --all" {
+    parse_args top --all
+    [ "$TOP_ALL" = true ]
 }

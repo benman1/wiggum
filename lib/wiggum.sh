@@ -48,6 +48,7 @@ wiggum_reset() {
     EXPLAIN_FILE=""
     QUEUE_FILE=""
     TOP_JSON=false
+    TOP_ALL=false
     NO_FEEDBACK=false
     MAX_ITERATIONS=30
     MAX_VALIDATION_RETRIES=5
@@ -751,6 +752,8 @@ Read-only -- never starts or stops anything.
 
 Options:
   --json               Emit the same records as JSON instead of a table
+  --all                Also show finished runs older than 24 hours (hidden by
+                       default so the view stays about what is happening now)
 
 ACTIVITY is the age of the run's newest write. It is what separates a long
 task from a wedged one: both read 'running', and only the clock tells them
@@ -1063,6 +1066,10 @@ parse_args() {
                 ;;
             --json)
                 TOP_JSON=true
+                shift
+                ;;
+            --all)
+                TOP_ALL=true
                 shift
                 ;;
             --no-feedback)
@@ -1659,6 +1666,7 @@ RCEOF
     # run, the rule is the handful of facts that must hold in every session.
     setup_wiggum_skill || return $?
     setup_wiggum_rules || return $?
+    setup_wiggum_gitignore
 
     if [[ ! -f "CLAUDE.md" ]]; then
         echo ""
@@ -1735,6 +1743,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
 | `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, RSS and CPU for the run's whole process tree, task tally. Blocked and running sort first. A footer gives load, swap and the live run count — read it before launching another run instead of shelling out to `uptime` and `sysctl`. Read-only. |
+| `wiggum top --all` | Also lists finished runs older than 24 hours, which `top` hides by default. |
 | `wiggum top --json` | The same records as JSON, with `pid`, `idle_seconds`, `rss_kb` and `cpu_percent` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. The footer is table-only. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
@@ -2797,6 +2806,32 @@ plans skip most:
   migration" applies it for real, against whatever the environment points at.
   Isolate anything destructive before queueing the plan, not after.
 RULES_EOF
+}
+
+# Run sidecars (`.log`, `.out`, `.pid`) are state, not source: the durable record
+# is `<slug>_summary.md`. Without these rules a project commits them forever.
+# Appends only the lines that are missing, so it is safe to run again and never
+# rewrites anything else in the file.
+setup_wiggum_gitignore() {
+    local rule added=0
+    local rules=("docs/*.log" "docs/*.out" "docs/*.pid")
+    for rule in "${rules[@]}"; do
+        if [[ -f .gitignore ]] && grep -qxF "$rule" .gitignore; then
+            continue
+        fi
+        if [[ "$added" -eq 0 ]]; then
+            # Start on a fresh line even when the file lacks a trailing newline.
+            if [[ -s .gitignore && -n "$(tail -c1 .gitignore)" ]]; then
+                echo "" >> .gitignore
+            fi
+            echo "# wiggum run sidecars (generated per run)" >> .gitignore
+        fi
+        echo "$rule" >> .gitignore
+        added=$((added + 1))
+    done
+    if [[ "$added" -gt 0 ]]; then
+        echo "Added $added wiggum sidecar rule(s) to .gitignore"
+    fi
 }
 
 setup_wiggum_rules() {
@@ -5549,6 +5584,9 @@ json_escape() {
 # time since the run last wrote anything, a task tally, then the raw counts.
 # Derives every sidecar from the base and resolves state in the same precedence
 # `status` uses, so the two never describe one run differently.
+# How recent a finished run must be for `wiggum top` to list it by default.
+TOP_RECENT_SECONDS=86400
+
 top_row() {
     local base="$1"
     local plan="${base}.md"
@@ -5615,6 +5653,14 @@ top_row() {
     # alphabetical, which buries the one running job among a dozen finished
     # ones -- the opposite of what someone types `top` to find out.
     local rank=3
+    # A finished run older than the recent window is history, not news. Rank 9
+    # marks it for run_top to drop (and count), so `top` answers "what is
+    # happening now" while `status <plan>` still reads the leftover sidecars.
+    if [[ "$TOP_ALL" != true && ${#FILES[@]} -eq 0 && -n "$idle" \
+        && "$idle" -gt "$TOP_RECENT_SECONDS" \
+        && ( "$state" == finished* || "$state" == "not running" ) ]]; then
+        rank=9
+    fi
     case "$state" in
         "running (blocked)") rank=0 ;;
         running)             rank=1 ;;
@@ -5693,7 +5739,10 @@ run_top() {
     # `sort -s` keeps the alphabetical order collect_top_bases produced within
     # each group.
     local records
-    records="$(for f in "${bases[@]}"; do top_row "$f"; done | sort -s -k1,1n | cut -f2-)"
+    local sorted hidden=0
+    sorted="$(for f in "${bases[@]}"; do top_row "$f"; done | sort -s -k1,1n)"
+    hidden="$(printf '%s\n' "$sorted" | grep -c $'^9\t' || true)"
+    records="$(printf '%s\n' "$sorted" | grep -v $'^9\t' | cut -f2- || true)"
 
     if [[ "$TOP_JSON" == true ]]; then
         top_render_json "$records"
@@ -5717,6 +5766,9 @@ run_top() {
             "$plan" "$pid" "$state" "$activity" "$rss" "$cpu_display" "$tasks"
     done <<< "$records"
     echo ""
+    if [[ "$hidden" -gt 0 ]]; then
+        echo "${hidden} finished run(s) older than 24h hidden. Show them with: wiggum top --all"
+    fi
     machine_pressure_line "$active"
 }
 
