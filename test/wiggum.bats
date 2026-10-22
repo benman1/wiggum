@@ -2243,6 +2243,29 @@ EOF
     diff <(wiggum_skill_content) "$committed"
 }
 
+# `npx skills add benman1/wiggum` reads each SKILL.md with a strict YAML parser and skips a skill whose
+# frontmatter does not parse. An unquoted colon followed by a space inside a value ("chain: plan-a.md") made
+# the wiggum skill vanish from `npx skills add benman1/wiggum --list` while Claude Code, which is lenient,
+# still loaded it. Ruby ships with macOS and the CI image, and its YAML parser is strict in the same way.
+@test "skills: every shipped SKILL.md has frontmatter that strict YAML parses" {
+    command -v ruby >/dev/null || skip "ruby not installed"
+    local root f
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    for f in "$root"/.claude/skills/*/SKILL.md; do
+        run ruby -ryaml -e 'fm = File.read(ARGV[0]).split("---", 3)[1]; d = YAML.safe_load(fm); abort("no name") unless d["name"].is_a?(String); abort("no description") unless d["description"].is_a?(String)' "$f"
+        if [ "$status" -ne 0 ]; then
+            echo "frontmatter of $f does not parse: $output" >&2
+            return 1
+        fi
+    done
+}
+
+@test "wiggum_skill_content: the heredoc frontmatter parses as strict YAML too" {
+    command -v ruby >/dev/null || skip "ruby not installed"
+    run ruby -ryaml -e 'fm = STDIN.read.split("---", 3)[1]; d = YAML.safe_load(fm); abort("no name") unless d["name"] == "wiggum"' <<< "$(wiggum_skill_content)"
+    [ "$status" -eq 0 ] || { echo "$output" >&2; return 1; }
+}
+
 @test "setup_wiggum_skill: leaves an up-to-date skill untouched" {
     mkdir -p .claude/skills/wiggum
     wiggum_skill_content > .claude/skills/wiggum/SKILL.md
@@ -7381,7 +7404,7 @@ spawn_dead_pid() {
     [ "$status" -eq 0 ]
     [ -f "$prefix/lib/wiggum/wiggum.sh" ]
     grep -q "from-tarball" "$prefix/lib/wiggum/wiggum.sh"
-    [[ "$output" == *"Installed successfully: $prefix/bin/wiggum"* ]]
+    [[ "$output" == *"Installed successfully: $prefix/bin/wiggum"* ]] || return 1
 }
 
 @test "get.sh: a download that fails stops with a non-zero exit and installs nothing" {
@@ -7409,7 +7432,7 @@ spawn_dead_pid() {
         bash "$root/get.sh"
 
     [ "$status" -ne 0 ]
-    [[ "$output" == *"no install.sh"* ]]
+    [[ "$output" == *"no install.sh"* ]] || return 1
 }
 
 @test "install: an upgrade swaps the file, leaving a run that holds it open alone" {
