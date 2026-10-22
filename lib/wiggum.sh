@@ -1684,7 +1684,7 @@ wiggum_skill_content() {
 ---
 name: wiggum
 description: Orchestrate the wiggum CLI — create a workplan, run it, monitor it, wait for it, detect when it's blocked, kill it if it runs too long, and chain workplans together. Use for any non-trivial change you want planned, executed, verified, and committed through wiggum.
-argument-hint: <issue, plan file, or "chain: plan-a.md plan-b.md">
+argument-hint: '<issue, plan file, or "chain: plan-a.md plan-b.md">'
 ---
 
 # Wiggum: Orchestrator
@@ -1711,7 +1711,8 @@ command -v wiggum && cat .wiggumrc 2>/dev/null && ls environment.yml .venv .nvmr
 ```
 
 - **wiggum on PATH?** If `command -v wiggum` is empty, tell the user to install it
-  (`./install.sh` in the wiggum repo) and stop — do not hand-simulate the loop. Run
+  (`curl -fsSL https://raw.githubusercontent.com/benman1/wiggum/main/get.sh | bash`, or `./install.sh`
+  in a clone of https://github.com/benman1/wiggum) and stop — do not hand-simulate the loop. Run
   from the target project root.
 - **`.wiggumrc`** — wiggum reads it itself; you read it here only to learn the verify
   steps (and therefore which environment to activate). No config → wiggum just skips

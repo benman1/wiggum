@@ -1,7 +1,7 @@
 ---
 name: wiggum
 description: Orchestrate the wiggum CLI — create a workplan, run it, monitor it, wait for it, detect when it's blocked, kill it if it runs too long, and chain workplans together. Use for any non-trivial change you want planned, executed, verified, and committed through wiggum.
-argument-hint: <issue, plan file, or "chain: plan-a.md plan-b.md">
+argument-hint: '<issue, plan file, or "chain: plan-a.md plan-b.md">'
 ---
 
 # Wiggum: Orchestrator
@@ -28,7 +28,8 @@ command -v wiggum && cat .wiggumrc 2>/dev/null && ls environment.yml .venv .nvmr
 ```
 
 - **wiggum on PATH?** If `command -v wiggum` is empty, tell the user to install it
-  (`./install.sh` in the wiggum repo) and stop — do not hand-simulate the loop. Run
+  (`curl -fsSL https://raw.githubusercontent.com/benman1/wiggum/main/get.sh | bash`, or `./install.sh`
+  in a clone of https://github.com/benman1/wiggum) and stop — do not hand-simulate the loop. Run
   from the target project root.
 - **`.wiggumrc`** — wiggum reads it itself; you read it here only to learn the verify
   steps (and therefore which environment to activate). No config → wiggum just skips
@@ -60,6 +61,7 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum chain <plan...> [--max-iterations N]` | Execute several plans in order; stop at the first failure. |
 | `wiggum chain --queue <file>` | Same, but the plan list is read from a file and re-read after every plan, so appending a line adds work to a chain already running. |
 | `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, RSS and CPU for the run's whole process tree, task tally. Blocked and running sort first. A footer gives load, swap and the live run count — read it before launching another run instead of shelling out to `uptime` and `sysctl`. Read-only. |
+| `wiggum top --all` | Also lists finished runs older than 24 hours, which `top` hides by default. |
 | `wiggum top --json` | The same records as JSON, with `pid`, `idle_seconds`, `rss_kb` and `cpu_percent` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. The footer is table-only. |
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
