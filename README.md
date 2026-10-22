@@ -640,6 +640,17 @@ This copies `wiggum.sh` and `lib/wiggum.sh` to `/usr/local/lib/wiggum/`, symlink
 
 **Upgrading while a run is in flight is safe.** Each file is renamed into place rather than rewritten, so a run already under way keeps the version it started on and finishes on it; the next run picks up the new one.
 
+### Install only the skill, with `npx skills add`
+
+The skills CLI installs the Claude Code skills straight from GitHub:
+
+```bash
+npx skills add benman1/wiggum --skill wiggum -a claude-code               # the /wiggum orchestrator
+npx skills add benman1/wiggum --skill test-first-verifier -a claude-code  # plan, test first, then implement
+```
+
+Add `-g` to install for every project instead of the current one, and `--list` (on its own) to see what the repository offers. This installs the skill files, not the `wiggum` program: the program still comes from the one-line installer above, and the skill tells the agent to ask you to install it when `wiggum` is not on `PATH`.
+
 Or just run it directly from the repo without installing:
 
 ```bash
