@@ -602,7 +602,7 @@ The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKI
 `wiggum init` also writes `.claude/rules/wiggum.md`, a [project rule](https://code.claude.com/docs/en/memory) covering what has to hold *before* anyone reaches for the skill:
 
 - when a change is worth the loop and when it's one edit
-- what makes a plan worth running — the case for doing it at all, the problem it cites, real code by path, an observable `Acceptance:` per task
+- what makes a plan worth running — the case for doing it at all, the problem it cites, real code by path, a search for what already exists, an observable `Acceptance:` per task
 - that wiggum tracks progress by counting `- [ ]` checkboxes, and `[~]` means dropped
 - sizing `--max-iterations` to the open checkboxes, and why a flaky suite isn't a reason to raise it
 - `chain --queue` for appending work to a chain that's already running
