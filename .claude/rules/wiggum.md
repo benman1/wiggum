@@ -20,7 +20,7 @@ a run. This file is the part that has to hold whether or not the skill is loaded
 ## What makes a plan worth running
 
 The plan is the entire input to an unattended run — nobody reads it back to you
-before the work happens. Four things it has to carry, and the first is the one
+before the work happens. Five things it has to carry, and the first is the one
 plans skip most:
 
 - **The case for doing it.** Answer *in the plan*: if we ship this, is the product
@@ -35,6 +35,10 @@ plans skip most:
   it.
 - **An observable `Acceptance:` per task** — a log line, a row, a passing test, a
   response body. "Looks better" is not acceptance.
+- **Already exists?** Before proposing new code, search for what the project (and
+  its sibling repos and stored outputs) already does, and say in the plan what was
+  searched and what was found. A plan for a detector, a parser or a store that the
+  project already has builds a second copy. If it exists, the task reads from there.
 
 ## Plans are counted, not read
 
