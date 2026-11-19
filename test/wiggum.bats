@@ -2419,6 +2419,7 @@ EOF
     [[ "$output" == *"the codebase actually better"* ]] || return 1
     [[ "$output" == *"cited"* ]] || return 1
     [[ "$output" == *"Real code, by path"* ]] || return 1
+    [[ "$output" == *"Already exists?"* ]] || return 1
     [[ "$output" == *"Acceptance:"* ]] || return 1
 }
 
