@@ -9339,3 +9339,24 @@ EOF
     grep -q 'opencode/commands/wiggum.md' "$root/README.md"
     grep -qi 'OpenCode slash command' "$root/site/index.html"
 }
+
+@test "docs: README and website map every permission mode" {
+    local root file needle
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    for file in README.md site/index.html; do
+        for needle in \
+            '--agent plan' \
+            '--tools read,grep,find,ls' \
+            '--exclude-tools bash' \
+            '--auto' \
+            '--sandbox read-only' \
+            '--sandbox workspace-write --approve-for-me' \
+            '--dangerously-bypass-approvals-and-sandbox' \
+            '--sandbox workspace-write'; do
+            if ! grep -Fq -- "$needle" "$root/$file"; then
+                echo "$file is missing $needle"
+                return 1
+            fi
+        done
+    done
+}

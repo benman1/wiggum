@@ -722,7 +722,9 @@ wiggum execute docs/login_plan.md --agent codex
 
 Session ids are logged for all four agents. The failure report prints the matching resume command: `claude --resume <id>`, `opencode -s <id>`, `pi --session <id>` or `codex exec resume <id>`.
 
-Permission modes are mapped to each CLI in [Permissions](#permissions). When an agent cannot enforce a mode, wiggum prints a warning and uses the nearest setting that agent supports. `--model` and `model_plan`/`model_execute` use the selected CLI's model name: a Claude alias such as `sonnet`, a `provider/model` name for OpenCode and Pi, or a Codex model id.
+OpenCode has been exercised end to end through `wiggum plan` and `wiggum execute`, including session capture and resume. The Pi adapter has Bats coverage for command flags, session fork, effort and permission modes; a live Pi run needs a configured provider and model. All four adapters are covered by the test suite.
+
+Permission modes are mapped to each CLI in [Permissions](#effort-and-permission-mode). When an agent cannot enforce a mode, wiggum prints a warning and uses the nearest setting that agent supports. `--model` and `model_plan`/`model_execute` use the selected CLI's model name: a Claude alias such as `sonnet`, a `provider/model` name for OpenCode and Pi, or a Codex model id.
 
 ### Creating a plan
 
@@ -967,7 +969,19 @@ Two settings control how every wiggum-issued agent call behaves. Both can be set
 
 **`effort` / `--effort`** — the reasoning effort the selected agent uses: `low`, `medium`, `high`, `xhigh`, or `max`. Wiggum defaults to `xhigh` (deep reasoning suits planning and self-healing). Drop to `low`/`medium` for cheaper, faster runs on simple tasks.
 
-**`permission_mode` / `--permission-mode`** — the permission mode for the call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, `manual`, or `plan`. `default` maps to Claude's `manual`. `wiggum init` writes `permission_mode = auto` by default. Claude passes the mode through; opencode maps `plan` to its plan agent and `auto`, `bypassPermissions` and `dontAsk` to `--auto`; pi restricts tools for `plan` and `acceptEdits`; codex uses sandbox and approval flags. A mode an agent cannot enforce prints a warning. `bypassPermissions` runs everything with no checks. When the line is absent from `.wiggumrc`, the built-in default is `bypassPermissions` for older configs.
+**`permission_mode` / `--permission-mode`** — the permission mode for the call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, `manual`, or `plan`. `wiggum init` writes `permission_mode = auto` by default. When the line is absent from `.wiggumrc`, the built-in default is `bypassPermissions` for older configs. Each agent maps that value to its own flags:
+
+| Mode | `claude` | `opencode` | `pi` | `codex` |
+|------|----------|------------|------|---------|
+| `plan` | passes through | `--agent plan` | `--tools read,grep,find,ls` | `--sandbox read-only` |
+| `acceptEdits` | passes through | warns; uses OpenCode config | edit/write tools, `--exclude-tools bash` | `--sandbox workspace-write --approve-for-me` |
+| `auto` | passes through | `--auto` | warns; process permissions | `--sandbox workspace-write --approve-for-me` |
+| `bypassPermissions` | passes through | `--auto` | warns; process permissions | `--dangerously-bypass-approvals-and-sandbox` |
+| `dontAsk` | passes through | `--auto` | warns; process permissions | `--sandbox workspace-write --approve-for-me` |
+| `default` | becomes `manual` | warns; uses OpenCode config | warns; process permissions | `--sandbox workspace-write` |
+| `manual` | passes through | warns; uses OpenCode config | warns; process permissions | `--sandbox workspace-write` |
+
+A warning means wiggum prints the unsupported mapping and uses the nearest setting the agent supports. `bypassPermissions` removes agent-side approval where the CLI allows it; keep the `.wiggumrc` verification waterfall as the check on the result. OpenCode has no `xhigh` effort and warns while collapsing it to `max`; Codex has no `max` effort and warns while collapsing it to `xhigh`.
 
 ```bash
 wiggum execute docs/plan.md --effort max               # maximum reasoning

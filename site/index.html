@@ -318,6 +318,13 @@
     overflow-x: auto;
     white-space: nowrap;
   }
+  .perm-map { margin-top: 1.5rem; display: grid; gap: 0.6rem; }
+  .perm-map div { display: grid; grid-template-columns: 12rem 1fr; gap: 1rem; align-items: baseline; }
+  .perm-map code { font-family: var(--mono); font-size: 0.8rem; color: var(--bright); }
+  .perm-map span { font-size: 0.92rem; }
+  @media (max-width: 40rem) {
+    .perm-map div { grid-template-columns: 1fr; gap: 0.15rem; }
+  }
 
   /* ── footer ─────────────────────────────────────────────────── */
   footer {
@@ -467,7 +474,17 @@
         </div>
       </div>
 
-      <p class="note">Each agent maps the permission mode to its own flags; unsupported modes print a warning. Every session id is logged with a resume command. The <a href="https://github.com/benman1/wiggum#permissions">README has the full mapping</a>.</p>
+      <p class="note">All four adapters are covered by Bats tests. OpenCode has an end-to-end plan and execute smoke test; Pi's flags, sessions and permission modes are tested, and a live run needs a configured provider and model.</p>
+
+      <h3>Permission modes</h3>
+      <div class="perm-map">
+        <div><code>plan</code><span>opencode uses <code>--agent plan</code>; pi gets <code>--tools read,grep,find,ls</code>; codex gets <code>--sandbox read-only</code>.</span></div>
+        <div><code>acceptEdits</code><span>pi gets <code>--tools read,edit,write,grep,find,ls --exclude-tools bash</code>; codex gets <code>--sandbox workspace-write --approve-for-me</code>.</span></div>
+        <div><code>auto / dontAsk</code><span>opencode runs with <code>--auto</code>; codex gets <code>--sandbox workspace-write --approve-for-me</code>.</span></div>
+        <div><code>bypassPermissions</code><span>opencode runs with <code>--auto</code>; codex uses <code>--dangerously-bypass-approvals-and-sandbox</code>.</span></div>
+        <div><code>default / manual</code><span>claude maps <code>default</code> to <code>manual</code>; codex gets <code>--sandbox workspace-write</code>.</span></div>
+      </div>
+      <p class="note">Pi enforces only <code>plan</code> and <code>acceptEdits</code>. Other unsupported modes print a warning and use the nearest setting the agent supports. Every session id is logged with a resume command. OpenCode collapses <code>xhigh</code> effort to <code>max</code>; Codex collapses <code>max</code> to <code>xhigh</code>. The <a href="https://github.com/benman1/wiggum#effort-and-permission-mode">README has the full mapping</a>.</p>
     </div>
   </section>
 
