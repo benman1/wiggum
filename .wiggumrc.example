@@ -1,10 +1,14 @@
 # .wiggumrc - Wiggum configuration
 # Place in project root or $HOME
 
+# Agent CLI that runs the loop: claude | opencode | pi | codex (default: claude).
+# Override for one run with `wiggum execute --agent <name>`.
+# agent = claude
+
 # Verification steps (run in order, waterfall style)
-# Each "verify" line is a shell command. If it fails, Claude is asked to fix it.
+# Each "verify" line is a shell command. If it fails, the agent is asked to fix it.
 # Each "autofix" line runs the command first (letting it self-correct, e.g. ruff --fix),
-# then re-runs it to check. Only escalates to Claude if it still fails.
+# then re-runs it to check. Only escalates to the agent if it still fails.
 
 # --- Example: TypeScript/Node project ---
 # verify = npm run type-check
@@ -16,8 +20,8 @@
 # autofix = ruff format app tests scripts && ruff check --fix app tests scripts
 # verify = pytest
 
-# Benchmark scripts (optional) — run after each iteration, output fed to Claude.
-# Purely informational: helps Claude see if changes are improving metrics.
+# Benchmark scripts (optional) — run after each iteration, output fed to the agent.
+# Purely informational: helps the agent see if changes are improving metrics.
 # benchmark = ./scripts/measure_bundle_size.sh
 # benchmark = npx lighthouse http://localhost:3000 --output json --quiet | jq '.categories.performance.score'
 
@@ -27,25 +31,25 @@ max_iterations = 30
 # Max retries per validation cycle (default: 5)
 max_validation_retries = 5
 
-# Retries when a claude session itself dies mid-run (dropped connection, API
+# Retries when an agent session itself dies mid-run (dropped connection, API
 # error) rather than finishing its task. Set to 0 to fail on the first drop.
 claude_retries = 2
 
-# Reasoning effort passed to Claude Code: low | medium | high | xhigh | max (default: xhigh)
+# Reasoning effort: low | medium | high | xhigh | max (default: xhigh). Each
+# agent maps this onto its own thinking/variant/reasoning-effort flag.
 # effort = xhigh
 
-# Claude Code permission mode for every wiggum-issued call:
-#   acceptEdits | auto | bypassPermissions | default | dontAsk | plan
-# `wiggum init` asks for this and defaults to "auto" -- Claude's auto-mode
-# classifier decides each action (guardrailed, still unattended). Use
-# "bypassPermissions" to run every action with no checks. When this line is
-# absent, the built-in default is bypassPermissions (back-compat).
+# Permission mode for every wiggum-issued call, in Claude's vocabulary:
+#   acceptEdits | auto | bypassPermissions | default | dontAsk | manual | plan
+# Each agent maps it to its own sandbox/approval flags. Claude maps "default" to
+# "manual". "auto" keeps a guardrail on an unattended run;
+# "bypassPermissions" runs every action with no checks.
+# When this line is absent, the built-in default is bypassPermissions.
 permission_mode = auto
 
-# Model Claude Code uses for planning and for execution -- set independently,
-# since a plan is one short call and execution is many. Sonnet is enough for
-# most projects; save Opus for plans/execution that need deeper reasoning.
-# Accepts an alias (sonnet, opus, fable) or a full model name. Override for a
-# single run with `--model`. Leave unset to use Claude Code's own default.
+# Model used for planning and for execution -- set independently, since a plan
+# is one short call and execution is many. Use a name in the selected agent's
+# format (Claude alias, `provider/model` for opencode and pi). Override for a
+# single run with `--model`. Leave unset to use the agent's own default.
 # model_plan = sonnet
 # model_execute = sonnet

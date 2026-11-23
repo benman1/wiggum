@@ -16,10 +16,17 @@ if [[ ! -f "$SOURCE_DIR/wiggum.sh" || ! -f "$SOURCE_DIR/lib/wiggum.sh" ]]; then
     exit 1
 fi
 
-# Check Claude Code is available
-if ! command -v claude &>/dev/null; then
-    echo "Warning: 'claude' (Claude Code CLI) not found on PATH."
-    echo "Wiggum requires Claude Code to run. Install it from https://claude.com/claude-code"
+# Check that at least one supported agent CLI is available
+found_agent=""
+for agent_cli in claude opencode pi codex; do
+    if command -v "$agent_cli" &>/dev/null; then
+        found_agent="$agent_cli"
+        break
+    fi
+done
+if [[ -z "$found_agent" ]]; then
+    echo "Warning: none of claude, opencode, pi or codex was found on PATH."
+    echo "Wiggum needs one of them to run; set 'agent' in .wiggumrc or pass --agent."
     echo ""
 fi
 
@@ -120,13 +127,21 @@ if [[ ! -f "$HOME/.wiggumrc" ]]; then
     fi
 fi
 
-# Install /wiggum skill globally for Claude Code
+# Install /wiggum skill globally for Claude Code when that agent is used
 SKILL_DIR="$HOME/.claude/skills/wiggum"
 SKILL_SRC="$SOURCE_DIR/.claude/skills/wiggum/SKILL.md"
 if [[ -f "$SKILL_SRC" ]]; then
     mkdir -p "$SKILL_DIR"
     install_file "$SKILL_SRC" "$SKILL_DIR/SKILL.md"
     echo "Installed /wiggum skill to $SKILL_DIR/SKILL.md"
+fi
+
+SHARED_SKILL_DIR="$HOME/.agents/skills/wiggum"
+SHARED_SKILL_SRC="$SOURCE_DIR/.agents/skills/wiggum/SKILL.md"
+if [[ -f "$SHARED_SKILL_SRC" ]]; then
+    mkdir -p "$SHARED_SKILL_DIR"
+    install_file "$SHARED_SKILL_SRC" "$SHARED_SKILL_DIR/SKILL.md"
+    echo "Installed shared wiggum skill to $SHARED_SKILL_DIR/SKILL.md"
 fi
 
 # Verify

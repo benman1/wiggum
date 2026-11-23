@@ -93,6 +93,11 @@ wiggum_reset() {
     MODEL_PLAN=""
     MODEL_EXECUTE=""
     CLI_MODEL=""
+    # The agent CLI that runs wiggum's calls. One user-facing vocabulary of
+    # effort/permission/model values; each adapter translates it to its own flags.
+    AGENT="claude"
+    CLI_AGENT=""
+    AGENT_WARNINGS=()
     RUN_PROMPTS=()
     RUN_PROMPTS_FILE=""
     RUN_SESSION_FILE=""
@@ -135,12 +140,40 @@ validate_effort() {
     esac
 }
 
-# Valid permission modes accepted by `claude --permission-mode`.
+# Valid permission modes accepted by `claude --permission-mode`. The other
+# adapters map these same values onto their own sandbox/approval flags.
 validate_permission_mode() {
     case "${1:-}" in
-        acceptEdits|auto|bypassPermissions|default|dontAsk|plan) return 0 ;;
+        acceptEdits|auto|bypassPermissions|default|dontAsk|manual|plan) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# Agent CLIs wiggum can drive. Adding one means adding an adapter section below;
+# the name here is what `--agent` and `agent =` in .wiggumrc accept.
+validate_agent() {
+    case "${1:-}" in
+        claude|opencode|pi|codex) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+agent_warn() {
+    local message="$*" existing
+    for existing in ${AGENT_WARNINGS[@]+"${AGENT_WARNINGS[@]}"}; do
+        [[ "$existing" == "$message" ]] && return 0
+    done
+    AGENT_WARNINGS+=("$message")
+    echo "Warning: $message" >&2
+}
+
+agent_mapped_permission() {
+    local mode="${1:-}"
+    if [[ "$AGENT" == claude && "$mode" == default ]]; then
+        printf '%s\n' manual
+        return 0
+    fi
+    printf '%s\n' "$mode"
 }
 
 # ── Clock ────────────────────────────────────────────────────────────────────
@@ -353,7 +386,7 @@ load_config_from() {
         value="$(trim_whitespace "$value")"
 
         case "$key" in
-            verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|claude_retries|skip_verify|skip_commit|effort|permission_mode|model_plan|model_execute)
+            agent|verify|autofix|benchmark|iterations|max_iterations|max_validation_retries|claude_retries|skip_verify|skip_commit|effort|permission_mode|model_plan|model_execute)
                 echo "$key=$value"
                 ;;
             *)
@@ -369,6 +402,15 @@ apply_config() {
         local key="${line%%=*}"
         local value="${line#*=}"
         case "$key" in
+            agent)
+                if [[ -n "$CLI_AGENT" ]]; then
+                    :
+                elif validate_agent "$value"; then
+                    AGENT="$value"
+                else
+                    echo "Warning: invalid value for agent: '$value' (expected claude/opencode/pi/codex). Keeping '$AGENT'." >&2
+                fi
+                ;;
             verify)
                 VERIFY_STEPS+=("$value")
                 ;;
@@ -431,7 +473,7 @@ apply_config() {
                     if validate_permission_mode "$value"; then
                         PERMISSION_MODE="$value"
                     else
-                        echo "Warning: invalid value for permission_mode: '$value' (expected acceptEdits/auto/bypassPermissions/default/dontAsk/plan). Keeping '$PERMISSION_MODE'." >&2
+                        echo "Warning: invalid value for permission_mode: '$value' (expected acceptEdits/auto/bypassPermissions/default/dontAsk/manual/plan). Keeping '$PERMISSION_MODE'." >&2
                     fi
                 fi
                 ;;
@@ -487,10 +529,10 @@ Presets:
   bash      Bash project (shellcheck, bats)
   (none)    Auto-detect from project files
 
-Also installs two Claude Code files: the /wiggum skill at
-.claude/skills/wiggum/SKILL.md and the always-loaded project rule at
-.claude/rules/wiggum.md. It asks only before overwriting something that is
-already there, and reminds you to create a CLAUDE.md if one is missing.
+Also installs the /wiggum skill at .claude/skills/wiggum/SKILL.md, the
+always-loaded Claude rule at .claude/rules/wiggum.md, and an agent-neutral
+"Working with wiggum" block in AGENTS.md for opencode, pi and codex. Each is
+added without a question; an existing file is only overwritten after asking.
 
 Examples:
   wiggum init                 # auto-detect, ask before overwriting anything
@@ -510,7 +552,7 @@ Usage:
 Options:
   --plan-file <path>   Output path for the plan (default: <base>_plan.md)
   --no-feedback        Skip the feedback pass over the finished plan
-  --verbose            Show Claude output (suppressed by default)
+  --verbose            Show agent output (suppressed by default)
 
 Reads issue descriptions, specs, or requirements and produces a structured
 markdown workplan with phases, tasks, acceptance criteria, and dependencies.
@@ -542,7 +584,7 @@ Usage:
 
 Options:
   --explain-file <path>  Write the explanation to a file instead of stdout
-  --verbose              Show Claude output as it is produced
+  --verbose              Show agent output as it is produced
 
 Read-only. Reads a workplan or issue file and answers four questions under four
 headings: what it contains, what it is worth, how it reaches users (which docs,
@@ -573,20 +615,21 @@ Usage:
 Options:
   --max-iterations <n>          Maximum implementation iterations (default: 30)
   --max-validation-retries <n>  Max fix attempts per verification step (default: 5)
-  --claude-retries <n>          Retries when a claude session dies mid-run,
+  --claude-retries <n>          Retries when an agent session dies mid-run,
                                 e.g. a dropped connection (default: 2; 0 disables)
   --summary-file <path>         Output path for the summary (default: <base>_summary.md)
-  --benchmark <script>          Run script after each iteration, feed output to Claude (repeatable)
+  --agent <name>                Agent CLI: claude|opencode|pi|codex (default: claude)
+  --benchmark <script>          Run script after each iteration, feed output to the agent (repeatable)
   --update-docs <files>         Comma-separated doc files to update after execution
   -b, --background              Run detached; write a pidfile and capture output
                                 so 'wiggum status/watch/kill <plan>' can supervise it
   --at <WHEN>                   Wait until WHEN, then run once, detached; accepts
                                 +90m (relative), 01:07 (the next such clock time)
                                 or @1756180020 (epoch). Implies --background.
-  --no-verify                   Skip wiggum's verification waterfall (Claude may
+  --no-verify                   Skip wiggum's verification waterfall (the agent may
                                 still run tests during implementation)
   --no-commit                   Skip every wiggum-issued git commit
-  --verbose                     Show Claude output (suppressed by default)
+  --verbose                     Show agent output (suppressed by default)
 
 Verification steps:
   Loaded from .wiggumrc. Each step is run after implementation:
@@ -687,10 +730,10 @@ Usage:
   wiggum kill <plan-file...>
 
 Kills the wiggum process recorded for each plan, and every process descended
-from it (the claude subprocess it spawned, and claude's own children), then
-removes the pidfile and the registry entry so the run leaves 'wiggum top'.
+from it (the agent subprocess it spawned, and that process's own children),
+then removes the pidfile and the registry entry so the run leaves 'wiggum top'.
 Targets only these runs' process trees -- never a blanket kill of every
-wiggum/claude on the system.
+wiggum or agent process on the system.
 
 SIGTERM first; anything still alive after WIGGUM_KILL_GRACE seconds (default
 10) is killed. A run that survives both keeps its sidecar, so 'top' goes on
@@ -796,7 +839,7 @@ Usage:
 Options:
   -i <files...>   Input files (summaries, plans, changelogs, code)
   -o <files...>   Output doc files to update
-  --verbose       Show Claude output (suppressed by default)
+  --verbose       Show agent output (suppressed by default)
 
 Reads input files for context, then updates each output file to reflect
 the changes. Preserves existing structure and style.
@@ -821,7 +864,7 @@ Options:
 Note: --no-verify is rejected here -- it would make 'wiggum check' a no-op.
 
 Runs the verify/autofix steps from .wiggumrc against the current codebase.
-When a step fails, Claude is asked to fix the issue. Repeats up to
+When a step fails, the agent is asked to fix the issue. Repeats up to
 max_validation_retries times. Does not implement new features or commit.
 
 Verification steps (from .wiggumrc):
@@ -838,7 +881,7 @@ EOF
             ;;
         run)
             cat <<EOF
-wiggum run - Feed a series of prompts to Claude in one continuous session
+wiggum run - Feed a series of prompts to the agent in one continuous session
 
 Usage:
   wiggum run <prompt...> [options]
@@ -851,13 +894,13 @@ Options:
   --new-session               Ignore an existing --session-file and start fresh
   --delimiter <str>           Prompt separator line for -f/stdin (default: ---)
   --effort <level>            Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
-  --permission-mode <mode>    acceptEdits|auto|bypassPermissions|default|dontAsk|plan
-  --model <name>              Model for this session: alias (sonnet/opus/...) or full name
-  --verbose                   Pass --verbose to Claude Code
+  --permission-mode <mode>    acceptEdits|auto|bypassPermissions|default|dontAsk|manual|plan
+  --model <name>              Model for this session, in the agent's format
+  --verbose                   Show agent output
 
 Runs each prompt in order. The first prompt starts a fresh session (or resumes
 the one in --session-file); every later prompt continues the same session, so
-Claude keeps full context between prompts. Claude's responses go to stdout;
+The agent keeps full context between prompts. Agent responses go to stdout;
 wiggum status and session ids go to stderr.
 
 Prompts can come from positional arguments (each argument is one prompt), a
@@ -894,7 +937,7 @@ Commands:
   execute   Implement a workplan with iterative validation
   check     Run verification waterfall and fix issues
   docs      Update documentation from input files
-  run       Feed a series of prompts to Claude in one continuous session
+  run       Feed a series of prompts to the agent in one continuous session
   status    Show task progress and run state for a plan
   watch     Follow a run until it finishes (wait); --chain to follow a chain
   kill      Stop a background run (only that run's process)
@@ -904,12 +947,15 @@ Commands:
 Run 'wiggum help <command>' for details on a specific command.
 
 Options:
+  --agent <name>            Agent CLI to run the loop: claude|opencode|pi|codex
+                            (default: claude, or the agent key in .wiggumrc)
   --effort <level>          Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
-  --permission-mode <mode>  Claude permission mode (default: bypassPermissions)
-  --model <name>            Model for this call: alias (sonnet/opus/...) or full
-                            name (default: model_plan/model_execute, or Claude
-                            Code's own default when neither is set)
-  --verbose                 Show Claude output (suppressed by default)
+  --permission-mode <mode>  Permission mode (default: bypassPermissions); each
+                            agent maps it to its own sandbox/approval flags
+  --model <name>            Model for this call, in the selected agent's format
+                            (default: model_plan/model_execute, or the agent's
+                            own default when neither is set)
+  --verbose                 Show agent output (suppressed by default)
   -h, --help                Show this help
 
 Configuration:
@@ -1031,7 +1077,7 @@ parse_args() {
                     CLI_PERMISSION_MODE="$2"
                     shift 2
                 else
-                    echo "Error: invalid --permission-mode '${2:-}' (expected acceptEdits/auto/bypassPermissions/default/dontAsk/plan)." >&2
+                    echo "Error: invalid --permission-mode '${2:-}' (expected acceptEdits/auto/bypassPermissions/default/dontAsk/manual/plan)." >&2
                     return "$EXIT_BAD_ARGS"
                 fi
                 ;;
@@ -1039,6 +1085,16 @@ parse_args() {
                 MODEL="$2"
                 CLI_MODEL="$2"
                 shift 2
+                ;;
+            --agent)
+                if validate_agent "${2:-}"; then
+                    AGENT="$2"
+                    CLI_AGENT="$2"
+                    shift 2
+                else
+                    echo "Error: invalid --agent '${2:-}' (expected claude/opencode/pi/codex)." >&2
+                    return "$EXIT_BAD_ARGS"
+                fi
                 ;;
             -f|--prompts-file)
                 RUN_PROMPTS_FILE="$2"
@@ -1654,7 +1710,11 @@ run_init() {
     generate_rc "$preset" > .wiggumrc
     cat >> .wiggumrc <<'RCEOF'
 
-# How wiggum's claude calls are gated. "auto" lets Claude's auto-mode classifier
+# Agent CLI that runs the loop: claude | opencode | pi | codex (default: claude).
+# Override for one run with `wiggum execute --agent <name>`.
+# agent = claude
+
+# How wiggum's agent calls are gated. "auto" lets the agent's own classifier
 # decide each action, which keeps a guardrail on an unattended run.
 # "bypassPermissions" runs everything unchecked. Override for a single run with
 # `wiggum execute --permission-mode <mode>`.
@@ -1662,17 +1722,20 @@ permission_mode = auto
 RCEOF
     echo "Created .wiggumrc ($preset preset, permission_mode = auto)"
 
-    # Two Claude Code surfaces: the skill is the on-demand playbook for driving a
-    # run, the rule is the handful of facts that must hold in every session.
+    # The skill is the on-demand playbook, the rule is the handful of facts that
+    # must hold in every Claude session, the AGENTS.md block carries those facts
+    # to opencode, pi and codex, and the command exposes /wiggum in OpenCode.
     setup_wiggum_skill || return $?
     setup_wiggum_rules || return $?
+    setup_wiggum_agents_md || return $?
+    setup_wiggum_opencode_command || return $?
     setup_wiggum_gitignore
 
-    if [[ ! -f "CLAUDE.md" ]]; then
+    if [[ ! -f "CLAUDE.md" && ! -f "AGENTS.md" ]]; then
         echo ""
-        echo "Tip: Create a CLAUDE.md file with project standards, architecture, and"
-        echo "conventions. Wiggum passes it to Claude Code automatically, which helps"
-        echo "Claude write code that fits your project. See the wiggum README for details."
+        echo "Tip: Create a CLAUDE.md or AGENTS.md file with project standards,"
+        echo "architecture, and conventions. Coding agents read them automatically,"
+        echo "which helps them write code that fits your project."
     fi
 }
 
@@ -1717,7 +1780,7 @@ command -v wiggum && cat .wiggumrc 2>/dev/null && ls environment.yml .venv .nvmr
 - **`.wiggumrc`** — wiggum reads it itself; you read it here only to learn the verify
   steps (and therefore which environment to activate). No config → wiggum just skips
   verification (still fine).
-- **Activate the project's environment.** wiggum runs Claude's tools and the verify
+- **Activate the project's environment.** wiggum runs the agent's tools and the verify
   steps in your *current* shell. If the markers above show one — conda
   (`environment.yml`), a virtualenv/`.venv`, Poetry/uv (`poetry.lock`/`uv.lock`), a
   Node version (`.nvmrc`), Bundler (`Gemfile`), etc. — activate it in the same shell
@@ -1746,6 +1809,19 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, RSS and CPU for the run's whole process tree, task tally. Blocked and running sort first. A footer gives load, swap and the live run count — read it before launching another run instead of shelling out to `uptime` and `sysctl`. Read-only. |
 | `wiggum top --all` | Also lists finished runs older than 24 hours, which `top` hides by default. |
 | `wiggum top --json` | The same records as JSON, with `pid`, `idle_seconds`, `rss_kb` and `cpu_percent` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. The footer is table-only. |
+| `--agent <name>` | Pick the CLI that runs the loop: `claude` (default), `opencode`, `pi` or `codex`. Also settable as `agent = <name>` in `.wiggumrc`. |
+
+The loop is agent-independent. The selected agent makes every plan, verify and
+commit call; `--effort`, `--permission-mode` and `--model` keep one vocabulary
+and each agent maps them to its own flags. The commands above do not change when
+the agent changes. In OpenCode, `/wiggum <request>` drives the CLI with
+`--agent opencode`, and `@wiggum` loads this skill.
+
+Permission modes use one vocabulary: `acceptEdits`, `auto`, `bypassPermissions`,
+`default`, `dontAsk`, `manual` and `plan`. Claude maps `default` to `manual`;
+OpenCode maps `plan` to its plan agent and `bypassPermissions` to `--auto`; Pi
+restricts tools for `plan` and `acceptEdits`; Codex uses sandbox flags. A mode
+that cannot be enforced prints a warning instead of silently changing meaning.
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
 `docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
@@ -2119,8 +2195,8 @@ Then supervise in a loop until it finishes:
    remediate in step 4. Don't keep a wedged run alive.
 4. **Kill only when needed.** If a run overruns or is wedged and you must stop it,
    use `wiggum kill docs/<name>_plan.md`. This kills only that run's process tree
-   (the wiggum process and the `claude` it spawned) — never a blanket kill of other
-   wiggum/claude processes. Prefer `--kill-on-timeout` on `watch` so you don't have
+   (the wiggum process and the agent CLI it spawned) — never a blanket kill of other
+   wiggum or agent processes. Prefer `--kill-on-timeout` on `watch` so you don't have
    to babysit it.
 
 For a quick, small run you may skip backgrounding and just `wiggum execute <plan>`
@@ -2416,7 +2492,7 @@ Only when nothing is running is it a real stall:
 - *Needs access, credentials, an external dependency, or a real product decision* →
   stop and ask the user; you can't resolve it.
 
-**Check the machine before blaming the plan.** wiggum runs Claude, the verify
+**Check the machine before blaming the plan.** wiggum runs an agent, the verify
 steps, and anything a task spawns — concurrently with any *other* wiggum run on the
 box. Read `uptime`'s load average against the core count (`sysctl -n hw.ncpu` /
 `nproc`). A load many times the core count makes every verify pass several times
@@ -2552,7 +2628,7 @@ between stages.
 - **Drive the CLI; don't reimplement it.** Plan/implement/verify/commit are
   wiggum's job. You orchestrate: plan, launch, monitor, wait, unblock, kill, chain.
 - **Back out when the loop isn't warranted.** wiggum runs a full cycle *per task* —
-  a fresh `claude` session, the whole verify suite, a commit. If you could make the
+  a fresh agent session, the whole verify suite, a commit. If you could make the
   change and confirm it in a single pass, say so and edit it directly rather than
   planning it; a plan that fragments one edit into eight commits costs more than it
   returns. Size and file count are the wrong test — prompt wording, a doc sweep, or
@@ -2688,7 +2764,9 @@ install_generated_file() {
 setup_wiggum_skill() {
     echo ""
     install_generated_file ".claude/skills/wiggum/SKILL.md" "/wiggum skill" \
-        wiggum_skill_content
+        wiggum_skill_content || return $?
+    install_generated_file ".agents/skills/wiggum/SKILL.md" "shared wiggum skill" \
+        wiggum_skill_content || return $?
 }
 
 
@@ -2711,7 +2789,7 @@ a run. This file is the part that has to hold whether or not the skill is loaded
   predict what the verify suite will say until you try.
 - **Edit directly** when you can hold the whole change in your head and one run of
   the verify suite settles it — even when it spans several files. Wiggum runs a full
-  cycle *per task*: a fresh Claude session, the entire verify waterfall, a commit.
+  cycle *per task*: a fresh agent session, the entire verify waterfall, a commit.
   On a change that is really one edit, that dwarfs the work and fragments it into
   noisy commits. "It's a new feature" is not on its own a reason.
 - **Say which of the two you are doing before you start**, in a sentence. "Queue
@@ -2849,6 +2927,118 @@ setup_wiggum_rules() {
         wiggum_rules_content
 }
 
+# The same playbook for opencode, pi and codex, which read AGENTS.md from the
+# project root. Markers keep it inside a file the user owns: setup only ever
+# appends the block or replaces that block after asking.
+wiggum_agents_content() {
+    cat <<'AGENTS_EOF'
+<!-- wiggum:start -->
+## Working with wiggum
+
+Wiggum is a self-driving loop: from one command it plans, implements, verifies
+and commits. The loop belongs in `docs/<slug>_plan.md`; the agent drives it with
+`wiggum plan`, `wiggum execute`, `wiggum watch` and `wiggum chain`. The `/wiggum`
+skill carries the full playbook where the agent supports skills. In OpenCode,
+`/wiggum <request>` runs that playbook through the CLI with `--agent opencode`,
+and `@wiggum` loads the skill.
+
+- **Use the loop** when several interdependent steps each need verification before
+  the next can be written, or when the verify suite's result cannot be predicted.
+- **Edit directly** when the whole change fits in your head and one verify run
+  settles it, even across several files. Wiggum costs a fresh session and a commit
+  per task; on one logical change that fragments the history.
+- **Say which you are doing before you start.** "Queue these" asks for sequence,
+  not for hand-editing.
+
+A plan's `- [ ]` checkboxes are what wiggum counts. Mark a task `[x]` only when
+its observable acceptance criterion and the happy, edge and failure checks pass.
+`[~]` means dropped and stays dropped.
+
+Read the verify step that failed before trimming the waterfall. `.wiggumrc` is the
+user's config. The suite passing, a change being deployed, and a change working
+are three different claims; report the one you observed.
+
+While a run is live, do not drive interactive work in the same repository, and
+tear down your watch when it ends. Never change the machine's sleep or power
+settings to protect a run: a run that dies to sleep is recoverable, a global
+setting is not yours to change.
+<!-- wiggum:end -->
+AGENTS_EOF
+}
+
+extract_wiggum_agents_block() {
+    awk '/<!-- wiggum:start -->/{inside=1} inside{print} /<!-- wiggum:end -->/{inside=0}' "$1"
+}
+
+replace_wiggum_agents_block() {
+    local tmp block
+    tmp="$(mktemp "${TMPDIR:-/tmp}/wiggum-agents-XXXXXX")"
+    block="$(mktemp "${TMPDIR:-/tmp}/wiggum-block-XXXXXX")"
+    wiggum_agents_content > "$block"
+    awk 'FNR==NR { b = b $0 ORS; next }
+         /<!-- wiggum:start -->/ { printf "%s", b; skip=1; next }
+         /<!-- wiggum:end -->/ { skip=0; next }
+         !skip { print }' "$block" AGENTS.md > "$tmp"
+    mv "$tmp" AGENTS.md
+    rm -f "$block"
+}
+
+setup_wiggum_agents_md() {
+    echo ""
+    if [[ ! -f AGENTS.md ]]; then
+        wiggum_agents_content > AGENTS.md
+        echo "Created AGENTS.md with the wiggum playbook."
+        return 0
+    fi
+    if ! grep -q '<!-- wiggum:start -->' AGENTS.md; then
+        if [[ -s AGENTS.md && -n "$(tail -c1 AGENTS.md)" ]]; then
+            echo "" >> AGENTS.md
+        fi
+        wiggum_agents_content >> AGENTS.md
+        echo "Appended the wiggum playbook to AGENTS.md."
+        return 0
+    fi
+    if diff -q <(extract_wiggum_agents_block AGENTS.md) \
+                <(wiggum_agents_content) >/dev/null 2>&1; then
+        echo "The wiggum block in AGENTS.md is already up to date — skipping."
+        return 0
+    fi
+    echo "An older wiggum block exists in AGENTS.md."
+    local rc=0
+    confirm "Update just that block? [y/N]" || rc=$?
+    if [[ "$rc" -eq 2 ]]; then
+        return "$EXIT_BAD_ARGS"
+    fi
+    if [[ "$rc" -ne 0 ]]; then
+        echo "Kept your existing AGENTS.md."
+        return 0
+    fi
+    replace_wiggum_agents_block
+    echo "Updated the wiggum block in AGENTS.md."
+}
+
+wiggum_opencode_command_content() {
+    cat <<'COMMAND_EOF'
+---
+description: Plan or execute a wiggum workplan
+---
+The request is: $ARGUMENTS
+
+Use the Bash tool to drive the `wiggum` CLI. Pass `--agent opencode` so the loop uses this agent.
+
+- If the request names an existing plan file or asks to execute a plan, read that plan, then run `wiggum execute <plan-file> --agent opencode`.
+- Otherwise run `wiggum plan <issue-or-description> --agent opencode` and report the generated plan path.
+- Let wiggum run the implementation, verification and commit in its own agent sessions.
+- Report the command, exit status, plan path and summary path. Execute without asking for confirmation.
+COMMAND_EOF
+}
+
+setup_wiggum_opencode_command() {
+    echo ""
+    install_generated_file ".opencode/commands/wiggum.md" "/wiggum OpenCode command" \
+        wiggum_opencode_command_content
+}
+
 # ── Logging ──────────────────────────────────────────────────────────────────
 
 # Derive a sidecar file path (log/pid/out) for a plan or base file, using the
@@ -2890,23 +3080,237 @@ generate_uuid() {
     fi
 }
 
-# ── Claude wrapper ───────────────────────────────────────────────────────────
+# ── Agent adapters ───────────────────────────────────────────────────────────
+#
+# wiggum's loop is agent-independent; only this layer knows which CLI is being
+# driven. Every caller speaks the same vocabulary: one-shot prompt, -c to
+# continue the previous session, and effort/permission/model values from
+# .wiggumrc. An adapter turns that into argv, captures the session id where the
+# CLI assigns one, and names the failure markers it prints.
+#
+# An adapter sets AGENT_ARGV (the full argv after the binary) and
+# AGENT_EXPECT_CAPTURED_SESSION (true when the CLI, not wiggum, owns the id).
+# Arrays are globals because bash 3.2 has no namerefs or associative arrays.
 
 WIGGUM_LAST_SESSION_ID=""
+AGENT_ARGV=()
+AGENT_PROMPT_ARGS=()
+AGENT_INJECTED_ARGS=()
+AGENT_EXTRA_ARGS=()
+AGENT_EXPECT_CAPTURED_SESSION=false
 
-# Path to the transcript of the claude invocation that most recently failed.
+# Literal calls, so a test can stub the CLI by defining a shell function.
+agent_exec() {
+    case "$AGENT" in
+        claude)   claude "$@" ;;
+        opencode) opencode "$@" ;;
+        pi)       pi "$@" ;;
+        codex)    codex "$@" ;;
+    esac
+}
+
+# Value of an injected option, or empty when it was not supplied.
+agent_option() {
+    local wanted="$1"
+    shift
+    while [[ $# -gt 0 ]]; do
+        if [[ "$1" == "$wanted" ]]; then
+            printf '%s\n' "${2:-}"
+            return 0
+        fi
+        shift
+    done
+    return 0
+}
+
+agent_claude_build() {
+    local wants_continue="$1" sid="$2" resume_from="$3"
+    local injected=() arg i
+    for ((i = 0; i < ${#AGENT_INJECTED_ARGS[@]}; i++)); do
+        arg="${AGENT_INJECTED_ARGS[$i]}"
+        if [[ "$arg" == --permission-mode ]]; then
+            injected+=("$arg" "$(agent_mapped_permission "${AGENT_INJECTED_ARGS[$((i + 1))]}")")
+            i=$((i + 1))
+        else
+            injected+=("$arg")
+        fi
+    done
+    AGENT_ARGV=("--session-id" "$sid")
+    if [[ "$wants_continue" == true && -n "$resume_from" ]]; then
+        AGENT_ARGV+=("--resume" "$resume_from" "--fork-session")
+    fi
+    AGENT_ARGV+=(${injected[@]+"${injected[@]}"})
+    AGENT_ARGV+=(${AGENT_EXTRA_ARGS[@]+"${AGENT_EXTRA_ARGS[@]}"})
+    AGENT_ARGV+=(${AGENT_PROMPT_ARGS[@]+"${AGENT_PROMPT_ARGS[@]}"})
+    AGENT_EXPECT_CAPTURED_SESSION=false
+}
+
+agent_opencode_build() {
+    local wants_continue="$1" sid="$2" resume_from="$3"
+    local effort model permission variant
+    effort="$(agent_option --effort ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    model="$(agent_option --model ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    permission="$(agent_option --permission-mode ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    AGENT_ARGV=("run" "--format" "json")
+    if [[ "$wants_continue" == true && -n "$resume_from" ]]; then
+        AGENT_ARGV+=("--session" "$resume_from" "--fork")
+    fi
+    [[ -n "$model" ]] && AGENT_ARGV+=("-m" "$model")
+    if [[ -n "$effort" ]]; then
+        case "$effort" in
+            xhigh)
+                agent_warn "opencode has no xhigh effort; using max"
+                variant="max"
+                ;;
+            max) variant="max" ;;
+            *) variant="$effort" ;;
+        esac
+        AGENT_ARGV+=("--variant" "$variant")
+    fi
+    case "$permission" in
+        plan) AGENT_ARGV+=("--agent" "plan") ;;
+        auto|bypassPermissions|dontAsk) AGENT_ARGV+=("--auto") ;;
+        *)
+            agent_warn "opencode cannot enforce $permission; using its configured permissions"
+            ;;
+    esac
+    AGENT_ARGV+=(${AGENT_PROMPT_ARGS[@]+"${AGENT_PROMPT_ARGS[@]}"})
+    AGENT_EXPECT_CAPTURED_SESSION=true
+}
+
+agent_pi_build() {
+    local wants_continue="$1" sid="$2" resume_from="$3"
+    local effort model permission
+    effort="$(agent_option --effort ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    model="$(agent_option --model ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    permission="$(agent_option --permission-mode ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    AGENT_ARGV=("--print")
+    if [[ "$wants_continue" == true && -n "$resume_from" ]]; then
+        AGENT_ARGV+=("--fork" "$resume_from" "--session-id" "$sid")
+    else
+        AGENT_ARGV+=("--session-id" "$sid")
+    fi
+    [[ -n "$model" ]] && AGENT_ARGV+=("--model" "$model")
+    [[ -n "$effort" ]] && AGENT_ARGV+=("--thinking" "$effort")
+    case "$permission" in
+        plan)
+            AGENT_ARGV+=("--tools" "read,grep,find,ls")
+            ;;
+        acceptEdits)
+            AGENT_ARGV+=("--tools" "read,edit,write,grep,find,ls" "--exclude-tools" "bash")
+            ;;
+        *)
+            agent_warn "pi does not enforce permission modes; tools run with process permissions"
+            ;;
+    esac
+    AGENT_ARGV+=(${AGENT_PROMPT_ARGS[@]+"${AGENT_PROMPT_ARGS[@]}"})
+    AGENT_EXPECT_CAPTURED_SESSION=false
+}
+
+agent_codex_build() {
+    local wants_continue="$1" sid="$2" resume_from="$3"
+    local effort model permission prompt=""
+    effort="$(agent_option --effort ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    model="$(agent_option --model ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    permission="$(agent_option --permission-mode ${AGENT_INJECTED_ARGS[@]+"${AGENT_INJECTED_ARGS[@]}"})"
+    AGENT_ARGV=("exec")
+    if [[ "$wants_continue" == true && -n "$resume_from" ]]; then
+        AGENT_ARGV+=("fork" "$resume_from")
+    fi
+    AGENT_ARGV+=("--json")
+    case "$permission" in
+        plan)
+            AGENT_ARGV+=("--sandbox" "read-only")
+            ;;
+        bypassPermissions)
+            AGENT_ARGV+=("--dangerously-bypass-approvals-and-sandbox")
+            ;;
+        acceptEdits|auto|dontAsk)
+            AGENT_ARGV+=("--sandbox" "workspace-write" "--approve-for-me")
+            ;;
+        *)
+            agent_warn "codex cannot enforce $permission non-interactively; using workspace-write"
+            AGENT_ARGV+=("--sandbox" "workspace-write")
+            ;;
+    esac
+    [[ -n "$model" ]] && AGENT_ARGV+=("--model" "$model")
+    if [[ -n "$effort" ]]; then
+        if [[ "$effort" == "max" ]]; then
+            agent_warn "codex has no max reasoning effort; using xhigh"
+            effort="xhigh"
+        fi
+        AGENT_ARGV+=("-c" "model_reasoning_effort=$effort")
+    fi
+    # codex exec takes one prompt argument; wiggum's callers pass the prompt
+    # followed by the files it names.
+    local arg
+    for arg in ${AGENT_PROMPT_ARGS[@]+"${AGENT_PROMPT_ARGS[@]}"}; do
+        if [[ -n "$prompt" ]]; then
+            prompt="$prompt $arg"
+        else
+            prompt="$arg"
+        fi
+    done
+    AGENT_ARGV+=("$prompt")
+    AGENT_EXPECT_CAPTURED_SESSION=true
+}
+
+agent_build() {
+    AGENT_ARGV=()
+    AGENT_EXPECT_CAPTURED_SESSION=false
+    case "$AGENT" in
+        claude)   agent_claude_build "$@" ;;
+        opencode) agent_opencode_build "$@" ;;
+        pi)       agent_pi_build "$@" ;;
+        codex)    agent_codex_build "$@" ;;
+    esac
+}
+
+# Only opencode and codex assign their own ids. Both emit the id as JSON on
+# stdout; quiet mode still captures that stream, so extraction works either way.
+agent_extract_session() {
+    local outfile="$1" id=""
+    case "$AGENT" in
+        opencode)
+            id="$(grep -oE '"sessionID"[[:space:]]*:[[:space:]]*"[^"]+"' "$outfile" \
+                 | head -n1 | awk -F'"' '{print $4}' || true)"
+            ;;
+        codex)
+            id="$(grep -oE '"thread_id"[[:space:]]*:[[:space:]]*"[^"]+"' "$outfile" \
+                 | head -n1 | awk -F'"' '{print $4}' || true)"
+            ;;
+    esac
+    printf '%s\n' "$id"
+}
+
+agent_resume_hint() {
+    case "$AGENT" in
+        claude)   printf 'claude --resume %s\n' "$1" ;;
+        opencode) printf 'opencode -s %s\n' "$1" ;;
+        pi)       printf 'pi --session %s\n' "$1" ;;
+        codex)    printf 'codex exec resume %s\n' "$1" ;;
+    esac
+}
+
+# ── Agent invocation ─────────────────────────────────────────────────────────
+
+# Path to the transcript of the agent invocation that most recently failed.
 # Empty while every session has succeeded.
 WIGGUM_LAST_FAILURE_OUT=""
 
-# Markers the Claude CLI prints when a session dies or degrades at the
-# transport/API layer rather than finishing its task. Used only to name the
-# cause in the failure report; the exit code is what decides failure, so a
-# marker appearing in ordinary output can never abort a healthy run.
+# Transport/API failures all four CLIs can print. The exit code decides
+# failure; these only name the cause in the report.
 WIGGUM_CLAUDE_FAILURE_MARKERS='API Error|Connection closed mid-response|Connection error|Request timed out|Request was aborted|overloaded_error|rate_limit_error|Credit balance is too low|Invalid API key|OAuth token has expired|Prompt is too long'
 
+agent_failure_markers() {
+    case "$AGENT" in
+        opencode) printf '%s' '|APIError|isRetryable' ;;
+        codex)    printf '%s' '|turn.failed|stream error' ;;
+    esac
+}
+
 # Echo the first transport/API failure marker found in a captured transcript,
-# with a little trailing context, or nothing. Separate from run_claude so it
-# can be tested against a fixture file.
+# with a little trailing context, or nothing.
 #
 # Always exits 0. A clean transcript makes grep exit 1, and callers assign the
 # result to a variable, so returning grep's status would abort the whole run
@@ -2914,21 +3318,20 @@ WIGGUM_CLAUDE_FAILURE_MARKERS='API Error|Connection closed mid-response|Connecti
 scan_claude_failure() {
     local outfile="$1"
     [[ -f "$outfile" ]] || return 0
-    grep -oiE "($WIGGUM_CLAUDE_FAILURE_MARKERS).{0,100}" "$outfile" | head -n1 || true
+    grep -oiE "($WIGGUM_CLAUDE_FAILURE_MARKERS$(agent_failure_markers)).{0,100}" "$outfile" | head -n1 || true
 }
 
-# Create a private transcript file for one claude invocation. Deleted when the
+# Create a private transcript file for one agent invocation. Deleted when the
 # session succeeds, kept (and its path reported) when it fails, so a crash can
 # be read after the fact without leaving files in the user's repo.
 claude_capture_file() {
     local dir="${TMPDIR:-/tmp}"
-    mktemp "${dir%/}/wiggum-claude-XXXXXX"
+    mktemp "${dir%/}/wiggum-${AGENT}-XXXXXX"
 }
 
-# Report a failed claude session on stderr. This is the whole point of the
-# wrapper: in quiet mode claude's output went to /dev/null and `set -e` then
-# unwound the run, so a dead session showed on the terminal as nothing but the
-# session id line and a returned shell prompt.
+# Report a failed session on stderr. In quiet mode the agent's output went to a
+# file and `set -e` would otherwise unwind the run with nothing on the terminal
+# but a returned shell prompt.
 report_claude_failure() {
     local label="$1" session_id="$2" rc="$3" outfile="$4"
     local reason
@@ -2936,7 +3339,7 @@ report_claude_failure() {
 
     {
         echo ""
-        echo "!! claude session failed during '$label' (exit $rc)."
+        echo "!! $AGENT session failed during '$label' (exit $rc)."
         if [[ -n "$reason" ]]; then
             echo "   cause:      $reason"
         fi
@@ -2947,45 +3350,56 @@ report_claude_failure() {
             tail -n 20 "$outfile" | sed 's/^/   | /'
             echo "   --- end of transcript ---"
         else
-            echo "   transcript: (claude produced no output)"
+            echo "   transcript: ($AGENT produced no output)"
         fi
-        echo "   inspect:    claude --resume $session_id"
+        echo "   inspect:    $(agent_resume_hint "$session_id")"
         echo ""
     } >&2
 
     log_entry "$label" "FAILED exit $rc${reason:+ - $reason}"
 }
 
-run_claude() {
-    local label="${WIGGUM_CURRENT_LABEL:-claude}"
+run_agent() {
+    local label="${WIGGUM_CURRENT_LABEL:-$AGENT}"
+
+    AGENT_WARNINGS=()
 
     # Snapshot the session a -c call forks from before looping: a retry must
     # fork from the same predecessor, not from the attempt that just died.
     local resume_from="$WIGGUM_LAST_SESSION_ID"
 
-    # Split out -c/--continue (wiggum's flag, not claude's) and note whether
-    # the caller passed its own --permission-mode, so we don't also inject the
-    # configured one (an explicit per-call override wins).
     local filtered_args=()
     local has_perm_mode=false
+    local explicit_permission=""
     local has_model=false
     local wants_continue=false
-    for arg in "$@"; do
-        if [[ "$arg" == "-c" || "$arg" == "--continue" ]]; then
-            wants_continue=true
-        else
-            [[ "$arg" == "--permission-mode" ]] && has_perm_mode=true
-            [[ "$arg" == "--model" ]] && has_model=true
-            filtered_args+=("$arg")
-        fi
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -c|--continue) wants_continue=true; shift ;;
+            -p|--print) shift ;;
+            --permission-mode)
+                has_perm_mode=true
+                explicit_permission="${2:-}"
+                shift 2
+                ;;
+            --model)
+                has_model=true
+                filtered_args+=("--model" "${2:-}")
+                shift 2
+                ;;
+            *) filtered_args+=("$1"); shift ;;
+        esac
     done
+    AGENT_PROMPT_ARGS=(${filtered_args[@]+"${filtered_args[@]}"})
 
     # Inject the configured effort, permission mode and model (unless overridden).
     local injected_args=()
     if [[ -n "$EFFORT" ]]; then
         injected_args+=("--effort" "$EFFORT")
     fi
-    if [[ "$has_perm_mode" != true ]]; then
+    if [[ "$has_perm_mode" == true ]]; then
+        injected_args+=("--permission-mode" "$explicit_permission")
+    else
         injected_args+=("--permission-mode" "$PERMISSION_MODE")
     fi
     if [[ "$has_model" != true && -n "$MODEL" ]]; then
@@ -2994,14 +3408,14 @@ run_claude() {
 
     local attempt=1 rc=0
     while :; do
-        # A fresh session id per attempt: --session-id rejects an id that has
-        # already been used, so reusing the dead attempt's id would turn a
-        # retryable network blip into a hard failure.
+        # A fresh session id per attempt: claude and pi reject an id that has
+        # already been used, and a retry must not reuse the dead attempt's.
         local session_id
         session_id="$(generate_uuid)"
-        local session_args=("--session-id" "$session_id")
+        AGENT_INJECTED_ARGS=("${injected_args[@]}")
+        AGENT_EXTRA_ARGS=(${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"})
+        agent_build "$wants_continue" "$session_id" "$resume_from"
         if [[ "$wants_continue" == true && -n "$resume_from" ]]; then
-            session_args+=("--resume" "$resume_from" "--fork-session")
             log_entry "$label" "session $session_id (resumed from $resume_from)"
             echo "  session: $session_id (resumed from $resume_from)" >&2
         else
@@ -3015,15 +3429,9 @@ run_claude() {
 
         rc=0
         if [[ "$VERBOSE" == true || "$WIGGUM_SHOW_OUTPUT" == true ]]; then
-            claude "${session_args[@]}" \
-                ${injected_args[@]+"${injected_args[@]}"} \
-                ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}" \
-                2>&1 | tee "$outfile" || rc=$?
+            agent_exec ${AGENT_ARGV[@]+"${AGENT_ARGV[@]}"} 2>&1 | tee "$outfile" || rc=$?
         else
-            claude "${session_args[@]}" \
-                ${injected_args[@]+"${injected_args[@]}"} \
-                ${CLAUDE_EXTRA_ARGS[@]+"${CLAUDE_EXTRA_ARGS[@]}"} "${filtered_args[@]}" \
-                >"$outfile" 2>&1 || rc=$?
+            agent_exec ${AGENT_ARGV[@]+"${AGENT_ARGV[@]}"} >"$outfile" 2>&1 || rc=$?
         fi
 
         if [[ "$rc" -eq 0 ]]; then
@@ -3033,8 +3441,19 @@ run_claude() {
             local warning
             warning="$(scan_claude_failure "$outfile")"
             if [[ -n "$warning" ]]; then
-                echo "Warning: claude exited 0 during '$label' but reported: $warning" >&2
+                echo "Warning: $AGENT exited 0 during '$label' but reported: $warning" >&2
                 log_entry "$label" "warning - $warning"
+            fi
+            if [[ "$AGENT_EXPECT_CAPTURED_SESSION" == true ]]; then
+                local captured
+                captured="$(agent_extract_session "$outfile")"
+                if [[ -n "$captured" ]]; then
+                    WIGGUM_LAST_SESSION_ID="$captured"
+                    log_entry "$label" "session id $captured"
+                else
+                    echo "Warning: $AGENT did not report a session id; the next continuation will start a new session." >&2
+                    WIGGUM_LAST_SESSION_ID=""
+                fi
             fi
             rm -f "$outfile"
             break
@@ -3055,6 +3474,12 @@ run_claude() {
     done
 
     log_entry "$label" "done"
+}
+
+# Existing call sites and tests use this name. It now dispatches through the
+# selected agent's adapter.
+run_claude() {
+    run_agent "$@"
 }
 
 # ── Plan ─────────────────────────────────────────────────────────────────────

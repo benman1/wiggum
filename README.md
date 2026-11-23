@@ -2,7 +2,7 @@
 
 A self-driving agent loop that turns issue descriptions into working, verified code.
 
-Wiggum wraps [Claude Code](https://claude.com/claude-code) in a structured orchestration loop. You give it issue files or spec documents; it produces a workplan, implements it step by step, verifies each step against your project's own toolchain, self-heals failures, and commits the results. The human decides *what* to build. Wiggum figures out *how* and keeps going until it's done.
+Wiggum drives a coding agent through a structured orchestration loop. Claude Code is the default; opencode, pi and codex use the same CLI. You give it issue files or spec documents; it produces a workplan, implements it step by step, verifies each step against your project's own toolchain, self-heals failures, and commits the results. The human decides *what* to build. Wiggum figures out *how* and keeps going until it's done.
 
 **[benman1.github.io/wiggum](https://benman1.github.io/wiggum/)** is the one-page overview — what a run does, how it verifies, how to install. This README is the full reference.
 
@@ -36,10 +36,12 @@ load 6.1 / 4 cores · swap 2.6G of 4.0G (65%) · 3 runs active
   - [Delayed runs](#delayed-runs)
   - [Chaining workplans](#chaining-workplans)
   - [Claude Code skill](#claude-code-skill)
+  - [OpenCode command](#opencode-command)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Usage](#usage)
   - [Initializing a project](#initializing-a-project)
+  - [Using each agent](#using-each-agent)
   - [Creating a plan](#creating-a-plan)
   - [Executing a plan](#executing-a-plan)
   - [Batch workflows](#batch-workflows)
@@ -48,6 +50,7 @@ load 6.1 / 4 cores · swap 2.6G of 4.0G (65%) · 3 runs active
 - [Configuration](#configuration)
   - [Config keys](#config-keys)
   - [Skipping verification or commits](#skipping-verification-or-commits)
+  - [Choosing an agent](#choosing-an-agent)
   - [Effort and permission mode](#effort-and-permission-mode)
   - [Model selection](#model-selection)
   - [Verify vs autofix](#verify-vs-autofix)
@@ -82,7 +85,7 @@ Wiggum automates the full cycle. It acts as a project driver that:
 - **Plans before it builds.** Given issue descriptions, it produces a structured workplan with phases, tasks, and acceptance criteria before writing a single line of code.
 - **Implements incrementally.** Each iteration tackles one discrete step from the plan, keeping changes focused and reviewable.
 - **Verifies with your tools.** After each implementation step, it runs your project's actual verification commands (type checker, test suite, linter, build) in a waterfall. No mock validation.
-- **Self-heals.** When a verification step fails, Wiggum feeds the error output back to Claude and asks it to fix the problem. For tools that can auto-correct (like `ruff --fix` or `eslint --fix`), it runs the autofix first and only escalates to Claude if the issue persists.
+- **Self-heals.** When a verification step fails, Wiggum feeds the error output back to the selected agent and asks it to fix the problem. For tools that can auto-correct (like `ruff --fix` or `eslint --fix`), it runs the autofix first and only escalates to the agent if the issue persists.
 - **Knows when to stop.** Validation retries are capped to prevent runaway token consumption.
 - **Commits as it goes.** Each iteration produces isolated, single-purpose git commits with clean imperative messages.
 - **Runs unattended, supervised.** Kick off a run in the background, then check progress, wait for it, spot when it's blocked, and stop it if it overruns — or chain several workplans so they run back to back.
@@ -103,9 +106,9 @@ Generates a `.wiggumrc` configuration file for the current project. If no preset
 
 `--yes` (`-y`) answers every one of those questions with yes, which is what makes `init` runnable unattended — from a setup script, a Dockerfile, or cron. Without it and with nothing on stdin to answer, `init` says so and exits non-zero rather than reporting a setup it did not do. A piped answer counts as an answer, so `echo n | wiggum init` still declines.
 
-The generated config sets `permission_mode = auto`, so Claude's auto-mode classifier gates each action and an unattended run keeps a guardrail. Change the line, or pass `--permission-mode`, if you want something else.
+The generated config sets `permission_mode = auto`, so the selected agent's own classifier gates each action and an unattended run keeps a guardrail. Change the line, or pass `--permission-mode`, if you want something else.
 
-Init also writes two Claude Code files: the `/wiggum` skill at `.claude/skills/wiggum/SKILL.md` and an always-loaded project rule at `.claude/rules/wiggum.md` (see [Claude Code skill](#claude-code-skill)). It **never edits your `CLAUDE.md`** — it only mentions it if you don't have one.
+Init also installs the `/wiggum` skill at `.claude/skills/wiggum/SKILL.md`, a shared copy at `.agents/skills/wiggum/SKILL.md`, an always-loaded rule at `.claude/rules/wiggum.md`, an agent-neutral block in `AGENTS.md`, and the `/wiggum` command for OpenCode at `.opencode/commands/wiggum.md` (see [Claude Code skill](#claude-code-skill) and [OpenCode command](#opencode-command)). It leaves an existing `CLAUDE.md` alone; new projects use `AGENTS.md` so every supported agent reads the same playbook.
 
 This is the recommended first step when adopting wiggum in a new project. The generated config provides sensible defaults for verification commands that you can then tune to your specific setup.
 
@@ -221,7 +224,7 @@ Before writing any code, Wiggum compares the plan against the actual state of th
 
 For each iteration (up to `--max-iterations` or the config file value, stopping early if all tasks are done or progress stalls):
 
-1. **Implement** -- Claude reads the plan and picks the next discrete task. Before coding it verifies its assumptions (the APIs and imports it will call exist, config values are defined), writes a failing test first when nothing covers the change, implements, then runs three spot checks -- happy path, edge case, and failure case -- before marking the task done.
+1. **Implement** -- the agent reads the plan and picks the next discrete task. Before coding it verifies its assumptions (the APIs and imports it will call exist, config values are defined), writes a failing test first when nothing covers the change, implements, then runs three spot checks -- happy path, edge case, and failure case -- before marking the task done.
 2. **Verify** -- The verification waterfall runs each configured step in order. On failure:
    - *Autofix steps* run the command once to let it self-correct (e.g., `ruff --fix`), then re-check. Only if the fix didn't resolve it does Claude get involved.
    - *Verify steps* capture the error output and ask Claude to fix the code directly.
@@ -303,7 +306,7 @@ Or built into the execute flow with `--update-docs` (see [Executing a plan](#exe
 wiggum check
 ```
 
-Runs the verification waterfall from `.wiggumrc` against the current codebase and asks Claude to fix any failures. This is the same validation loop that runs during execute mode, but without the implementation or commit steps.
+Runs the verification waterfall from `.wiggumrc` against the current codebase and asks the selected agent to fix any failures. This is the same validation loop that runs during execute mode, but without the implementation or commit steps.
 
 Useful for:
 
@@ -313,7 +316,7 @@ Useful for:
 
 ```bash
 wiggum check              # run all verify/autofix steps
-wiggum check --verbose    # show Claude output
+wiggum check --verbose    # show agent output
 ```
 
 If all steps pass, exits 0. If any step fails after `max_validation_retries` fix attempts, exits non-zero.
@@ -324,7 +327,7 @@ If all steps pass, exits 0. If any step fails after `max_validation_retries` fix
 wiggum run "first prompt" "second prompt" ...
 ```
 
-Feeds a series of prompts to Claude Code in **one continuous session**. The first prompt starts a fresh session; every later prompt continues it (`claude --resume … --fork-session` under the hood), so Claude keeps full context from one prompt to the next. Claude's responses go to stdout; wiggum's status lines and session ids go to stderr — so `wiggum run … > answers.txt` captures just the answers.
+Feeds a series of prompts to the selected agent in **one continuous session**. The first prompt starts a fresh session; every later prompt continues it, so the agent keeps full context from one prompt to the next. Agent responses go to stdout; wiggum's status lines and session ids go to stderr — so `wiggum run … > answers.txt` captures just the answers.
 
 Prompts come from three sources, which can be combined:
 
@@ -352,7 +355,7 @@ wiggum run --session-file .wiggum-session "Scaffold the API skeleton"
 wiggum run --session-file .wiggum-session "Now add auth to the API you built"
 ```
 
-The id is rewritten after every prompt, so a follow-up resumes from the latest completed step even if a later prompt failed mid-chain. Pass `--new-session` to ignore an existing session file and start over. Pair it with `permission_mode = auto` (or `--permission-mode auto`) so unattended runs let Claude's auto-mode classifier decide each action.
+The id is rewritten after every prompt, so a follow-up resumes from the latest completed step even if a later prompt failed mid-chain. Pass `--new-session` to ignore an existing session file and start over. Pair it with `permission_mode = auto` (or `--permission-mode auto`) so unattended runs let the agent's own classifier decide each action.
 
 For a complete, copy-pasteable cron setup — wrapper script, environment, and the gotchas that bite unattended jobs — see [Scheduling unattended runs](#scheduling-unattended-runs).
 
@@ -395,7 +398,7 @@ load 6.1 / 4 cores · swap 2.6G of 4.0G (65%) · 3 runs active
 
 Rows are ordered by state: blocked first, then running, then scheduled, then everything finished. `ACTIVITY` is the age of the run's newest write, which is what separates a long task from a wedged one — both read `running`, and only the clock tells them apart. A live run counts its `.pid` as well as its `.log`/`.out`, because a run that has just claimed its sidecar has written nothing else yet; a finished run ages from its output alone, so a leftover pidfile cannot make a plan that ended in July read as active seconds ago.
 
-`RSS` and `CPU` are the run's whole process tree, not the pid in the row: a run's own bash is about a megabyte and idle, and the cost is the `claude` it spawned and whatever that spawned in turn. They are an instantaneous sample, so a quiet reading is not proof a run is cheap — the run that takes a machine into swap is usually quiet by the time anyone looks. A finished run shows `-`.
+`RSS` and `CPU` are the run's whole process tree, not the pid in the row: a run's own bash is about a megabyte and idle, and the cost is the agent CLI it spawned and whatever that spawned in turn. They are an instantaneous sample, so a quiet reading is not proof a run is cheap — the run that takes a machine into swap is usually quiet by the time anyone looks. A finished run shows `-`.
 
 The footer is the launch decision: load against core count, swap used, and how many runs are live. Swap is the number that matters on a small machine — past about 90% on 16 GB, builds start timing out and tests fail differently run to run, which reads as a code failure and is not. Each piece is dropped rather than guessed when the platform will not answer.
 
@@ -595,7 +598,17 @@ Wiggum ships a `/wiggum` slash command for Claude Code that acts as an **orchest
 
 The skill accepts an issue file, a plain-text description (which it turns into a plan), an existing plan file, or several plans to chain. Because it drives the CLI, the `wiggum` binary must be installed and on `PATH` (see [Background runs & supervision](#background-runs--supervision) for the commands it uses).
 
-The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKILL.md`) so it works in every project. Running `wiggum init` in a specific project installs a project-local copy at `.claude/skills/wiggum/SKILL.md`, which you can commit so teammates get it too.
+The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKILL.md` and `~/.agents/skills/wiggum/SKILL.md`) so it works in every project. Running `wiggum init` in a specific project installs project-local copies at `.claude/skills/wiggum/SKILL.md` and `.agents/skills/wiggum/SKILL.md`, which you can commit so teammates get them too.
+
+### OpenCode command
+
+`wiggum init` installs `.opencode/commands/wiggum.md`, so `/wiggum <request>` works inside the OpenCode TUI. The command drives the CLI with `--agent opencode`: an issue file or plain description becomes `wiggum plan`, and a plan file becomes `wiggum execute`. OpenCode discovers both the installed `.claude/skills/wiggum/SKILL.md` and `.agents/skills/wiggum/SKILL.md`, so `@wiggum` loads the full playbook.
+
+```
+/wiggum docs/login-bug.md
+/wiggum "add rate limiting to the /api/upload endpoint"
+/wiggum docs/login-bug_plan.md
+```
 
 ### Project rule
 
@@ -611,11 +624,11 @@ The skill is installed globally by `install.sh` (to `~/.claude/skills/wiggum/SKI
 
 The split matters. A rule with no `paths:` frontmatter loads at session start at the same priority as `.claude/CLAUDE.md`, so it costs context in *every* session in that project — which is why it's ~110 lines. The skill is an order of magnitude bigger and loads only when the work calls for it.
 
-Both files are written without asking, because writing a file that isn't there takes nothing away. If a copy from an older wiggum is already present and its content differs, `init` says so and asks before overwriting; declining keeps yours, and `--yes` takes the update. **`wiggum init` never touches your `CLAUDE.md`.**
+The skill and rule are written without asking, because writing a file that isn't there takes nothing away. If a copy from an older wiggum is already present and its content differs, `init` says so and asks before overwriting; declining keeps yours, and `--yes` takes the update. The marked block in `AGENTS.md` gets the same treatment. **`wiggum init` never touches your `CLAUDE.md`.**
 
 ## Prerequisites
 
-- [Claude Code CLI](https://claude.com/claude-code) installed and authenticated
+- One agent CLI installed and authenticated: `claude` ([Claude Code](https://claude.com/claude-code)), `opencode`, `pi` or `codex`. Set `agent` in `.wiggumrc` or pass `--agent`; `claude` is the default. Pi needs a provider login before prompt runs. See [Using each agent](#using-each-agent) for setup and examples.
 - Bash 4+
 - A git repository
 
@@ -636,7 +649,7 @@ git clone https://github.com/benman1/wiggum.git && cd wiggum
 ./install.sh
 ```
 
-This copies `wiggum.sh` and `lib/wiggum.sh` to `/usr/local/lib/wiggum/`, symlinks `/usr/local/bin/wiggum` to the entry point, seeds `~/.wiggumrc` from the example config if you don't have one yet, and installs the `/wiggum` Claude Code skill globally. May prompt for sudo. Set `WIGGUM_PREFIX` to install somewhere other than `/usr/local`.
+This copies `wiggum.sh` and `lib/wiggum.sh` to `/usr/local/lib/wiggum/`, symlinks `/usr/local/bin/wiggum` to the entry point, seeds `~/.wiggumrc` from the example config if you don't have one yet, and installs `/wiggum` globally under `.claude/` and `.agents/`. May prompt for sudo. Set `WIGGUM_PREFIX` to install somewhere other than `/usr/local`.
 
 **Upgrading while a run is in flight is safe.** Each file is renamed into place rather than rewritten, so a run already under way keeps the version it started on and finishes on it; the next run picks up the new one.
 
@@ -683,9 +696,33 @@ Available presets:
 
 If no preset is given, wiggum inspects the current directory and picks the best match. The generated `.wiggumrc` is a starting point -- edit it to match your actual scripts.
 
-After creating the `.wiggumrc`, init writes the two Claude Code files described under [Claude Code skill](#claude-code-skill), and reminds you to create a `CLAUDE.md` if one doesn't exist.
+After creating the `.wiggumrc`, init writes the files described under [Claude Code skill](#claude-code-skill) and [OpenCode command](#opencode-command), adds the same playbook to `AGENTS.md` for every agent, and leaves an existing `CLAUDE.md` untouched.
 
 **On a fresh project it asks nothing.** The only question init has is whether to overwrite something already there — a `.wiggumrc`, or a skill or rule left by an older wiggum whose content has since changed. Declining keeps your file untouched.
+
+### Using each agent
+
+Wiggum uses one agent CLI for every call it makes: planning, implementation, validation fixes, docs updates and wiggum-issued commits. Choose it once with `agent` in `.wiggumrc`, or for one command with `--agent`. Verification commands stay shell commands, so the same waterfall applies to every agent.
+
+```ini
+# .wiggumrc
+agent = opencode
+```
+
+```bash
+wiggum execute docs/login_plan.md --agent codex
+```
+
+| Agent | Setup | Example | Notes |
+|-------|-------|---------|-------|
+| `claude` | Install Claude Code and sign in. This is the default. | `wiggum plan issues/login-bug.md --agent claude` | Uses the `/wiggum` skill, `.claude/rules/wiggum.md` and the marked block in `AGENTS.md`. |
+| `opencode` | Install and authenticate `opencode`. | `wiggum execute docs/login_plan.md --agent opencode` | `wiggum init` installs `/wiggum` for the OpenCode TUI. Sessions come from `opencode run --format json`; `--effort` maps to `--variant`. |
+| `pi` | Install with `npm install -g --ignore-scripts @earendil-works/pi-coding-agent`, then configure a provider and model. | `wiggum plan issues/login-bug.md --agent pi --model <provider/model>` | Runs with `pi --print`. `plan` and `acceptEdits` restrict tools; other modes follow the process permissions. |
+| `codex` | Install with `npm install -g @openai/codex`, then run `codex login`. | `wiggum execute docs/login_plan.md --agent codex --permission-mode auto` | Runs `codex exec --json`. Sandbox and approval flags replace the interactive `-a` option. |
+
+Session ids are logged for all four agents. The failure report prints the matching resume command: `claude --resume <id>`, `opencode -s <id>`, `pi --session <id>` or `codex exec resume <id>`.
+
+Permission modes are mapped to each CLI in [Permissions](#permissions). When an agent cannot enforce a mode, wiggum prints a warning and uses the nearest setting that agent supports. `--model` and `model_plan`/`model_execute` use the selected CLI's model name: a Claude alias such as `sonnet`, a `provider/model` name for OpenCode and Pi, or a Codex model id.
 
 ### Creating a plan
 
@@ -757,7 +794,7 @@ Default output: `<input-basename>_summary.md` in the same directory as the first
 
 ### Batch workflows
 
-**Plan from multiple issues at once.** All files are passed to Claude as context for a single combined plan:
+**Plan from multiple issues at once.** All files are passed to the selected agent as context for a single combined plan:
 
 ```bash
 wiggum plan issues/auth-bug.md issues/rate-limiting.md issues/logging-gap.md
@@ -791,7 +828,7 @@ wiggum execute docs/plan.md --max-iterations 4
 wiggum execute docs/plan.md --max-iterations 6
 ```
 
-**Pass supporting context alongside a plan.** Extra files (specs, schemas, PDFs) are passed to Claude as context but aren't treated as the plan:
+**Pass supporting context alongside a plan.** Extra files (specs, schemas, PDFs) are passed to the selected agent as context but aren't treated as the plan:
 
 ```bash
 wiggum execute docs/plan.md docs/api_spec.md docs/schema.csv
@@ -810,7 +847,7 @@ Modes:
   execute     Implement a workplan with iterative validation
   check       Run verification waterfall and fix issues
   docs        Update documentation from input files
-  run         Feed a series of prompts to Claude in one continuous session
+  run         Feed a series of prompts to the selected agent in one continuous session
   status      Show task progress and run state for a plan
   watch       Follow a run until it finishes (wait); --chain follows a chain
   kill        Stop a background run (only that run's process)
@@ -825,7 +862,7 @@ Options:
   --queue <file>           Read the plan list from a file, re-read after each plan (chain mode)
   --json                   Emit runs as JSON instead of a table (top mode)
   --max-iterations <n>    Maximum implementation iterations (execute/chain, default: 30)
-  --benchmark <script>    Run script after each iteration, feed output to Claude (repeatable)
+  --benchmark <script>    Run script after each iteration, feed output to the agent (repeatable)
   --update-docs <files>    Comma-separated doc files to update after execution (execute mode)
   -b, --background         Run execute or chain detached; supervise with status/watch/kill
   --timeout <seconds>      Stop watching after N seconds, 0 = forever (watch mode)
@@ -843,11 +880,12 @@ Options:
   --session-file <path>    Persist/resume the session id across invocations (run mode)
   --new-session            Ignore an existing --session-file and start fresh (run mode)
   --delimiter <str>        Prompt separator for -f/stdin (run mode, default: ---)
+  --agent <name>           Agent CLI: claude|opencode|pi|codex (default: claude)
   --effort <level>         Reasoning effort: low|medium|high|xhigh|max (default: xhigh)
-  --permission-mode <m>    Claude permission mode (default: bypassPermissions)
-  --model <name>           Model for this call: alias (sonnet/opus/...) or full name
-                           (default: model_plan/model_execute, or Claude Code's own default)
-  --verbose                Show Claude output (suppressed by default)
+  --permission-mode <m>    Permission mode (default: bypassPermissions; mapped per agent)
+  --model <name>           Model for this call, in the selected agent's format
+                           (default: model_plan/model_execute, or the agent's own default)
+  --verbose                Show agent output (suppressed by default)
   -i <files...>            Input files (docs mode)
   -o <files...>            Output doc files to update (docs mode)
   --                       End of options (remaining args are files)
@@ -861,13 +899,13 @@ effects are the output). Use -- to pass filenames that start with a dash.
 
 ### Verbose mode
 
-By default, Claude's response text is suppressed — wiggum shows only its own status lines. Pass `--verbose` to see Claude's full output at each step:
+By default, the agent's response text is suppressed — wiggum shows only its own status lines. Pass `--verbose` to see the full output at each step:
 
 ```bash
 wiggum execute docs/plan.md --verbose
 ```
 
-This is useful for debugging or understanding what Claude is doing at each step.
+This is useful for debugging or understanding what the agent is doing at each step.
 
 ## Configuration
 
@@ -877,25 +915,26 @@ Wiggum looks for a `.wiggumrc` file, first in the current directory, then in `$H
 
 | Key | Description | Default |
 |-----|-------------|---------|
-| `verify` | A shell command to run as a verification step. Fails are sent to Claude for fixing. Multiple lines define an ordered waterfall. | *(none)* |
-| `autofix` | Like `verify`, but the command is run once first to let it self-correct (e.g. linters with `--fix`). Only escalates to Claude if it still fails after autofix. | *(none)* |
-| `benchmark` | A shell command to run after each iteration. Output is fed to Claude as context for the next iteration. Purely informational — does not gate or block. Multiple lines are supported. | *(none)* |
+| `verify` | A shell command to run as a verification step. Fails are sent to the agent for fixing. Multiple lines define an ordered waterfall. | *(none)* |
+| `autofix` | Like `verify`, but the command is run once first to let it self-correct (e.g. linters with `--fix`). Escalates to the agent only if it still fails after autofix. | *(none)* |
+| `benchmark` | A shell command to run after each iteration. Output is fed to the agent as context for the next iteration. Purely informational — does not gate or block. Multiple lines are supported. | *(none)* |
 | `max_iterations` | Maximum implementation iterations per run. Stops early if all tasks complete or progress stalls. | `30` |
 | `max_validation_retries` | Max times the validation cycle retries before giving up. | `5` |
 | `skip_verify` | If `true`, skip wiggum's verification waterfall entirely (same as `--no-verify`). | `false` |
 | `skip_commit` | If `true`, skip every wiggum-issued git commit (same as `--no-commit`). | `false` |
-| `effort` | Reasoning effort passed to Claude Code on every call: `low`, `medium`, `high`, `xhigh`, or `max` (same as `--effort`). | `xhigh` |
-| `permission_mode` | Claude Code permission mode for every wiggum-issued call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, or `plan` (same as `--permission-mode`). | `bypassPermissions` |
-| `model_plan` | Model Claude Code uses for `wiggum plan` (alias like `sonnet`/`opus`, or a full model name). | *(Claude Code's own default)* |
-| `model_execute` | Model Claude Code uses for `wiggum execute` (and `chain`, which calls it per plan). | *(Claude Code's own default)* |
+| `agent` | Agent CLI that runs every wiggum call: `claude`, `opencode`, `pi` or `codex` (same as `--agent`). | `claude` |
+| `effort` | Reasoning effort passed to the selected agent on every call: `low`, `medium`, `high`, `xhigh`, or `max` (same as `--effort`). | `xhigh` |
+| `permission_mode` | Permission mode for every call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, `manual`, or `plan`. `default` maps to `manual` for Claude. Each agent maps the value to its own flags. | `bypassPermissions` |
+| `model_plan` | Model used for `wiggum plan`, in the selected agent's format. | *(agent's own default)* |
+| `model_execute` | Model used for `wiggum execute` and `chain`, in the selected agent's format. | *(agent's own default)* |
 
 ### Skipping verification or commits
 
 Both behaviors are opt-in via CLI flags or config keys. CLI flags win when they disagree with config.
 
-**`--no-verify` / `skip_verify = true`** — skip wiggum's verification waterfall in `execute`. This is useful when iterating on experimental code where running the full test suite each cycle is too slow, or when tests are known broken and not in scope for the current run. Caveat: this only suppresses wiggum's own verify pass. Claude may still run tests, builds, or type-checks during implementation — wiggum does not control Claude's tool use. To stop tests from running entirely, edit your project's CLAUDE.md to instruct Claude not to run them. `wiggum check --no-verify` is rejected (it would make `check` a no-op).
+**`--no-verify` / `skip_verify = true`** — skip wiggum's verification waterfall in `execute`. This is useful when iterating on experimental code where running the full test suite each cycle is too slow, or when tests are known broken and not in scope for the current run. Caveat: this only suppresses wiggum's own verify pass. The agent may still run tests, builds, or type-checks during implementation. To stop tests from running entirely, edit your project's CLAUDE.md or AGENTS.md. `wiggum check --no-verify` is rejected (it would make `check` a no-op).
 
-**`--no-commit` / `skip_commit = true`** — skip every wiggum-issued git commit. Useful when reviewing changes manually before committing, or when exploring multiple approaches in an unstaged working tree. The working tree is left dirty; subsequent `wiggum execute` runs will see uncommitted state in phase 1, and Claude may try to reconcile it. Note: Claude may still create its own commits if it decides to — this flag only stops the wiggum-issued prompts.
+**`--no-commit` / `skip_commit = true`** — skip every wiggum-issued git commit. Useful when reviewing changes manually before committing, or when exploring multiple approaches in an unstaged working tree. The working tree is left dirty; subsequent `wiggum execute` runs will see uncommitted state in phase 1, and the agent may try to reconcile it. The agent may still create its own commits; this flag stops the wiggum-issued prompts.
 
 ```bash
 wiggum execute docs/plan.md --no-verify              # skip the verify waterfall
@@ -904,13 +943,31 @@ wiggum execute docs/plan.md --no-verify --no-commit  # both
 wiggum check --no-commit                             # verify but don't commit fixes
 ```
 
+### Choosing an agent
+
+`agent = <name>` in `.wiggumrc`, or `--agent <name>` on one invocation, picks the CLI that runs every plan, verification fix and commit. The supported names are `claude`, `opencode`, `pi` and `codex`; `claude` remains the default. The commands and plan format stay the same across agents.
+
+```bash
+wiggum plan issues/login-bug.md --agent opencode
+wiggum execute docs/login-bug_plan.md --agent codex --permission-mode auto
+```
+
+```ini
+# .wiggumrc
+agent = pi
+model_plan = <provider/model>
+model_execute = <provider/model>
+```
+
+See [Using each agent](#using-each-agent) for setup, examples and session resume commands.
+
 ### Effort and permission mode
 
-Two settings control how every wiggum-issued `claude` call behaves. Both can be set in `.wiggumrc` or per-run on the CLI; the CLI wins on conflict, and both apply to all modes (`plan`, `execute`, `check`, `docs`, `run`).
+Two settings control how every wiggum-issued agent call behaves. Both can be set in `.wiggumrc` or per-run on the CLI; the CLI wins on conflict, and both apply to all modes (`plan`, `execute`, `check`, `docs`, `run`).
 
-**`effort` / `--effort`** — the reasoning effort Claude Code uses: `low`, `medium`, `high`, `xhigh`, or `max`. Wiggum defaults to `xhigh` (deep reasoning suits planning and self-healing). Drop to `low`/`medium` for cheaper, faster runs on simple tasks.
+**`effort` / `--effort`** — the reasoning effort the selected agent uses: `low`, `medium`, `high`, `xhigh`, or `max`. Wiggum defaults to `xhigh` (deep reasoning suits planning and self-healing). Drop to `low`/`medium` for cheaper, faster runs on simple tasks.
 
-**`permission_mode` / `--permission-mode`** — the Claude Code permission mode for the call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, or `plan`. `wiggum init` asks for this and writes `permission_mode = auto` by default — Claude's auto-mode classifier gates each action, a guardrailed middle ground for unattended runs. `bypassPermissions` runs everything with no checks (fastest, no guardrails). When the line is absent from `.wiggumrc` entirely, the built-in default is `bypassPermissions` (back-compat for configs written before `init` set this).
+**`permission_mode` / `--permission-mode`** — the permission mode for the call: `acceptEdits`, `auto`, `bypassPermissions`, `default`, `dontAsk`, `manual`, or `plan`. `default` maps to Claude's `manual`. `wiggum init` writes `permission_mode = auto` by default. Claude passes the mode through; opencode maps `plan` to its plan agent and `auto`, `bypassPermissions` and `dontAsk` to `--auto`; pi restricts tools for `plan` and `acceptEdits`; codex uses sandbox and approval flags. A mode an agent cannot enforce prints a warning. `bypassPermissions` runs everything with no checks. When the line is absent from `.wiggumrc`, the built-in default is `bypassPermissions` for older configs.
 
 ```bash
 wiggum execute docs/plan.md --effort max               # maximum reasoning
@@ -925,28 +982,32 @@ permission_mode = bypassPermissions
 
 ### Model selection
 
-Unlike effort and permission mode, the model is set **per phase**: `model_plan` for `wiggum plan`, `model_execute` for `wiggum execute` (and `chain`, which calls execute once per plan). Each defaults to Claude Code's own default model when unset, so an existing `.wiggumrc` behaves exactly as before. `--model` overrides whichever phase the current command runs, the same way `--effort`/`--permission-mode` override for a single invocation.
+Unlike effort and permission mode, the model is set **per phase**: `model_plan` for `wiggum plan`, `model_execute` for `wiggum execute` (and `chain`, which calls execute once per plan). Each defaults to the selected agent's own model when unset, so an existing `.wiggumrc` behaves as before. `--model` overrides whichever phase the current command runs, the same way `--effort`/`--permission-mode` override for a single invocation.
 
-Sonnet is enough for most planning and implementation work; reach for Opus only on plans or codebases that need deeper reasoning. Since plan and execute are separate commands, you can run cheaper on one and not the other:
+A mid-size model is enough for most planning and implementation work; reach for a deeper model on plans or codebases that need it. Since plan and execute are separate commands, you can run cheaper on one and not the other:
 
 ```bash
-wiggum plan issues/login-bug.md --model sonnet         # a quick plan
-wiggum execute docs/login-bug_plan.md --model opus     # deeper reasoning for the implementation
+wiggum plan issues/login-bug.md --model sonnet                         # a quick Claude plan
+wiggum execute docs/login-bug_plan.md --model opus                     # deeper Claude implementation
+wiggum plan issues/login-bug.md --agent opencode --model <provider/model>
+wiggum execute docs/login-bug_plan.md --agent pi --model <provider/model>
+wiggum execute docs/login-bug_plan.md --agent codex --model <codex-model>
 ```
 
 ```ini
 # .wiggumrc
+agent = claude
 model_plan = sonnet
 model_execute = sonnet
 ```
 
-Accepts a model alias (`sonnet`, `opus`, `fable`) or a full model name, exactly as `claude --model` does.
+Accepts the selected agent's model format: a Claude alias (`sonnet`, `opus`, `fable`), a `provider/model` name for opencode and pi, or a Codex model id.
 
 ### Verify vs autofix
 
 Both `verify` and `autofix` define shell commands that run after each implementation step. The difference is what happens on failure.
 
-**`verify`** -- strict check. If the command exits non-zero, wiggum captures the last 60 lines of output and sends them to Claude with a prompt to fix the code. Use this for tools that only report problems without fixing them: type checkers, test suites, builds.
+**`verify`** -- strict check. If the command exits non-zero, wiggum captures the last 60 lines of output and sends them to the agent with a prompt to fix the code. Use this for tools that only report problems without fixing them: type checkers, test suites, builds.
 
 **`autofix`** -- self-correcting check. Wiggum runs the command once and lets it modify files (e.g. `ruff --fix` rewrites source, `prettier --write` reformats). Then it runs the same command a second time to verify. Only if the second run still fails does Claude get involved. Use this for linters and formatters that have a `--fix` or `--write` mode.
 
@@ -966,7 +1027,7 @@ verify = ./smoke.sh                # Validates the built output end-to-end.
 autofix = npx prettier --write .   # Auto-corrects formatting.
 ```
 
-When any step fails, wiggum asks Claude to fix it (or runs autofix), then restarts the entire waterfall from the top. This continues up to `max_validation_retries` times. If validation still hasn't passed after all retries, wiggum logs a warning and moves on to the next iteration.
+When any step fails, wiggum asks the selected agent to fix it (or runs autofix), then restarts the entire waterfall from the top. This continues up to `max_validation_retries` times. If validation still hasn't passed after all retries, wiggum logs a warning and moves on to the next iteration.
 
 ### Smoke tests
 
@@ -1010,11 +1071,11 @@ kill $SERVER_PID
 echo "Smoke test passed."
 ```
 
-Because smoke tests are just `verify` lines, they participate in the normal waterfall: if the smoke test fails, Claude sees the output and tries to fix the underlying issue.
+Because smoke tests are just `verify` lines, they participate in the normal waterfall: if the smoke test fails, the selected agent sees the output and tries to fix the underlying issue.
 
 ### Benchmarks
 
-Benchmarks are different from verification steps. Verification is pass/fail — "is the code correct?" Benchmarks answer "is the code better?" Their output is fed to Claude as context for the next iteration, but they never block or gate progress.
+Benchmarks are different from verification steps. Verification is pass/fail — "is the code correct?" Benchmarks answer "is the code better?" Their output is fed to the selected agent as context for the next iteration, but they never block or gate progress.
 
 Configure them in `.wiggumrc`, on the command line, or both:
 
@@ -1035,7 +1096,7 @@ After each implementation iteration (post-commit), wiggum runs all benchmark scr
 - **Bundle size:** `du -sh dist/ && wc -l dist/**/*.js`
 - **Performance score:** `npx lighthouse http://localhost:3000 --output json --quiet | jq '.categories.performance.score'`
 - **Test coverage:** `npx jest --coverage --coverageReporters=text-summary 2>&1 | grep Statements`
-- **Claude as evaluator:** Have the benchmark script produce the artifact (rendered HTML, API response, generated report) and dump it to stdout. Claude sees the raw output in the next iteration and can judge quality, completeness, or correctness — no external scoring tool needed.
+- **Agent as evaluator:** Have the benchmark script produce the artifact (rendered HTML, API response, generated report) and dump it to stdout. The selected agent sees the raw output in the next iteration and can judge quality, completeness, or correctness — no external scoring tool needed.
 
 If no benchmark scripts are configured, the loop works exactly as before.
 
@@ -1106,7 +1167,7 @@ Only the first file found is used. They are not merged.
 
 ## Permissions
 
-Every Claude call wiggum makes runs under **one** permission mode, passed as `--permission-mode` on the command line. There is no per-phase variation: planning, implementation, validation fixes and commits all use the same mode.
+Every agent call wiggum makes runs under **one** permission mode. Claude receives it as `--permission-mode`; the other adapters translate it to their own flags or tool restrictions. There is no per-phase variation: planning, implementation, validation fixes and commits all use the same mode.
 
 Where the mode comes from, highest precedence first:
 
@@ -1120,10 +1181,24 @@ Where the mode comes from, highest precedence first:
 
 | Mode | What it does |
 |------|--------------|
-| `auto` | Claude's auto-mode classifier decides each action. Unattended but not unchecked — the right setting for a wiggum run. |
+| `auto` | The agent's own classifier decides each action, keeping a guardrail on an unattended run. |
 | `bypassPermissions` | Every action runs with no checks. Fastest, no guardrail. |
 | `acceptEdits` | Auto-approves file edits but still prompts for shell commands, so an unattended run blocks waiting for input. Only useful when you're watching. |
-| `default`, `dontAsk`, `plan` | Passed through to Claude Code unchanged. |
+| `default` | Alias for `manual`; Claude Code receives `manual`. |
+| `manual`, `dontAsk` | Passed through to Claude Code; other agents use their closest flag and warn when the meaning changes. |
+| `plan` | Read-only planning across all four agents. |
+
+Each agent receives the effective mode:
+
+| Mode | `claude` | `opencode` | `pi` | `codex` |
+|------|----------|------------|------|---------|
+| `auto` | `--permission-mode auto` | `--auto` | process tools, warning | `workspace-write` with `--approve-for-me` |
+| `bypassPermissions` | `--permission-mode bypassPermissions` | `--auto` | process tools, warning | `--dangerously-bypass-approvals-and-sandbox` |
+| `acceptEdits` | `--permission-mode acceptEdits` | configured permissions, warning | edit and write tools without `bash` | `workspace-write` with `--approve-for-me` |
+| `default` | `--permission-mode manual` | configured permissions, warning | process tools, warning | `workspace-write`, warning |
+| `manual` | `--permission-mode manual` | configured permissions, warning | process tools, warning | `workspace-write`, warning |
+| `dontAsk` | `--permission-mode dontAsk` | `--auto` | process tools, warning | `workspace-write` with `--approve-for-me` |
+| `plan` | `--permission-mode plan` | `--agent plan` | read-only tools | `--sandbox read-only` |
 
 ### Allow lists and wiggum
 
@@ -1148,9 +1223,9 @@ See the [Claude Code permissions docs](https://docs.claude.com/en/docs/claude-co
 
 ## Scheduling unattended runs
 
-`wiggum run` is built for unattended use: feed it prompts, point `--session-file` at a stable path, and a scheduled job can pick up the same Claude session each time. The catch is the environment — cron runs your job with a **minimal, non-login shell**, so the three things below trip up almost every first attempt.
+`wiggum run` is built for unattended use: feed it prompts, point `--session-file` at a stable path, and a scheduled job can pick up the same agent session each time. The catch is the environment — cron runs your job with a **minimal, non-login shell**, so the three things below trip up almost every first attempt. The details below use Claude Code because its macOS Keychain behavior is the common case; for another agent, set `agent` in `.wiggumrc` and use that CLI's login method. The PATH, scheduler and Full Disk Access advice applies to all four.
 
-**Initialize each project first.** Run `wiggum init` in every repository you intend to schedule, before you schedule it — interactively, or with `--yes` from a setup script. A project without verification steps is the worst thing to run unattended: wiggum reads `./.wiggumrc` if it exists and `~/.wiggumrc` otherwise — never both — so if neither defines `verify` or `autofix` commands, a scheduled run will plan, implement and **commit without ever running your tests, type checker or linter**. `init` also sets up the Claude Code permissions an unattended run needs, and installs the `/wiggum` skill.
+**Initialize each project first.** Run `wiggum init` in every repository you intend to schedule, before you schedule it — interactively, or with `--yes` from a setup script. A project without verification steps is the worst thing to run unattended: wiggum reads `./.wiggumrc` if it exists and `~/.wiggumrc` otherwise — never both — so if neither defines `verify` or `autofix` commands, a scheduled run will plan, implement and **commit without ever running your tests, type checker or linter**. `init` also sets a permission mode for the unattended run and installs the `/wiggum` skill.
 
 ### The three gotchas
 
@@ -1182,7 +1257,7 @@ wiggum run --session-file "$HOME/.wiggum-cron-session" \
   "Summarize commits since the last run and append a bullet to STANDUP.md"
 ```
 
-Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs both Claude's responses (stdout) and wiggum's status (stderr):
+Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs both the agent's responses (stdout) and wiggum's status (stderr):
 
 ```cron
 0 9 * * * /Users/you/bin/wiggum-cron.sh >> /Users/you/wiggum-cron.log 2>&1
@@ -1191,7 +1266,9 @@ Then add it to your crontab (`crontab -e`). This runs at 9:00 AM daily and logs 
 ### Nightly plan-then-execute
 
 `wiggum run` suits a single recurring prompt. For the fuller loop — plan a sweep,
-then execute the plan it produced — two examples ship ready to use.
+then execute the plan it produced — two examples ship ready to use. Both examples
+assume `claude`; set `agent` in the project's `.wiggumrc` to use opencode, pi or
+codex, and authenticate that CLI in the same session the scheduler runs in.
 
 Run the setup once **per project**:
 
@@ -1329,12 +1406,17 @@ wiggum/
   LICENSE                MIT
   .wiggumrc              Self-hosting config (wiggum tests itself)
   .wiggumrc.example      Example config with comments
-  CLAUDE.md              Project standards for Claude Code
+  AGENTS.md              Agent-neutral instructions with a marked block written by wiggum init
   .claude/
     settings.local.json  Per-machine Claude Code permissions (not committed)
     rules/wiggum.md      Always-loaded project rule, written by `wiggum init`
     skills/wiggum/
-      SKILL.md           /wiggum slash command for Claude Code
+      SKILL.md           /wiggum skill for Claude Code and OpenCode
+  .agents/
+    skills/wiggum/
+      SKILL.md           Shared /wiggum playbook for pi, codex and other agents
+  .opencode/
+    commands/wiggum.md   /wiggum slash command for OpenCode
 ```
 
 ## Development
@@ -1376,9 +1458,9 @@ MIT — see [LICENSE](LICENSE).
 - **Use a branch.** Run wiggum on a feature branch so you can review the full diff before merging.
 - **Keep issues focused.** One issue file per feature or bug works better than a single monolithic document.
 - **Tune retries to your project.** If your test suite is flaky, increase `max_validation_retries`. If you're paying close attention to token costs, decrease it.
-- **Use `--verbose` to debug.** Claude's output is suppressed by default. Pass `--verbose` to see what Claude is doing at each step.
-- **Resume any step with `claude -r`.** Wiggum logs a Claude session ID for every step. Find the session ID in the `.log` file and resume it interactively: `claude -r <session-id>`. Useful for asking follow-up questions about what Claude did during a specific implementation or validation step.
-- **Create a CLAUDE.md.** Claude Code automatically reads `CLAUDE.md` from the project root. Put your architecture, conventions, and coding standards there so Claude writes code that fits your project. `wiggum init` reminds you if one is missing, and writes its own guidance to `.claude/rules/wiggum.md` rather than editing the file.
+- **Use `--verbose` to debug.** The selected agent's output is suppressed by default. Pass `--verbose` to see what it is doing at each step.
+- **Resume a step in the agent's own CLI.** Wiggum logs a session id for every step. Find it in the `.log` file, then use the resume command for the selected agent: `claude --resume <session-id>`, `opencode -s <session-id>`, `pi --session <session-id>` or `codex exec resume <session-id>`.
+- **Write project instructions where the agent reads them.** Claude Code reads `CLAUDE.md`; the other agents read `AGENTS.md`. Put your architecture, conventions and coding standards in those files. `wiggum init` writes its own guidance to `.claude/rules/wiggum.md` and to a marked block in `AGENTS.md`, leaving an existing `CLAUDE.md` untouched.
 - **Use `/wiggum` inside Claude Code.** If you're already in a Claude Code session and want to kick off the full loop without switching to the terminal, use `/wiggum <issue>`. It runs the same workflow natively.
 
 ## Long runs
@@ -1398,7 +1480,7 @@ Prefer that PID check over matching command lines. `pgrep -f` *errors* (rather t
 
 **Tasks that take longer than an iteration need care.** An iteration completes roughly one task, so a task that trains a model or runs a long migration will not tick its checkbox inside that iteration. Wiggum records no progress, and two of those in a row stop the run while the work is still going. Write such tasks to launch their job into a separate detached session and to accept on the artifact's existence, so a later iteration sees the finished output instead of restarting an hour of work. Before treating `No progress detected` as a stall, check whether that job is still alive and its output still growing.
 
-**Two runs on one machine compete.** wiggum runs Claude, the verify steps, and anything a task spawns. Two concurrent runs plus a training job on a 4-core machine reached a load average of 59, which tripled the time of every verify pass. Running two plans one after the other finishes both sooner than interleaving them.
+**Two runs on one machine compete.** wiggum runs the selected agent CLI, the verify steps, and anything a task spawns. Two concurrent runs plus a training job on a 4-core machine reached a load average of 59, which tripled the time of every verify pass. Running two plans one after the other finishes both sooner than interleaving them.
 
 Run `wiggum top` before launching another one. It lists runs from every project, not just the one you are standing in, which is the case that catches people out: an idle-looking directory is not an idle machine. Its footer answers the rest of the question — load against cores and swap used — and its `RSS`/`CPU` columns say which of several runs is the expensive one.
 

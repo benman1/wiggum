@@ -111,3 +111,34 @@ the shortest form that still forbids it, and delete the restatement.
 ## 7. Current Work
 
 - See `docs/` for plans and issues.
+<!-- wiggum:start -->
+## Working with wiggum
+
+Wiggum is a self-driving loop: from one command it plans, implements, verifies
+and commits. The loop belongs in `docs/<slug>_plan.md`; the agent drives it with
+`wiggum plan`, `wiggum execute`, `wiggum watch` and `wiggum chain`. The `/wiggum`
+skill carries the full playbook where the agent supports skills. In OpenCode,
+`/wiggum <request>` runs that playbook through the CLI with `--agent opencode`,
+and `@wiggum` loads the skill.
+
+- **Use the loop** when several interdependent steps each need verification before
+  the next can be written, or when the verify suite's result cannot be predicted.
+- **Edit directly** when the whole change fits in your head and one verify run
+  settles it, even across several files. Wiggum costs a fresh session and a commit
+  per task; on one logical change that fragments the history.
+- **Say which you are doing before you start.** "Queue these" asks for sequence,
+  not for hand-editing.
+
+A plan's `- [ ]` checkboxes are what wiggum counts. Mark a task `[x]` only when
+its observable acceptance criterion and the happy, edge and failure checks pass.
+`[~]` means dropped and stays dropped.
+
+Read the verify step that failed before trimming the waterfall. `.wiggumrc` is the
+user's config. The suite passing, a change being deployed, and a change working
+are three different claims; report the one you observed.
+
+While a run is live, do not drive interactive work in the same repository, and
+tear down your watch when it ends. Never change the machine's sleep or power
+settings to protect a run: a run that dies to sleep is recoverable, a global
+setting is not yours to change.
+<!-- wiggum:end -->

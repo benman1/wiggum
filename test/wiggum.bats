@@ -1727,6 +1727,7 @@ EOF
     [ "$status" -eq 0 ]
     [ -f ".wiggumrc" ]
     [ -f ".claude/skills/wiggum/SKILL.md" ]
+    [ -f ".agents/skills/wiggum/SKILL.md" ]
     [ -f ".claude/rules/wiggum.md" ]
 }
 
@@ -2358,7 +2359,19 @@ EOF
     INIT_PRESET="node"
     run_init </dev/null
     [ -f ".claude/skills/wiggum/SKILL.md" ]
+    [ -f ".agents/skills/wiggum/SKILL.md" ]
     [ -f ".claude/rules/wiggum.md" ]
+}
+
+@test "setup_wiggum_skill: installs the shared skill copy for other agents" {
+    setup_wiggum_skill </dev/null
+    diff <(wiggum_skill_content) .agents/skills/wiggum/SKILL.md
+}
+
+@test "wiggum_skill_content: the committed shared copy stays in sync" {
+    local root
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    diff <(wiggum_skill_content) "$root/.agents/skills/wiggum/SKILL.md"
 }
 
 @test "run_init: aborts on existing .wiggumrc when user says no" {
@@ -3882,7 +3895,7 @@ EOF
     validate_permission_mode acceptEdits && validate_permission_mode auto \
         && validate_permission_mode bypassPermissions \
         && validate_permission_mode default && validate_permission_mode dontAsk \
-        && validate_permission_mode plan
+        && validate_permission_mode manual && validate_permission_mode plan
 }
 
 @test "validate_permission_mode: rejects an invalid mode" {
@@ -7188,6 +7201,15 @@ undocumented_surfaces() {
     [ "$missing" = "usage readme completion-bash completion-zsh skill-table" ]
 }
 
+@test "docs: --agent is documented on every surface" {
+    local missing
+    missing="$(undocumented_surfaces --agent)"
+    if [ -n "$missing" ]; then
+        echo "--agent is missing from: $missing"
+        return 1
+    fi
+}
+
 # ── Guard: the --at path takes no decisions that are not wiggum's to take ────
 
 # The functions that exist because of `--at`, plus the three command entry
@@ -7376,6 +7398,20 @@ make_install_source() {
 
 inode_of() {
     ls -i "$1" | awk '{print $1}'
+}
+
+@test "install: installs the shared skill for other agents" {
+    HOME="$TEST_DIR/home"
+    mkdir -p "$HOME"
+    local src="$TEST_DIR/src" prefix="$TEST_DIR/prefix"
+    make_install_source "$src" "echo from-test"
+    mkdir -p "$src/.agents/skills/wiggum"
+    printf 'shared skill\n' > "$src/.agents/skills/wiggum/SKILL.md"
+
+    WIGGUM_PREFIX="$prefix" bash "$src/install.sh" >/dev/null
+
+    [ -f "$HOME/.agents/skills/wiggum/SKILL.md" ]
+    grep -q 'shared skill' "$HOME/.agents/skills/wiggum/SKILL.md"
 }
 
 # A pid that has certainly exited. `sleep 1 &` then `kill` is the pattern this
@@ -8936,4 +8972,370 @@ EOF
 @test "parse_args: top accepts --all" {
     parse_args top --all
     [ "$TOP_ALL" = true ]
+}
+
+# ── Agent adapters ───────────────────────────────────────────────────────────
+
+@test "validate_agent: accepts the four supported CLIs" {
+    validate_agent claude
+    validate_agent opencode
+    validate_agent pi
+    validate_agent codex
+    ! validate_agent gemini
+}
+
+@test "parse_args: --agent selects the agent and marks a CLI override" {
+    make_file plan.md
+    parse_args execute plan.md --agent opencode
+    [ "$AGENT" = opencode ]
+    [ "$CLI_AGENT" = opencode ]
+}
+
+@test "parse_args: --agent rejects an unknown agent" {
+    make_file plan.md
+    run parse_args execute plan.md --agent gemini
+    [ "$status" -eq "$EXIT_BAD_ARGS" ]
+    [[ "$output" == *"invalid --agent"* ]] || return 1
+}
+
+@test "load_config_from: the agent key is forwarded" {
+    printf 'agent = opencode\n' > test.rc
+    output="$(load_config_from test.rc)"
+    [ "$output" = "agent=opencode" ]
+}
+
+@test "apply_config: the agent key sets AGENT" {
+    apply_config <<< "agent=pi"
+    [ "$AGENT" = pi ]
+}
+
+@test "apply_config: a CLI --agent wins over the config key" {
+    AGENT=codex
+    CLI_AGENT=codex
+    apply_config <<< "agent=pi"
+    [ "$AGENT" = codex ]
+}
+
+@test "run_agent: opencode runs one-shot JSON with auto approval" {
+    local captured=""
+    opencode() { captured="$*"; }
+    AGENT=opencode
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == "run --format json"* ]] || return 1
+    [[ "$captured" == *"--auto hello" ]] || return 1
+    [[ "$captured" != *"--verbose"* ]] || return 1
+}
+
+@test "run_agent: opencode maps effort and model to its own flags" {
+    local captured=""
+    opencode() { captured="$*"; }
+    AGENT=opencode
+    EFFORT=high
+    MODEL=anthropic/claude-sonnet-4-5
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == *"--variant high"* ]] || return 1
+    [[ "$captured" == *"-m anthropic/claude-sonnet-4-5"* ]] || return 1
+}
+
+@test "run_agent: opencode's own session id is used for the next continuation" {
+    local captured=""
+    opencode() { printf '%s\n' '{"type":"step_start","sessionID":"ses_from_agent"}'; }
+    AGENT=opencode
+    run_agent -p "first" 2>/dev/null
+    [ "$WIGGUM_LAST_SESSION_ID" = ses_from_agent ]
+    opencode() { captured="$*"; }
+    run_agent -p -c "second" 2>/dev/null
+    [[ "$captured" == *"--session ses_from_agent --fork"* ]] || return 1
+}
+
+@test "run_agent: pi uses print mode, a named session and a thinking level" {
+    local captured=""
+    pi() { captured="$*"; }
+    AGENT=pi
+    EFFORT=xhigh
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == "--print --session-id "* ]] || return 1
+    [[ "$captured" == *"--thinking xhigh hello" ]] || return 1
+}
+
+@test "run_agent: pi forks the previous session with a fresh id" {
+    local captured=""
+    pi() { captured="$*"; }
+    AGENT=pi
+    WIGGUM_LAST_SESSION_ID=prev-session
+    run_agent -p -c "next" 2>/dev/null
+    [[ "$captured" == *"--fork prev-session --session-id"* ]] || return 1
+    [[ "$captured" != *"--session prev-session"* ]] || return 1
+}
+
+@test "run_agent: codex joins wiggum's prompt and file arguments" {
+    local captured=""
+    codex() { captured="$*"; }
+    AGENT=codex
+    run_agent -p "prompt text" docs/a.md docs/b.md 2>/dev/null
+    [[ "$captured" == "exec --json --dangerously-bypass-approvals-and-sandbox"* ]] || return 1
+    [[ "$captured" == *"prompt text docs/a.md docs/b.md" ]] || return 1
+    [[ "$captured" != *"-a never"* ]] || return 1
+}
+
+@test "run_agent: codex uses a read-only sandbox for plan mode" {
+    local captured=""
+    codex() { captured="$*"; }
+    AGENT=codex
+    PERMISSION_MODE=plan
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == *"--sandbox read-only"* ]] || return 1
+    [[ "$captured" != *"--approve-for-me"* ]] || return 1
+    [[ "$captured" != *"--dangerously-bypass-approvals-and-sandbox"* ]] || return 1
+}
+
+@test "run_agent: claude maps default to manual" {
+    local captured=""
+    claude() { captured="$*"; }
+    AGENT=claude
+    PERMISSION_MODE=default
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == *"--permission-mode manual"* ]] || return 1
+}
+
+@test "run_agent: opencode maps plan to the plan agent" {
+    local captured=""
+    opencode() { captured="$*"; }
+    AGENT=opencode
+    PERMISSION_MODE=plan
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == *"--agent plan"* ]] || return 1
+    [[ "$captured" != *"--auto"* ]] || return 1
+}
+
+@test "run_agent: opencode maps an explicit permission flag" {
+    local captured=""
+    opencode() { captured="$*"; }
+    AGENT=opencode
+    run_agent -p --permission-mode plan "hello" 2>/dev/null
+    [[ "$captured" == *"--agent plan"* ]] || return 1
+    [[ "$captured" != *"--permission-mode"* ]] || return 1
+}
+
+@test "run_agent: opencode collapses xhigh with a warning" {
+    local captured="" warnfile
+    warnfile="$(mktemp "${TMPDIR:-/tmp}/wiggum-warn-XXXXXX")"
+    opencode() { captured="$*"; }
+    AGENT=opencode
+    EFFORT=xhigh
+    run_agent -p "hello" 2>"$warnfile" >/dev/null
+    [[ "$captured" == *"--variant max"* ]] || return 1
+    grep -qi 'xhigh' "$warnfile"
+    rm -f "$warnfile"
+}
+
+@test "run_agent: pi maps plan to read-only tools" {
+    local captured=""
+    pi() { captured="$*"; }
+    AGENT=pi
+    PERMISSION_MODE=plan
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == *"--tools read,grep,find,ls"* ]] || return 1
+    [[ "$captured" != *"bash"* ]] || return 1
+}
+
+@test "run_agent: pi maps acceptEdits to edit tools without bash" {
+    local captured=""
+    pi() { captured="$*"; }
+    AGENT=pi
+    PERMISSION_MODE=acceptEdits
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == *"--tools read,edit,write,grep,find,ls"* ]] || return 1
+    [[ "$captured" == *"--exclude-tools bash"* ]] || return 1
+}
+
+@test "run_agent: pi warns that bypassPermissions cannot be enforced" {
+    local warnfile
+    warnfile="$(mktemp "${TMPDIR:-/tmp}/wiggum-warn-XXXXXX")"
+    pi() { :; }
+    AGENT=pi
+    PERMISSION_MODE=bypassPermissions
+    run_agent -p "hello" 2>"$warnfile" >/dev/null
+    grep -qi 'pi does not enforce permission modes' "$warnfile"
+    rm -f "$warnfile"
+}
+
+@test "run_agent: codex maps manual to workspace-write with no bypass" {
+    local captured=""
+    codex() { captured="$*"; }
+    AGENT=codex
+    PERMISSION_MODE=manual
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == *"--sandbox workspace-write"* ]] || return 1
+    [[ "$captured" != *"--approve-for-me"* ]] || return 1
+    [[ "$captured" != *"--dangerously-bypass-approvals-and-sandbox"* ]] || return 1
+}
+
+@test "run_agent: codex maps bypassPermissions to bypass flag" {
+    local captured=""
+    codex() { captured="$*"; }
+    AGENT=codex
+    PERMISSION_MODE=bypassPermissions
+    run_agent -p "hello" 2>/dev/null
+    [[ "$captured" == *"--dangerously-bypass-approvals-and-sandbox"* ]] || return 1
+    [[ "$captured" != *"--sandbox"* ]] || return 1
+}
+
+@test "run_agent: codex collapses max with a warning" {
+    local captured="" warnfile
+    warnfile="$(mktemp "${TMPDIR:-/tmp}/wiggum-warn-XXXXXX")"
+    codex() { captured="$*"; }
+    AGENT=codex
+    EFFORT=max
+    run_agent -p "hello" 2>"$warnfile" >/dev/null
+    [[ "$captured" == *"model_reasoning_effort=xhigh"* ]] || return 1
+    grep -qi 'max' "$warnfile"
+    rm -f "$warnfile"
+}
+
+@test "run_agent: codex resumes the thread id it reported" {
+    local captured=""
+    codex() { printf '%s\n' '{"type":"thread.started","thread_id":"thread_from_agent"}'; }
+    AGENT=codex
+    run_agent -p "first" 2>/dev/null
+    [ "$WIGGUM_LAST_SESSION_ID" = thread_from_agent ]
+    codex() { captured="$*"; }
+    run_agent -p -c "second" 2>/dev/null
+    [[ "$captured" == "exec fork thread_from_agent --json"* ]] || return 1
+}
+
+@test "run_agent: a missing session id is reported and clears the old one" {
+    local warnfile
+    warnfile="$(mktemp "${TMPDIR:-/tmp}/wiggum-warn-XXXXXX")"
+    opencode() { echo "no id here"; }
+    AGENT=opencode
+    WIGGUM_LAST_SESSION_ID=stale-id
+    run_agent -p "hello" 2>"$warnfile" >/dev/null
+    [ -z "$WIGGUM_LAST_SESSION_ID" ]
+    grep -q 'did not report a session id' "$warnfile"
+    rm -f "$warnfile"
+}
+
+@test "run_agent: a failure names the selected agent and its resume command" {
+    make_file plan.md
+    log_init plan.md
+    opencode() { echo "API Error: Connection closed mid-response."; return 1; }
+    AGENT=opencode
+    CLAUDE_RETRIES=0
+    run run_agent -p "do the work"
+    [ "$status" -eq "$EXIT_CLAUDE_FAILED" ]
+    [[ "$output" == *"opencode session failed"* ]] || return 1
+    [[ "$output" == *"opencode -s"* ]] || return 1
+}
+
+# ── AGENTS.md playbook ───────────────────────────────────────────────────────
+
+@test "setup_wiggum_agents_md: creates a marked block in a new AGENTS.md" {
+    setup_wiggum_agents_md </dev/null
+    grep -q '<!-- wiggum:start -->' AGENTS.md
+    grep -q '## Working with wiggum' AGENTS.md
+    grep -q '<!-- wiggum:end -->' AGENTS.md
+}
+
+@test "setup_wiggum_agents_md: appends without touching existing content" {
+    printf '# Project notes\n\nKeep this line.\n' > AGENTS.md
+    setup_wiggum_agents_md </dev/null
+    grep -q 'Keep this line.' AGENTS.md
+    grep -q '<!-- wiggum:start -->' AGENTS.md
+}
+
+@test "setup_wiggum_agents_md: an up-to-date block is left alone" {
+    setup_wiggum_agents_md </dev/null
+    cp AGENTS.md before.md
+    run setup_wiggum_agents_md </dev/null
+    [ "$status" -eq 0 ]
+    diff -q before.md AGENTS.md
+}
+
+@test "setup_wiggum_agents_md: a stale block is kept when the user says no" {
+    printf '# Notes\n<!-- wiggum:start -->\nold text\n<!-- wiggum:end -->\ntail\n' > AGENTS.md
+    run bash -c "source '$WIGGUM_LIB'; printf 'n\n' | setup_wiggum_agents_md"
+    [ "$status" -eq 0 ]
+    grep -q '^old text$' AGENTS.md
+    grep -q '^tail$' AGENTS.md
+}
+
+@test "setup_wiggum_agents_md: a stale block is replaced when the user says yes" {
+    printf '# Notes\n<!-- wiggum:start -->\nold text\n<!-- wiggum:end -->\ntail\n' > AGENTS.md
+    run bash -c "source '$WIGGUM_LIB'; printf 'y\n' | setup_wiggum_agents_md"
+    [ "$status" -eq 0 ]
+    ! grep -q '^old text$' AGENTS.md
+    grep -q '^# Notes$' AGENTS.md
+    grep -q '^tail$' AGENTS.md
+    grep -q '## Working with wiggum' AGENTS.md
+}
+
+@test "run_init: installs the agent-neutral AGENTS.md block" {
+    INIT_PRESET="bash"
+    run_init </dev/null
+    grep -q '<!-- wiggum:start -->' AGENTS.md
+}
+
+# ── OpenCode slash command ───────────────────────────────────────────────────
+
+@test "wiggum_opencode_command_content: emits a valid OpenCode command" {
+    run wiggum_opencode_command_content
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"description: Plan or execute a wiggum workplan"* ]] || return 1
+    [[ "$output" == *'$ARGUMENTS'* ]] || return 1
+    [[ "$output" == *"--agent opencode"* ]] || return 1
+    [[ "$output" == *"wiggum execute"* ]] || return 1
+}
+
+@test "wiggum_opencode_command_content: committed command stays in sync with the heredoc" {
+    local committed
+    committed="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)/.opencode/commands/wiggum.md"
+    [ -f "$committed" ]
+    diff <(wiggum_opencode_command_content) "$committed"
+}
+
+@test "setup_wiggum_opencode_command: creates the command" {
+    run setup_wiggum_opencode_command
+    [ "$status" -eq 0 ]
+    [ -f .opencode/commands/wiggum.md ]
+    grep -q '\$ARGUMENTS' .opencode/commands/wiggum.md
+}
+
+@test "setup_wiggum_opencode_command: leaves an up-to-date command untouched" {
+    mkdir -p .opencode/commands
+    wiggum_opencode_command_content > .opencode/commands/wiggum.md
+    run setup_wiggum_opencode_command
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"up to date"* ]] || return 1
+}
+
+@test "setup_wiggum_opencode_command: a stale command is kept when the user says no" {
+    mkdir -p .opencode/commands
+    printf 'custom command\n' > .opencode/commands/wiggum.md
+    run bash -c "source '$WIGGUM_LIB'; printf 'n\n' | setup_wiggum_opencode_command"
+    [ "$status" -eq 0 ]
+    grep -q '^custom command$' .opencode/commands/wiggum.md
+}
+
+@test "setup_wiggum_opencode_command: a stale command is replaced when the user says yes" {
+    mkdir -p .opencode/commands
+    printf 'custom command\n' > .opencode/commands/wiggum.md
+    run bash -c "source '$WIGGUM_LIB'; printf 'y\n' | setup_wiggum_opencode_command"
+    [ "$status" -eq 0 ]
+    ! grep -q '^custom command$' .opencode/commands/wiggum.md
+    grep -q '\$ARGUMENTS' .opencode/commands/wiggum.md
+}
+
+@test "run_init: installs the OpenCode slash command" {
+    INIT_PRESET="bash"
+    run_init </dev/null
+    [ -f .opencode/commands/wiggum.md ]
+    grep -q 'description:' .opencode/commands/wiggum.md
+}
+
+@test "docs: the OpenCode slash command is documented" {
+    local root
+    root="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
+    grep -q 'opencode/commands/wiggum.md' "$root/README.md"
+    grep -qi 'OpenCode slash command' "$root/site/index.html"
 }

@@ -34,7 +34,7 @@ command -v wiggum && cat .wiggumrc 2>/dev/null && ls environment.yml .venv .nvmr
 - **`.wiggumrc`** — wiggum reads it itself; you read it here only to learn the verify
   steps (and therefore which environment to activate). No config → wiggum just skips
   verification (still fine).
-- **Activate the project's environment.** wiggum runs Claude's tools and the verify
+- **Activate the project's environment.** wiggum runs the agent's tools and the verify
   steps in your *current* shell. If the markers above show one — conda
   (`environment.yml`), a virtualenv/`.venv`, Poetry/uv (`poetry.lock`/`uv.lock`), a
   Node version (`.nvmrc`), Bundler (`Gemfile`), etc. — activate it in the same shell
@@ -63,6 +63,19 @@ That's the whole preflight. Everything else you need is in this skill.
 | `wiggum top` | Every run at a glance: plan, pid, state, time since last activity, RSS and CPU for the run's whole process tree, task tally. Blocked and running sort first. A footer gives load, swap and the live run count — read it before launching another run instead of shelling out to `uptime` and `sysctl`. Read-only. |
 | `wiggum top --all` | Also lists finished runs older than 24 hours, which `top` hides by default. |
 | `wiggum top --json` | The same records as JSON, with `pid`, `idle_seconds`, `rss_kb` and `cpu_percent` null when absent. Use this instead of parsing the table or asking `pgrep` about a process when the question is about a run. The footer is table-only. |
+| `--agent <name>` | Pick the CLI that runs the loop: `claude` (default), `opencode`, `pi` or `codex`. Also settable as `agent = <name>` in `.wiggumrc`. |
+
+The loop is agent-independent. The selected agent makes every plan, verify and
+commit call; `--effort`, `--permission-mode` and `--model` keep one vocabulary
+and each agent maps them to its own flags. The commands above do not change when
+the agent changes. In OpenCode, `/wiggum <request>` drives the CLI with
+`--agent opencode`, and `@wiggum` loads this skill.
+
+Permission modes use one vocabulary: `acceptEdits`, `auto`, `bypassPermissions`,
+`default`, `dontAsk`, `manual` and `plan`. Claude maps `default` to `manual`;
+OpenCode maps `plan` to its plan agent and `bypassPermissions` to `--auto`; Pi
+restricts tools for `plan` and `acceptEdits`; Codex uses sandbox flags. A mode
+that cannot be enforced prints a warning instead of silently changing meaning.
 
 Sidecar files live next to the plan: `docs/<name>.pid`, `docs/<name>.out`,
 `docs/<name>.log`. `status`/`watch`/`kill` all derive these from the plan path,
@@ -166,6 +179,10 @@ a measurable threshold), never a feeling.
 ```
 
 Rules for a good plan:
+- **Already exists?** Before proposing new code, search for what the project (and
+  its sibling repos and stored outputs) already does, and say in the plan what was
+  searched and what was found. A plan for a detector, a parser or a store that the
+  project already has builds a second copy. If it exists, the task reads from there.
 - **Work backwards, and name the critical path.** After the benefits, ask of each
   `Signal:` what would have to be true for it to fire, and keep asking until the
   answer is something the repo already has. Where several chains come out of that,
@@ -432,8 +449,8 @@ Then supervise in a loop until it finishes:
    remediate in step 4. Don't keep a wedged run alive.
 4. **Kill only when needed.** If a run overruns or is wedged and you must stop it,
    use `wiggum kill docs/<name>_plan.md`. This kills only that run's process tree
-   (the wiggum process and the `claude` it spawned) — never a blanket kill of other
-   wiggum/claude processes. Prefer `--kill-on-timeout` on `watch` so you don't have
+   (the wiggum process and the agent CLI it spawned) — never a blanket kill of other
+   wiggum or agent processes. Prefer `--kill-on-timeout` on `watch` so you don't have
    to babysit it.
 
 For a quick, small run you may skip backgrounding and just `wiggum execute <plan>`
@@ -729,7 +746,7 @@ Only when nothing is running is it a real stall:
 - *Needs access, credentials, an external dependency, or a real product decision* →
   stop and ask the user; you can't resolve it.
 
-**Check the machine before blaming the plan.** wiggum runs Claude, the verify
+**Check the machine before blaming the plan.** wiggum runs an agent, the verify
 steps, and anything a task spawns — concurrently with any *other* wiggum run on the
 box. Read `uptime`'s load average against the core count (`sysctl -n hw.ncpu` /
 `nproc`). A load many times the core count makes every verify pass several times
@@ -865,7 +882,7 @@ between stages.
 - **Drive the CLI; don't reimplement it.** Plan/implement/verify/commit are
   wiggum's job. You orchestrate: plan, launch, monitor, wait, unblock, kill, chain.
 - **Back out when the loop isn't warranted.** wiggum runs a full cycle *per task* —
-  a fresh `claude` session, the whole verify suite, a commit. If you could make the
+  a fresh agent session, the whole verify suite, a commit. If you could make the
   change and confirm it in a single pass, say so and edit it directly rather than
   planning it; a plan that fragments one edit into eight commits costs more than it
   returns. Size and file count are the wrong test — prompt wording, a doc sweep, or

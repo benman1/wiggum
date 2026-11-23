@@ -11,7 +11,7 @@ a run. This file is the part that has to hold whether or not the skill is loaded
   predict what the verify suite will say until you try.
 - **Edit directly** when you can hold the whole change in your head and one run of
   the verify suite settles it — even when it spans several files. Wiggum runs a full
-  cycle *per task*: a fresh Claude session, the entire verify waterfall, a commit.
+  cycle *per task*: a fresh agent session, the entire verify waterfall, a commit.
   On a change that is really one edit, that dwarfs the work and fragments it into
   noisy commits. "It's a new feature" is not on its own a reason.
 - **Say which of the two you are doing before you start**, in a sentence. "Queue

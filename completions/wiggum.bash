@@ -8,7 +8,8 @@ _wiggum() {
     local commands="init plan explain execute check docs run status watch kill chain top help"
     local presets="node next python astro bash"
     local efforts="low medium high xhigh max"
-    local perms="acceptEdits auto bypassPermissions default dontAsk plan"
+    local agents="claude opencode pi codex"
+    local perms="acceptEdits auto bypassPermissions default dontAsk manual plan"
 
     # First argument: command
     if [[ $cword -eq 1 ]]; then
@@ -20,6 +21,9 @@ _wiggum() {
 
     # Options that take a value, common to several commands.
     case "$prev" in
+        --agent)
+            mapfile -t COMPREPLY < <(compgen -W "$agents" -- "$cur")
+            ;;
         --effort)
             mapfile -t COMPREPLY < <(compgen -W "$efforts" -- "$cur")
             return
@@ -53,7 +57,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--plan-file --no-feedback --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--plan-file --no-feedback --agent --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi
@@ -67,7 +71,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--explain-file --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--explain-file --agent --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi
@@ -93,7 +97,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--max-iterations --summary-file --update-docs --background --at --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--max-iterations --summary-file --update-docs --background --at --no-verify --no-commit --agent --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi
@@ -137,7 +141,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--queue --max-iterations --background --at --no-verify --no-commit --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--queue --max-iterations --background --at --no-verify --no-commit --agent --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir md
             fi
@@ -145,7 +149,7 @@ _wiggum() {
             ;;
         check)
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--max-validation-retries --no-commit --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--max-validation-retries --no-commit --agent --effort --permission-mode --verbose --help" -- "$cur")
             fi
             return
             ;;
@@ -157,7 +161,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "-i -o --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "-i -o --agent --effort --permission-mode --verbose --help" -- "$cur")
             else
                 _filedir
             fi
@@ -171,7 +175,7 @@ _wiggum() {
                     ;;
             esac
             if [[ "$cur" == -* ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "-f --prompts-file --session-file --new-session --delimiter --effort --permission-mode --verbose --help" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "-f --prompts-file --session-file --new-session --delimiter --agent --effort --permission-mode --verbose --help" -- "$cur")
             fi
             return
             ;;

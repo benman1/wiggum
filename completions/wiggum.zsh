@@ -2,7 +2,7 @@
 # Zsh completion for wiggum
 
 _wiggum() {
-    local -a commands presets effort_opt perm_opt
+    local -a commands presets agent_opt effort_opt perm_opt
 
     commands=(
         'init:Generate a .wiggumrc for a standard project setup'
@@ -22,8 +22,9 @@ _wiggum() {
 
     presets=(node next python astro bash)
 
+    agent_opt='--agent[Agent CLI]:agent:(claude opencode pi codex)'
     effort_opt='--effort[Reasoning effort level]:level:(low medium high xhigh max)'
-    perm_opt='--permission-mode[Claude permission mode]:mode:(acceptEdits auto bypassPermissions default dontAsk plan)'
+    perm_opt='--permission-mode[Permission mode]:mode:(acceptEdits auto bypassPermissions default dontAsk manual plan)'
 
     if (( CURRENT == 2 )); then
         _describe 'command' commands
@@ -48,18 +49,20 @@ _wiggum() {
             _arguments \
                 '--plan-file[Output path for the plan]:file:_files -g "*.md"' \
                 '--no-feedback[Skip the feedback pass over the finished plan]' \
+                "$agent_opt" \
                 "$effort_opt" \
                 "$perm_opt" \
-                '--verbose[Pass --verbose to Claude Code]' \
+                '--verbose[Show agent output]' \
                 '(-h --help)'{-h,--help}'[Show help]' \
                 '*:input files:_files -g "*.md"'
             ;;
         explain)
             _arguments \
                 '--explain-file[Write the explanation to a file instead of stdout]:file:_files -g "*.md"' \
+                "$agent_opt" \
                 "$effort_opt" \
                 "$perm_opt" \
-                '--verbose[Pass --verbose to Claude Code]' \
+                '--verbose[Show agent output]' \
                 '(-h --help)'{-h,--help}'[Show help]' \
                 '*:input files:_files -g "*.md"'
             ;;
@@ -67,14 +70,16 @@ _wiggum() {
             _arguments \
                 '--max-iterations[Maximum implementation iterations]:count:(1 2 3 5 10)' \
                 '--summary-file[Output path for the summary]:file:_files -g "*.md"' \
+                '--agent[Agent CLI that runs the loop]:agent:(claude opencode pi codex)' \
                 '--update-docs[Comma-separated doc files to update]:files:_files -g "*.md"' \
                 '(-b --background)'{-b,--background}'[Run detached; supervise with status/watch/kill]' \
                 '--at[Wait until WHEN, then run once, detached: +90m, 01:07 or @epoch]:when:' \
                 '--no-verify[Skip the verification waterfall]' \
                 '--no-commit[Skip wiggum-issued git commits]' \
+                "$agent_opt" \
                 "$effort_opt" \
                 "$perm_opt" \
-                '--verbose[Pass --verbose to Claude Code]' \
+                '--verbose[Show agent output]' \
                 '(-h --help)'{-h,--help}'[Show help]' \
                 '*:plan files:_files -g "*.md"'
             ;;
@@ -108,9 +113,10 @@ _wiggum() {
                 '--at[Start the chain at WHEN, detached: +90m, 01:07 or @epoch]:when:' \
                 '--no-verify[Skip the verification waterfall]' \
                 '--no-commit[Skip wiggum-issued git commits]' \
+                "$agent_opt" \
                 "$effort_opt" \
                 "$perm_opt" \
-                '--verbose[Pass --verbose to Claude Code]' \
+                '--verbose[Show agent output]' \
                 '(-h --help)'{-h,--help}'[Show help]' \
                 '*:plan files:_files -g "*.md"'
             ;;
@@ -118,18 +124,20 @@ _wiggum() {
             _arguments \
                 '--max-validation-retries[Max fix attempts per step]:count:(1 2 3 5 10)' \
                 '--no-commit[Skip the post-fix wiggum commit]' \
+                "$agent_opt" \
                 "$effort_opt" \
                 "$perm_opt" \
-                '--verbose[Pass --verbose to Claude Code]' \
+                '--verbose[Show agent output]' \
                 '(-h --help)'{-h,--help}'[Show help]'
             ;;
         docs)
             _arguments \
                 '-i[Input files]:*:input files:_files -g "*.md"' \
                 '-o[Output doc files to update]:*:output files:_files -g "*.md"' \
+                "$agent_opt" \
                 "$effort_opt" \
                 "$perm_opt" \
-                '--verbose[Pass --verbose to Claude Code]' \
+                '--verbose[Show agent output]' \
                 '(-h --help)'{-h,--help}'[Show help]'
             ;;
         run)
@@ -138,9 +146,10 @@ _wiggum() {
                 '--session-file[Persist/resume the session id]:file:_files' \
                 '--new-session[Ignore an existing --session-file and start fresh]' \
                 '--delimiter[Prompt separator line for -f/stdin]:delimiter:' \
+                "$agent_opt" \
                 "$effort_opt" \
                 "$perm_opt" \
-                '--verbose[Pass --verbose to Claude Code]' \
+                '--verbose[Show agent output]' \
                 '(-h --help)'{-h,--help}'[Show help]' \
                 '*:prompts:'
             ;;

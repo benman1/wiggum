@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>wiggum — a self-driving agent loop for Claude Code</title>
+<title>wiggum — a self-driving agent loop for coding agents</title>
 <meta name="description" content="Wiggum turns an issue into a planned, verified, committed change. It plans, implements, runs your own verify steps, fixes what fails, and commits — from one shell command.">
 <meta property="og:title" content="wiggum">
-<meta property="og:description" content="A self-driving agent loop for Claude Code. Plans, implements, verifies with your tools, self-heals, commits.">
+<meta property="og:description" content="A self-driving agent loop for coding agents. Plans, implements, verifies with your tools, self-heals, commits.">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23131c28'/><path d='M8 16.5l5 5 11-11' stroke='%2357a97b' stroke-width='3.4' fill='none' stroke-linecap='square'/></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -294,6 +294,31 @@
   .reqs li { display: flex; gap: 0.8rem; }
   .reqs .tick { color: var(--done); font-family: var(--mono); flex: none; }
 
+  /* ── agents ─────────────────────────────────────────────────── */
+  .agents { display: grid; grid-template-columns: 1fr; gap: 1rem; }
+  @media (min-width: 52rem) { .agents { grid-template-columns: repeat(2, 1fr); } }
+  .agent {
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    padding: 1rem 1.1rem;
+  }
+  .agent h3 {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    color: var(--bright);
+    margin: 0 0 0.5rem;
+  }
+  .agent p { font-size: 0.94rem; margin: 0 0 0.7rem; }
+  .agent code { color: var(--bright); font-family: var(--mono); font-size: 0.84rem; }
+  .agent .role { color: var(--dim); font-family: var(--mono); font-size: 0.78rem; }
+  .agent .line {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--live);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
   /* ── footer ─────────────────────────────────────────────────── */
   footer {
     border-top: 1px solid var(--rule);
@@ -312,6 +337,7 @@
     <div class="mark"><span class="box">- [x]</span> wiggum</div>
     <nav>
       <a href="#loop">How it runs</a>
+      <a href="#agents">Agents</a>
       <a href="#verify">Verification</a>
       <a href="#supervise">Supervision</a>
       <a href="#install">Install</a>
@@ -324,7 +350,7 @@
   <div class="wrap hero">
     <h1>Start it. Read the diff when it's done.</h1>
     <p class="lede">
-      Wiggum wraps Claude Code in a loop that plans a change, implements it one task
+      Wiggum drives a coding agent through a loop that plans a change, implements it one task
       at a time, runs your project's own verify commands, fixes what fails, and commits
       as it goes. You start it from the shell and read the diff when it's done.
     </p>
@@ -380,7 +406,7 @@
           <div class="n">Phase 2</div>
           <div>
             <h3>Implement, verify, fix</h3>
-            <p>One task per iteration. After each, your verify commands run in order; a failure goes back to Claude with the error output until it passes or the retry budget runs out. Then it commits.</p>
+            <p>One task per iteration. After each, your verify commands run in order; a failure goes back to the agent with the error output until it passes or the retry budget runs out. Then it commits.</p>
           </div>
           <div class="loop">↺ repeats until the boxes are ticked, the run stalls, or it hits max_iterations</div>
         </div>
@@ -401,6 +427,47 @@
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ── agents ───────────────────────────────────────────────── -->
+  <section id="agents">
+    <div class="wrap">
+      <h2>One loop, four coding agents</h2>
+      <p class="sub">Choose the CLI once in <code>.wiggumrc</code> with <code>agent = &lt;name&gt;</code>, or for one command with <code>--agent</code>. Plans, checkboxes, verification and supervision work the same way with every agent.</p>
+
+      <div class="cmd">
+        <span class="prompt">$</span>
+        <code>wiggum execute docs/csv-export_plan.md --agent codex</code>
+      </div>
+
+      <div class="agents">
+        <div class="agent">
+          <h3>claude <span class="role">default</span></h3>
+          <p>Install Claude Code and sign in. <code>wiggum init</code> installs the <code>/wiggum</code> skill, project rule and <code>AGENTS.md</code> block.</p>
+          <div class="line">wiggum plan issues/csv-export.md --agent claude</div>
+        </div>
+
+        <div class="agent">
+          <h3>opencode <span class="role">plan agent and JSON sessions</span></h3>
+          <p>Install and authenticate <code>opencode</code>. <code>init</code> installs <code>/wiggum</code> for the TUI; <code>--effort</code> maps to its <code>--variant</code> flag.</p>
+          <div class="line">wiggum execute docs/csv-export_plan.md --agent opencode</div>
+        </div>
+
+        <div class="agent">
+          <h3>pi <span class="role">provider login required</span></h3>
+          <p>Install with <code>npm install -g --ignore-scripts @earendil-works/pi-coding-agent</code>, then configure a provider and model. <code>plan</code> and <code>acceptEdits</code> restrict its tools.</p>
+          <div class="line">wiggum plan issues/csv-export.md --agent pi --model &lt;provider/model&gt;</div>
+        </div>
+
+        <div class="agent">
+          <h3>codex <span class="role">sandbox and approval flags</span></h3>
+          <p>Install with <code>npm install -g @openai/codex</code> and run <code>codex login</code>. Wiggum uses <code>codex exec --json</code> and captures its session id.</p>
+          <div class="line">wiggum execute docs/csv-export_plan.md --agent codex --permission-mode auto</div>
+        </div>
+      </div>
+
+      <p class="note">Each agent maps the permission mode to its own flags; unsupported modes print a warning. Every session id is logged with a resume command. The <a href="https://github.com/benman1/wiggum#permissions">README has the full mapping</a>.</p>
     </div>
   </section>
 
@@ -435,7 +502,7 @@
           </div>
           <div>
             <h3>Autofix runs first</h3>
-            <p>An <code>autofix</code> step gets one chance to correct itself before Claude is asked to look at it. Formatters fix formatting; Claude fixes logic.</p>
+            <p>An <code>autofix</code> step gets one chance to correct itself before the agent is asked to look at it. Formatters fix formatting; the agent fixes logic.</p>
           </div>
           <div>
             <h3>Retries are capped</h3>
@@ -454,7 +521,7 @@
   <section id="supervise">
     <div class="wrap">
       <h2>Start it, walk away, keep watch</h2>
-      <p class="sub">Runs last hours. <code>wiggum top</code> lists every run on the machine, whichever project it was started from, blocked and running first. The activity column tells a long task from a wedged one; <code>RSS</code> and <code>CPU</code> cover the run's whole process tree, because the cost is the <code>claude</code> it spawned rather than the pid in the row. The footer is the launch decision: load against cores, and swap.</p>
+      <p class="sub">Runs last hours. <code>wiggum top</code> lists every run on the machine, whichever project it was started from, blocked and running first. The activity column tells a long task from a wedged one; <code>RSS</code> and <code>CPU</code> cover the run's whole process tree, because the cost is the agent CLI it spawned rather than the pid in the row. The footer is the launch decision: load against cores, and swap.</p>
       <p class="sub"><code>wiggum watch</code> is the other half: it blocks until a run finishes, attaches near the end of the backlog rather than replaying hours of it, names the task the plan is on, prints a <code>[watch]</code> line after a minute of silence so a quiet run never reads as a wedged one, and never exits 0 having waited for nothing — <code>0</code> means the run finished, <code>6</code> means your timeout ran out and the run is still going.</p>
 
       <div class="term">
@@ -486,7 +553,7 @@ docs/auth-hardening_plan.md              -        <span class="ok">finished: com
   <section id="install">
     <div class="wrap">
       <h2>Install</h2>
-      <p class="sub">One command. It copies the library, symlinks the CLI, and installs the <code>/wiggum</code> skill for Claude Code.</p>
+      <p class="sub">One command. It copies the library, symlinks the CLI, installs the <code>/wiggum</code> skill under <code>.claude/</code> and <code>.agents/</code>, writes an <code>AGENTS.md</code> block, and adds <code>/wiggum</code> as an OpenCode slash command.</p>
 
       <div class="cmd">
         <span class="prompt">$</span>
@@ -496,7 +563,7 @@ docs/auth-hardening_plan.md              -        <span class="ok">finished: com
       <p class="note">Then <code>wiggum init</code> in any project to generate a <code>.wiggumrc</code> from what it finds there — or <code>wiggum init --yes</code> from a setup script, which takes every overwrite without asking.</p>
 
       <ul class="reqs">
-        <li><span class="tick">- [x]</span> <span>Claude Code CLI, installed and authenticated</span></li>
+        <li><span class="tick">- [x]</span> <span>claude, opencode, pi or codex, installed and authenticated</span></li>
         <li><span class="tick">- [x]</span> <span>Bash 4 or newer</span></li>
         <li><span class="tick">- [x]</span> <span>A git repository to work in</span></li>
       </ul>
